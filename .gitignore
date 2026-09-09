@@ -1,1 +1,6 @@
-forms/*
+forms/
+templates/*
+out/
+.venv/
+__pycache__/
+*.pyc
