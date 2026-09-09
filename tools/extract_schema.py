@@ -201,21 +201,25 @@ def main() -> int:
         return 1
 
     OUT_ROOT.mkdir(exist_ok=True)
-    index = []
+    index: dict[str, list[dict]] = {}
     for template in templates:
+        rel = template.relative_to(TEMPLATE_ROOT)
         schema = extract(template)
         name = (schema.form_id or template.stem).replace("/", "_")
-        out = OUT_ROOT / f"{name}.json"
+        # 템플릿 경로를 미러링한다. 원본 폴더명이 유지되어야 공개 가능한 서식과
+        # 내부용 서식을 .gitignore 로 구분할 수 있다.
+        out = OUT_ROOT / rel.parent / f"{name}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
             json.dumps(schema.model_dump(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        index.append(
+        index.setdefault(rel.parts[0], []).append(
             {
                 "form_id": schema.form_id,
                 "title": schema.title,
                 "category": schema.category,
-                "schema": out.name,
+                "schema": str(out.relative_to(OUT_ROOT)).replace("\\", "/"),
                 "fields": len(schema.fields),
                 "tables": len(schema.tables),
                 "slots": len(schema.slots),
@@ -228,10 +232,13 @@ def main() -> int:
             f"반복 {len(schema.repeats):>2}  {schema.title}"
         )
 
-    (OUT_ROOT / "index.json").write_text(
-        json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    print(f"\n서식 {len(index)}개 -> {OUT_ROOT}")
+    # 목록도 서식 이름을 담으므로 원본과 같은 폴더 안에 둔다 (통째로 ignore 되도록)
+    for group, entries in index.items():
+        (OUT_ROOT / group / "index.json").write_text(
+            json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    total = sum(len(v) for v in index.values())
+    print(f"\n서식 {total}개 -> {OUT_ROOT}")
     return 0
 
 

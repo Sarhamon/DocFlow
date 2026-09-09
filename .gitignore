@@ -1,7 +1,8 @@
+# 학교 내부 서식과 그 파생물(templates/, schemas/)까지 한 번에 제외한다.
+# 변환·추출 결과가 원본 경로를 미러링하므로 이 한 줄로 커버된다.
 ysu_forms/
-templates/*
+
 out/
 .venv/
 __pycache__/
 *.pyc
-schemas/

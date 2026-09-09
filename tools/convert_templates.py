@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from docflow.adapters.hancom import Hancom  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+FORMS_ROOT = ROOT / "forms"
 OUT_ROOT = ROOT / "templates"
 
 
@@ -27,7 +28,9 @@ def main(source_dir: str) -> int:
     failed: list[tuple[Path, str]] = []
     with Hancom() as hancom:
         for i, src in enumerate(sources, 1):
-            dst = OUT_ROOT / src.relative_to(src_root).with_suffix(".hwpx")
+            # forms/ 기준 경로를 그대로 미러링한다. 원본 폴더명이 유지되어야
+            # 공개 가능한 서식과 내부용 서식을 .gitignore 로 구분할 수 있다.
+            dst = OUT_ROOT / src.relative_to(FORMS_ROOT).with_suffix(".hwpx")
             try:
                 hancom.convert(src, dst, fmt="HWPX")
                 print(f"  [{i}/{len(sources)}] OK   {dst.relative_to(OUT_ROOT)}")

@@ -9,17 +9,25 @@
 
 ## 1. 원본 서식 취급
 
-학교에서 받은 원본 서식은 **내부 자료라 저장소에 포함하지 않습니다.** 아래 경로는 전부 `.gitignore` 대상입니다.
+학교에서 받은 원본 서식은 **내부 자료라 저장소에 포함하지 않습니다.**
+다만 서식 전체를 막으면 공개 가능한 다른 서식까지 걸리므로, **내부용 폴더 이름 하나만** 제외합니다.
+
+```gitignore
+ysu_forms/     # 원본 + 그 파생물 전부
+```
+
+이게 가능한 이유는 변환·추출 결과가 **원본 경로를 그대로 미러링**하기 때문입니다.
 
 | 경로 | 내용 | 재생성 방법 |
 |---|---|---|
-| `forms/` | 원본 서식 (HWP/XLSX/PDF) | 배포 불가. 로컬에 직접 배치 |
-| `templates/` | 원본을 변환한 HWPX 템플릿 | `tools/convert_templates.py` |
-| `schemas/` | 서식 구조 스키마 JSON | `tools/extract_schema.py` |
+| `forms/ysu_forms/…` | 원본 서식 (HWP/XLSX/PDF) | 배포 불가. 로컬에 직접 배치 |
+| `templates/ysu_forms/…` | 원본을 변환한 HWPX 템플릿 | `tools/convert_templates.py` |
+| `schemas/ysu_forms/…` | 서식 구조 스키마 JSON + 목록 | `tools/extract_schema.py` |
 | `out/` | 생성된 문서 산출물 | 실행 결과 |
 
-`templates/` 와 `schemas/` 는 원본 서식의 문구를 그대로 담기 때문에 원본과 동일하게 취급합니다.
-저장소에는 **코드만** 올라가며, `forms/` 를 갖춘 로컬 환경에서 두 명령으로 나머지가 재생성됩니다.
+템플릿과 스키마는 원본 서식의 문구를 그대로 담기 때문에 원본과 동일하게 취급합니다.
+서식 목록(`index.json`)도 서식 이름을 담으므로 최상위가 아니라 각 원본 폴더 안에 둡니다.
+내부용이 아닌 서식을 `forms/` 아래 다른 이름으로 넣으면, 그 파생물은 정상적으로 커밋됩니다.
 
 ## 2. 서식 구조 분석 결과 (설계 근거)
 
@@ -91,11 +99,11 @@
 ## 4. 파이프라인
 
 ```
-forms/*.hwp                     원본 서식 (내부 자료)
+forms/<원본폴더>/**/*.hwp        원본 서식
     | tools/convert_templates.py        [한컴 COM]
-templates/*.hwpx                편집 가능한 XML 템플릿
+templates/<원본폴더>/**/*.hwpx   편집 가능한 XML 템플릿 (원본 경로 미러링)
     | tools/extract_schema.py           [순수 파이썬]
-schemas/*.json                  필드 / 표 / 슬롯 / 반복영역 + 검증 체크리스트
+schemas/<원본폴더>/**/*.json     필드 / 표 / 슬롯 / 반복영역 + 검증 체크리스트
     | 입력값 + LLM 문안 생성
     | docflow/hwpx  값 주입              [순수 파이썬]
 out/*.hwpx
