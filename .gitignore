@@ -1,6 +1,7 @@
-forms/
+ysu_forms/
 templates/*
 out/
 .venv/
 __pycache__/
 *.pyc
+schemas/

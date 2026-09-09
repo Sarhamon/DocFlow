@@ -24,6 +24,12 @@ NS = {"hp": HP}
 T = f"{{{HP}}}t"
 FIELD_BEGIN = f"{{{HP}}}fieldBegin"
 FIELD_END = f"{{{HP}}}fieldEnd"
+TBL = f"{{{HP}}}tbl"
+TR = f"{{{HP}}}tr"
+TC = f"{{{HP}}}tc"
+CELL_ADDR = f"{{{HP}}}cellAddr"
+CELL_SPAN = f"{{{HP}}}cellSpan"
+PARA = f"{{{HP}}}p"
 
 _SECTION_RE = re.compile(r"^Contents/section\d+\.xml$")
 
@@ -38,6 +44,39 @@ class Field:
     section: str
     #: 같은 이름이 여러 번 나올 때의 등장 순번 (0-base)
     occurrence: int = 0
+
+
+@dataclass
+class Cell:
+    """표의 셀 하나. 병합된 셀은 좌상단 좌표 + span 으로 표현된다."""
+
+    row: int
+    col: int
+    row_span: int
+    col_span: int
+    text: str
+
+
+@dataclass
+class Table:
+    """서식 안의 표 하나."""
+
+    index: int
+    section: str
+    rows: int
+    cols: int
+    #: 표 안에 표가 들어있는 경우의 중첩 깊이 (0 = 최상위)
+    depth: int
+    cells: list[Cell]
+
+    def grid(self) -> list[list[str]]:
+        """병합을 펼친 rows x cols 텍스트 격자. 검토·디버깅용."""
+        out = [["" for _ in range(self.cols)] for _ in range(self.rows)]
+        for c in self.cells:
+            for r in range(c.row, min(c.row + c.row_span, self.rows)):
+                for k in range(c.col, min(c.col + c.col_span, self.cols)):
+                    out[r][k] = c.text if (r, k) == (c.row, c.col) else ""
+        return out
 
 
 @dataclass
@@ -91,6 +130,24 @@ class HwpxDocument:
             if f.name not in names:
                 names.append(f.name)
         return names
+
+    def tables(self) -> list[Table]:
+        """문서 전체의 표를 등장 순서대로 반환한다 (중첩 표 포함)."""
+        found: list[Table] = []
+        for section in self.section_names:
+            root = ET.fromstring(self._entries[section].decode("utf-8"))
+            for el, depth in _walk_tables(root):
+                found.append(
+                    Table(
+                        index=len(found),
+                        section=section,
+                        rows=int(el.get("rowCnt", 0)),
+                        cols=int(el.get("colCnt", 0)),
+                        depth=depth,
+                        cells=[_read_cell(tc) for tr in el.findall(TR) for tc in tr.findall(TC)],
+                    )
+                )
+        return found
 
     # ---------------------------------------------------------------- 쓰기
     def fill(self, values: dict[str, str]) -> int:
@@ -147,6 +204,51 @@ def _walk_fields(root: ET.Element):
                     break
         elif el.tag == T and open_stack:
             open_stack[-1][3].append(el)
+
+
+def _walk_tables(parent: ET.Element, depth: int = 0):
+    """(표 엘리먼트, 중첩 깊이) 를 문서 순서대로 yield 한다."""
+    for el in parent:
+        if el.tag == TBL:
+            yield el, depth
+            for tr in el.findall(TR):
+                for tc in tr.findall(TC):
+                    yield from _walk_tables(tc, depth + 1)
+        else:
+            yield from _walk_tables(el, depth)
+
+
+def _read_cell(tc: ET.Element) -> Cell:
+    addr = tc.find(CELL_ADDR)
+    span = tc.find(CELL_SPAN)
+    return Cell(
+        row=int(addr.get("rowAddr", 0)) if addr is not None else 0,
+        col=int(addr.get("colAddr", 0)) if addr is not None else 0,
+        row_span=int(span.get("rowSpan", 1)) if span is not None else 1,
+        col_span=int(span.get("colSpan", 1)) if span is not None else 1,
+        text=_cell_text(tc),
+    )
+
+
+def _cell_text(tc: ET.Element) -> str:
+    """셀의 텍스트. 중첩된 표의 내용은 제외한다 (그 표가 따로 추출되므로)."""
+    lines: list[str] = []
+
+    def walk(node: ET.Element, buf: list[str]) -> None:
+        for el in node:
+            if el.tag == TBL:
+                continue
+            if el.tag == PARA:
+                inner: list[str] = []
+                walk(el, inner)
+                lines.append("".join(inner))
+            elif el.tag == T:
+                buf.append(el.text or "")
+            else:
+                walk(el, buf)
+
+    walk(tc, [])
+    return "\n".join(x for x in lines if x).strip()
 
 
 def _serialize(root: ET.Element) -> bytes:
