@@ -22,6 +22,7 @@ from docflow.schema.form import (  # noqa: E402
     SlotSpec,
     TableSpec,
     is_placeholder,
+    is_total_label,
     parse_form_name,
 )
 
@@ -104,11 +105,23 @@ def find_repeats(table: Table) -> list[RepeatSpec]:
             start = r
         elif not is_sparse and start is not None:
             if r - start >= 3:
-                rep = _make_repeat(table, grid, filled, start, r - 1)
-                if any(rep.header):
-                    repeats.append(rep)
+                # 합계 행도 채워진 셀이 적어 빈 행으로 잡힌다. 합계 아래는 데이터가
+                # 아니므로(서명란·주의사항) 합계 행에서 영역을 끊는다.
+                end = r - 1
+                for x in range(start, end + 1):
+                    if _is_total_row(grid[x]):
+                        end = x - 1
+                        break
+                if end >= start:
+                    rep = _make_repeat(table, grid, filled, start, end)
+                    if any(rep.header):
+                        repeats.append(rep)
             start = None
     return repeats
+
+
+def _is_total_row(row) -> bool:
+    return any(is_total_label(c) for c in row)
 
 
 def _find_header(grid, filled, start: int) -> list[str]:

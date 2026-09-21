@@ -27,6 +27,15 @@ def is_placeholder(text: str) -> bool:
     return any(p.search(text) for p in PLACEHOLDER_PATTERNS)
 
 
+#: 합계 행의 항목명. 반복 영역의 끝을 정하고, 금액 합계 검증의 기준점이 된다.
+TOTAL_LABELS = {"합계", "계", "총계", "소계"}
+
+
+def is_total_label(text: str) -> bool:
+    """셀 텍스트가 합계 항목명인지."""
+    return text.replace(" ", "").strip() in TOTAL_LABELS
+
+
 class FieldSpec(BaseModel):
     """누름틀 하나. 기안문 계열에만 풍부하게 존재한다."""
 
