@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from datetime import date
 
-from docflow.schema.form import FormSchema, RepeatSpec, SlotSpec
+from docflow.schema.form import FieldSpec, FormSchema, RepeatSpec, SlotSpec
 from docflow.validate import (
     cell_id,
     check_amount_totals,
     check_dates,
     check_required,
+    fillable_fields,
     find_dates,
     parse_amount,
     validate,
@@ -263,6 +264,77 @@ def test_날짜_칸이_아니면_안_본다():
 def test_빈_날짜_칸은_넘어간다():
     """빈 칸은 '필수 누락' 규칙이 볼 몫이다."""
     assert check_dates(날짜_스키마(), 날짜_값("  ")) == []
+
+
+# ---------------------------------------------------------------- 누름틀
+
+#: 기안문 누름틀. 이름과 자리표시자는 실제 서식(AID 1-01~10)에서 가져왔다.
+기안문_누름틀 = [
+    FieldSpec(name="docnumber", type="CLICK_HERE", placeholder="○○○○처-000000"),
+    FieldSpec(name="enforcedate", type="CLICK_HERE", placeholder="2000.00.00"),
+    FieldSpec(name="telephone", type="CLICK_HERE", placeholder="031-441-0000"),
+    FieldSpec(name="address", type="CLICK_HERE", placeholder="경기도 안양시 만안구 양화로 37번길 34"),
+    FieldSpec(name="publication", type="CLICK_HERE", placeholder="공개"),
+    FieldSpec(name="apb4_date", type="CLICK_HERE", placeholder="00/00"),
+    FieldSpec(name="apb4_sign", type="CLICK_HERE", placeholder="○○○"),
+    FieldSpec(name="", type="FORMULA", placeholder="3,080,000"),
+]
+
+
+def 기안문_스키마() -> FormSchema:
+    return FormSchema(form_id="1-01~10", title="일반기안문", fields=list(기안문_누름틀))
+
+
+def test_수식과_결재란은_채울_누름틀이_아니다():
+    """이름 없는 FORMULA 는 한글이 계산하고, apbN_* 는 결재선이 채운다."""
+    names = [name for name, _ in fillable_fields(기안문_스키마())]
+
+    assert "docnumber" in names
+    assert "" not in names
+    assert not [n for n in names if n.startswith("apb")]
+
+
+def test_누름틀이_비면_잡는다():
+    issues = check_required(기안문_스키마(), {}, {})
+    걸린 = {i.where for i in issues}
+
+    assert "docnumber" in 걸린
+    assert "enforcedate" in 걸린
+    assert "telephone" in 걸린
+
+
+def test_이미_값이_박힌_누름틀은_필수가_아니다():
+    """주소·공개여부는 자리표시자가 아니라 실제 값이라 채울 곳이 아니다."""
+    걸린 = {i.where for i in check_required(기안문_스키마(), {}, {})}
+
+    assert "address" not in 걸린
+    assert "publication" not in 걸린
+
+
+def test_결재란은_비어도_안_잡는다():
+    걸린 = {i.where for i in check_required(기안문_스키마(), {}, {})}
+
+    assert "apb4_date" not in 걸린
+    assert "apb4_sign" not in 걸린
+
+
+def test_누름틀을_채우면_통과():
+    fields = {"docnumber": "교무처-001234", "enforcedate": "2026.03.15", "telephone": "031-441-1234"}
+    assert check_required(기안문_스키마(), {}, fields) == []
+
+
+def test_누름틀도_날짜를_본다():
+    """`enforcedate` 는 자리표시자가 `2000.00.00` 이라 날짜 칸이다."""
+    issues = check_dates(기안문_스키마(), {}, {"enforcedate": "2026.02.30"})
+
+    assert len(issues) == 1
+    assert issues[0].code == "DATE_INVALID"
+    assert issues[0].where == "enforcedate"
+
+
+def test_누름틀_없이도_동작한다():
+    """표만 있는 서식이 절반 가까이다. fields 를 안 넘겨도 돌아야 한다."""
+    assert validate(내역서_스키마(), 다_채운_값()) == []
 
 
 # ---------------------------------------------------------------- 통합
