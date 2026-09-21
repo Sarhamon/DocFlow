@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="3개 사업 183개 한글 서식의 HWPX 변환·스키마 추출 결과와 남은 과제를 정리한 DocFlow 중간 리포트.">
+<meta property="og:title" content="DocFlow 서식 추출 현황">
+<meta property="og:description" content="서식 183개, 채울 지점 8,904곳. 커버리지 20.8% → 100%.">
+<meta property="og:type" content="article">
+<title>DocFlow 서식 추출 현황</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans+KR:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* --- reset (Artifact 런타임이 제공하던 것) --- */
+  html { color-scheme: light dark; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+
+  :root {
+    --paper:      #F2F4F6;
+    --surface:    #FFFFFF;
+    --surface-2:  #E9ECF0;
+    --ink:        #18212B;
+    --ink-mute:   #5A6675;
+    --ink-faint:  #8A94A1;
+    --rule:       #D3D9E0;
+    --rule-soft:  #E4E8ED;
+    --mark:       #B0800F;
+    --mark-bg:    #F6ECCE;
+    --seal:       #A6392B;
+    --seal-bg:    #F7E4E0;
+    --ok:         #26684E;
+    --ok-bg:      #DCEDE4;
+
+    --f-display: "Gowun Batang", "Nanum Myeongjo", Batang, serif;
+    --f-body:    "IBM Plex Sans KR", "Malgun Gothic", system-ui, sans-serif;
+    --f-data:    "IBM Plex Mono", ui-monospace, "Consolas", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0F161D;
+      --surface:    #161F29;
+      --surface-2:  #1E2A36;
+      --ink:        #E2E8EF;
+      --ink-mute:   #99A5B3;
+      --ink-faint:  #6B7887;
+      --rule:       #2B3846;
+      --rule-soft:  #222E3A;
+      --mark:       #DCA939;
+      --mark-bg:    #33291247;
+      --seal:       #E0796A;
+      --seal-bg:    #3A201B;
+      --ok:         #5FB58D;
+      --ok-bg:      #17302650;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #0F161D;
+    --surface:    #161F29;
+    --surface-2:  #1E2A36;
+    --ink:        #E2E8EF;
+    --ink-mute:   #99A5B3;
+    --ink-faint:  #6B7887;
+    --rule:       #2B3846;
+    --rule-soft:  #222E3A;
+    --mark:       #DCA939;
+    --mark-bg:    #33291247;
+    --seal:       #E0796A;
+    --seal-bg:    #3A201B;
+    --ok:         #5FB58D;
+    --ok-bg:      #17302650;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-weight: 400;
+    font-size: 15px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 40px 72px;
+  }
+
+  /* ---------- 문서 머리 (기안문 관례를 따른다) ---------- */
+
+  .masthead { margin-bottom: 40px; }
+
+  .eyebrow {
+    font-family: var(--f-data);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 14px;
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(30px, 6.4vw, 46px);
+    line-height: 1.24;
+    letter-spacing: -.01em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: 16px;
+    color: var(--ink-mute);
+    margin: 0 0 26px;
+    max-width: 62ch;
+  }
+
+  /* 문서번호·시행일자 스트립 — 기안문 누름틀(docnumber/enforcedate)에서 따왔다 */
+  .docstrip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    border: 1px solid var(--rule);
+    background: var(--surface);
+  }
+  .docstrip div {
+    padding: 11px 14px;
+    border-right: 1px solid var(--rule-soft);
+  }
+  .docstrip div:last-child { border-right: 0; }
+  .docstrip dt {
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    color: var(--ink-faint);
+    margin: 0 0 3px;
+    font-weight: 500;
+  }
+  .docstrip dd {
+    margin: 0;
+    font-family: var(--f-data);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  /* ---------- 핵심 수치 ---------- */
+
+  .figures {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin: 0 0 8px;
+  }
+  .fig {
+    background: var(--surface);
+    padding: 20px 18px 18px;
+  }
+  .fig b {
+    display: block;
+    font-family: var(--f-data);
+    font-size: 34px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 8px;
+  }
+  .fig span {
+    display: block;
+    font-size: 12.5px;
+    color: var(--ink-mute);
+    line-height: 1.5;
+  }
+  .fig.is-ok b { color: var(--ok); }
+
+  .figure-note {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    margin: 0 0 48px;
+  }
+
+  /* ---------- 섹션 ---------- */
+
+  section { margin-bottom: 46px; }
+
+  h2 {
+    font-family: var(--f-display);
+    font-size: 21px;
+    font-weight: 700;
+    line-height: 1.4;
+    margin: 0 0 4px;
+    padding-top: 18px;
+    border-top: 2px solid var(--ink);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  h2 .no {
+    font-family: var(--f-data);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    color: var(--ink-faint);
+    flex: none;
+  }
+  .lede {
+    font-size: 14px;
+    color: var(--ink-mute);
+    margin: 0 0 22px;
+    max-width: 64ch;
+  }
+
+  h3 {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    color: var(--ink-mute);
+    margin: 30px 0 12px;
+  }
+
+  p { margin: 0 0 14px; max-width: 66ch; }
+  p:last-child { margin-bottom: 0; }
+
+  strong { font-weight: 600; }
+  .num { font-family: var(--f-data); font-variant-numeric: tabular-nums; font-weight: 500; }
+
+  code {
+    font-family: var(--f-data);
+    font-size: .88em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  /* ---------- 표 ---------- */
+
+  .scroll { overflow-x: auto; margin-bottom: 14px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    min-width: 440px;
+  }
+  caption {
+    text-align: left;
+    font-size: 12px;
+    color: var(--ink-faint);
+    padding-bottom: 8px;
+  }
+  th, td {
+    padding: 9px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  thead th {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    color: var(--ink-faint);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 1px solid var(--rule); }
+  .r { text-align: right; font-family: var(--f-data); font-variant-numeric: tabular-nums; }
+  tfoot td {
+    font-weight: 600;
+    border-bottom: 0;
+    padding-top: 11px;
+  }
+  tfoot .r { font-weight: 600; }
+
+  /* ---------- 막대 ---------- */
+
+  .bars {
+    display: grid;
+    grid-template-columns: minmax(96px, max-content) 1fr minmax(52px, max-content);
+    align-items: center;
+    gap: 7px 12px;
+    margin-bottom: 10px;
+  }
+  .bars dt {
+    font-size: 12.5px;
+    color: var(--ink-mute);
+    line-height: 1.35;
+  }
+  .bars .track {
+    height: 9px;
+    background: var(--surface-2);
+    position: relative;
+    min-width: 40px;
+  }
+  .bars .track i {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: var(--ink);
+    display: block;
+  }
+  .bars .track i.mark { background: var(--mark); }
+  .bars dd {
+    margin: 0;
+    font-family: var(--f-data);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    color: var(--ink);
+  }
+
+  /* ---------- 상태 목록 ---------- */
+
+  .items { list-style: none; margin: 0; padding: 0; }
+  .items li {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 14px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    align-items: start;
+  }
+  .items li:last-child { border-bottom: 0; }
+  .items .file {
+    font-family: var(--f-data);
+    font-size: 12px;
+    color: var(--ink-mute);
+    padding-top: 2px;
+    white-space: nowrap;
+  }
+  .items p { margin: 0; font-size: 14px; }
+
+  .pill {
+    display: inline-block;
+    font-family: var(--f-data);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    padding: 2px 7px;
+    border-radius: 2px;
+    vertical-align: 2px;
+  }
+  .pill.done   { color: var(--ok);   background: var(--ok-bg); }
+  .pill.open   { color: var(--seal); background: var(--seal-bg); }
+  .pill.next   { color: var(--mark); background: var(--mark-bg); }
+
+  /* ---------- 미해결 ---------- */
+
+  .gaps { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  .gap { background: var(--surface); padding: 16px 18px; }
+  .gap h4 {
+    margin: 0 0 6px;
+    font-size: 14.5px;
+    font-weight: 600;
+    display: flex;
+    gap: 9px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .gap p { margin: 0; font-size: 13.5px; color: var(--ink-mute); max-width: 68ch; }
+
+  /* ---------- 파이프라인 ---------- */
+
+  .flow {
+    font-family: var(--f-data);
+    font-size: 12.5px;
+    line-height: 2;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 18px;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--ink-mute);
+    margin-bottom: 14px;
+  }
+  .flow b { color: var(--ink); font-weight: 600; }
+  .flow em { color: var(--mark); font-style: normal; }
+
+  /* ---------- AWS ---------- */
+
+  .svc { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  .svc > div {
+    background: var(--surface);
+    padding: 13px 16px;
+    display: grid;
+    grid-template-columns: minmax(110px, max-content) 1fr;
+    gap: 4px 16px;
+    align-items: baseline;
+  }
+  .svc b {
+    font-family: var(--f-data);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .svc span { font-size: 13.5px; color: var(--ink-mute); }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+  footer p { max-width: 68ch; margin-bottom: 6px; }
+
+  @media (max-width: 560px) {
+    .svc > div { grid-template-columns: 1fr; }
+    .items li { grid-template-columns: 1fr; gap: 5px; }
+    .bars { grid-template-columns: 1fr; gap: 3px 0; }
+    .bars .track { margin-bottom: 4px; }
+    .bars dd { text-align: left; margin-bottom: 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">DocFlow · 캡스톤 디자인</p>
+    <h1>서식 183개, 채울 지점 8,904곳</h1>
+    <p class="standfirst">
+      앵커(신산업)·AID·혁신 3개 사업의 한글 서식 전체를 HWPX로 변환하고
+      스키마를 추출했습니다. 커버리지가 20%에서 100%로 올라갔고,
+      파이프라인이 다루지 못한 서식은 하나도 없었습니다.
+    </p>
+
+    <dl class="docstrip">
+      <div><dt>문서번호</dt><dd>DocFlow-2026-0921</dd></div>
+      <div><dt>시행일자</dt><dd>2026.09.21</dd></div>
+      <div><dt>단계</dt><dd>로드맵 4 / 8</dd></div>
+      <div><dt>대상</dt><dd>3개 사업</dd></div>
+    </dl>
+  </header>
+
+  <div class="figures">
+    <div class="fig"><b>183</b><span>스키마를 추출한 서식</span></div>
+    <div class="fig"><b>8,904</b><span>채워야 할 셀 (슬롯)</span></div>
+    <div class="fig"><b>281</b><span>명단·내역 반복영역</span></div>
+    <div class="fig is-ok"><b>0</b><span>변환·추출 실패</span></div>
+  </div>
+  <p class="figure-note">
+    원본 <span class="num">.hwp</span> 193개를 변환했고, 그중 서식이 아닌 문서
+    10건(서식 목차 9, 서식 신구대조표 1)을 제외한 183개에서 스키마를 뽑았습니다.
+  </p>
+
+  <!-- 1 -->
+  <section>
+    <h2><span class="no">01</span> 이번에 한 것</h2>
+    <p class="lede">
+      기존에는 앵커 서식 38개만 처리된 상태였습니다. AID 47개와 혁신 108개를
+      파이프라인에 태워 전체를 관통시켰습니다.
+    </p>
+
+    <div class="flow"><b>forms/</b>          원본 .hwp <b>193개</b>
+   │  tools/convert_templates.py   <em>[한컴 COM]</em>
+<b>templates/</b>      .hwpx <b>193개</b>   실패 0
+   │  tools/extract_schema.py      <em>[순수 파이썬]</em>
+<b>schemas/</b>        .json <b>183개</b>   실패 0
+                  누름틀 630 · 표 2,501 · 슬롯 8,904 · 반복영역 281</div>
+
+    <dl class="bars">
+      <dt>작업 전</dt>
+      <dd class="track"><i style="width:20.8%"></i></dd>
+      <dd>38 / 183</dd>
+      <dt>작업 후</dt>
+      <dd class="track"><i style="width:100%"></i></dd>
+      <dd>183 / 183</dd>
+    </dl>
+    <p class="figure-note" style="margin-bottom:0">서식 커버리지 — 20.8% → 100%</p>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <h2><span class="no">02</span> 추출 결과</h2>
+    <p class="lede">
+      사업마다 서식 수는 다르지만 서식 한 개당 슬롯 수는 <span class="num">44~52</span>개로
+      비슷합니다. 서식 묶음이 달라도 구조가 크게 다르지 않다는 뜻입니다.
+    </p>
+
+    <div class="scroll">
+      <table>
+        <caption>사업별 추출 내역</caption>
+        <thead>
+          <tr>
+            <th>사업</th><th class="r">서식</th><th class="r">누름틀</th>
+            <th class="r">표</th><th class="r">슬롯</th><th class="r">반복영역</th>
+            <th class="r">서식당 슬롯</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>혁신</td><td class="r">94</td><td class="r">333</td><td class="r">1,383</td><td class="r">4,912</td><td class="r">158</td><td class="r">52.3</td></tr>
+          <tr><td>AID</td><td class="r">45</td><td class="r">167</td><td class="r">630</td><td class="r">2,322</td><td class="r">63</td><td class="r">51.6</td></tr>
+          <tr><td>앵커(신산업)</td><td class="r">38</td><td class="r">130</td><td class="r">479</td><td class="r">1,652</td><td class="r">45</td><td class="r">43.5</td></tr>
+          <tr><td>미분류</td><td class="r">6</td><td class="r">0</td><td class="r">9</td><td class="r">18</td><td class="r">15</td><td class="r">3.0</td></tr>
+        </tbody>
+        <tfoot>
+          <tr><td>합계</td><td class="r">183</td><td class="r">630</td><td class="r">2,501</td><td class="r">8,904</td><td class="r">281</td><td class="r">48.7</td></tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <h3>카테고리별 슬롯 분포</h3>
+    <dl class="bars">
+      <dt>기안문</dt>          <dd class="track"><i class="mark" style="width:100%"></i></dd>   <dd>2,136</dd>
+      <dt>계획서·보고서</dt>   <dd class="track"><i style="width:97.6%"></i></dd> <dd>2,084</dd>
+      <dt>학생지원비</dt>      <dd class="track"><i style="width:36.2%"></i></dd> <dd>773</dd>
+      <dt>국내외여비</dt>      <dd class="track"><i style="width:34.4%"></i></dd> <dd>734</dd>
+      <dt>인건비</dt>          <dd class="track"><i style="width:32.8%"></i></dd> <dd>700</dd>
+      <dt>회의비</dt>          <dd class="track"><i style="width:11.5%"></i></dd> <dd>245</dd>
+      <dt>도서구입비</dt>      <dd class="track"><i style="width:11.0%"></i></dd> <dd>234</dd>
+      <dt>정산서</dt>          <dd class="track"><i style="width:4.6%"></i></dd>  <dd>99</dd>
+    </dl>
+    <p class="figure-note">
+      카테고리 이름이 사업마다 달라 같은 분류끼리 합산했습니다.
+      기안문은 서식 <span class="num">11</span>개뿐인데 슬롯이 가장 많습니다. 결재란이
+      <code>apb1_*</code>~<code>apb8_*</code>로 여덟 벌씩 반복되기 때문입니다.
+      슬롯 최다는 <strong>일반기안문(샘플 10종)</strong>으로 한 장에 <span class="num">360</span>개입니다.
+    </p>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <h2><span class="no">03</span> 설계 근거 재검증</h2>
+    <p class="lede">
+      README의 설계 결정은 앵커 38개를 해부해서 나온 것이었습니다. 표본이
+      <span class="num">4.8</span>배로 늘어난 지금도 같은 결론이 나오는지 확인했습니다.
+    </p>
+
+    <h3>① 누름틀은 기안문 계열에만 몰려 있다 — 유지</h3>
+    <p>
+      기안문·품의서 계열 <strong>15개 서식</strong>이 전체 누름틀 630개 중
+      <strong>547개(87%)</strong>를 차지합니다. 고유 이름은 51종입니다.
+      나머지 168개 서식이 83개를 나눠 갖습니다.
+    </p>
+
+    <h3>② 표 셀 채우기가 주 메커니즘이다 — 강화</h3>
+    <p>
+      누름틀이 아예 없는 서식이 <strong>85개(46%)</strong>입니다. 38개 표본에서는
+      42%였는데, 표본이 5배로 늘어도 비율이 유지됐습니다.
+      누름틀을 보조로 두고 표 셀 채우기를 주 경로로 잡은 결정이 더 탄탄해졌습니다.
+    </p>
+
+    <h3>③ 새 서식 유형도 전부 읽힌다 — 신규 확인</h3>
+    <p>
+      AID·혁신에서 앵커에 없던 카테고리가 들어왔습니다 — 국외여비 신청서, 회의록,
+      물품 검수확인서, 용역 구입 요구서, 도서구입비. 그럼에도
+      <strong>슬롯과 반복영역이 둘 다 0인 서식은 0개</strong>였습니다.
+      183개 전부에서 채울 지점을 찾아냈다는 뜻이고, 일반화 가능성의 근거입니다.
+    </p>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <h2><span class="no">04</span> 고친 것</h2>
+    <p class="lede">
+      새 서식을 태우자 기존 코드가 세 군데서 걸렸습니다. 전부 서식 수가 늘어나야
+      드러나는 문제였습니다.
+    </p>
+
+    <ul class="items">
+      <li>
+        <span class="file">schema/form.py</span>
+        <p>
+          파일명 파서가 앵커 형식 <code>(서식 5-05호) [앵커] 제목</code>만 처리해서
+          AID·혁신의 <code>[AID 서식 1-01~10호] 제목</code>이 통째로 실패했습니다.
+          <strong>155개(80%)의 서식번호·사업명이 비어 있었습니다.</strong>
+          <code>_NAME_BRACKET_RE</code>를 추가해 두 형식을 모두 받습니다.
+        </p>
+      </li>
+      <li>
+        <span class="file">extract_schema.py</span>
+        <p>
+          서식 목차·신구대조표 <strong>10건</strong>이 서식으로 섞여 들어와 수치를
+          부풀렸습니다. <code>SKIP_WORDS</code>로 제외합니다.
+        </p>
+      </li>
+      <li>
+        <span class="file">extract_schema.py</span>
+        <p>
+          구버전 개정본이 같은 서식 번호를 써서 출력 파일명이 겹쳤고,
+          <strong>10개가 덮어써져 사라졌습니다.</strong> 번호가 겹치면 파일명을
+          그대로 쓰도록 바꿔 183개 전부 보존합니다.
+        </p>
+      </li>
+    </ul>
+
+    <h3>작업 중 잡은 것</h3>
+    <p>
+      제외어를 처음에 <code>"신구대조표"</code>로 뒀더니
+      <code>(서식 2-06호) 계획서 신구대조표</code>가 같이 걸렸습니다. 이건 사업 변경
+      시 쓰는 <strong>실제 서식</strong>이라 <code>"서식 신구대조표"</code>로 좁혔습니다.
+      제외 규칙이 조용히 진짜 데이터를 지우는 경우라 확인이 필요했습니다.
+    </p>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <h2><span class="no">05</span> AWS 구성 (Phase 2)</h2>
+    <p class="lede">
+      컴퓨팅을 둘로 나눈 것이 핵심입니다. FastAPI는 상시 떠 있어야 하지만 GPU가
+      필요 없고, LLM은 GPU가 필요하지만 상시 떠 있을 필요가 없습니다.
+      요구사항이 정반대라 한 인스턴스에 올리지 않았습니다.
+    </p>
+
+    <div class="svc">
+      <div><b>EC2 (g4dn.xlarge)</b><span>EXAONE 3.5 7.8B 추론. T4 16GB에 Q4 양자화로 적재. 실습·시연 때만 켜고 끕니다.</span></div>
+      <div><b>ECS Fargate</b><span>FastAPI 웹 UI와 문서 생성. HWPX 조작은 순수 파이썬이라 같은 컨테이너 안에서 함수 호출로 끝납니다.</span></div>
+      <div><b>ECR</b><span>Fargate가 띄울 컨테이너 이미지. 서식이 내부 자료라 프라이빗 리포지토리로 둡니다.</span></div>
+      <div><b>S3</b><span>템플릿·스키마 읽기, 생성 문서 쓰기. 산출물은 수명주기 규칙으로 자동 삭제합니다.</span></div>
+      <div><b>RDS</b><span>문서 생성 이력과 검증 결과. 결재선과 문서 간 금액 대조가 관계형 질의라 선택했습니다.</span></div>
+    </div>
+
+    <p class="figure-note" style="margin-top:14px;margin-bottom:0">
+      GPU 인스턴스는 상시 가동 시 월 <span class="num">$380</span>입니다. 필요할 때만
+      켜는 것이 비용 구조의 전제이고, 발표에서 컴퓨팅 분리를 설명하는 근거이기도 합니다.
+    </p>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <h2><span class="no">06</span> 아직 안 된 것</h2>
+    <p class="lede">
+      발표 전에 메워야 할 순서대로 적었습니다. 위 세 개는 수치나 주장의 근거가
+      비어 있는 항목입니다.
+    </p>
+
+    <div class="gaps">
+      <div class="gap">
+        <h4>자동 테스트가 0개 <span class="pill open">근거 없음</span></h4>
+        <p>
+          <code>tests/</code>가 비어 있습니다. "파싱 실패 0", "라운드트립 값 일치" 같은
+          주장을 재현할 방법이 저장소에 없습니다. 필드 추출·라운드트립·스키마 추출
+          세 개면 채워집니다.
+        </p>
+      </div>
+      <div class="gap">
+        <h4>신규 카테고리 값 주입 미검증 <span class="pill open">근거 없음</span></h4>
+        <p>
+          슬롯 추출이 된다고 값 주입까지 되는 건 별개입니다. 회의록·국외여비·물품
+          검수확인서처럼 이번에 처음 들어온 유형은 아직 값을 넣어 <span class="num">.hwp</span>로
+          뽑아본 적이 없습니다. 표본 몇 개면 확인됩니다.
+        </p>
+      </div>
+      <div class="gap">
+        <h4>검증 체크리스트가 0개 <span class="pill next">다음 단계</span></h4>
+        <p>
+          스키마의 <code>checklist</code>가 183개 전부 비어 있습니다. 로드맵 5단계의
+          입력값입니다. 슬롯이 8,904개라 전부 채울 수 없으니 기안문 1종·정산서 1종만
+          수동으로 채워 규칙 엔진을 먼저 세우는 편이 낫습니다.
+        </p>
+      </div>
+      <div class="gap">
+        <h4>카테고리 이름이 사업마다 다름 <span class="pill next">정리 필요</span></h4>
+        <p>
+          같은 분류를 혁신은 <code>2_계획서및보고서</code>, 앵커는
+          <code>2. [계획서 및 보고서] 관련 서식</code>으로 씁니다. 폴더명을 그대로 쓰고
+          있어 사업을 가로지르는 통합 분류가 안 됩니다.
+        </p>
+      </div>
+      <div class="gap">
+        <h4>서식 번호 없는 6건 <span class="pill next">보류 가능</span></h4>
+        <p>
+          행정지원처의 성범죄 경력 조회 동의서(부서용/회신용)입니다. 외부 기관 양식이라
+          서식 번호 체계 밖에 있고, AID·혁신에 중복 배포되어 실질 2종입니다.
+          파일명으로 저장돼 동작에는 지장이 없습니다.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 로드맵 -->
+  <section>
+    <h2><span class="no">07</span> 로드맵</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>단계</th><th>검증 기준</th><th>상태</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>프로젝트 스캐폴딩 + HWPX 코어</td><td>필드 추출</td><td><span class="pill done">완료</span></td></tr>
+          <tr><td class="num">2</td><td>한컴 COM 어댑터 격리 + 일괄 변환</td><td>변환 193 = 원본 193</td><td><span class="pill done">완료</span></td></tr>
+          <tr><td class="num">3</td><td>값 주입 → .hwp / .pdf 산출</td><td>한글에서 정상 열림</td><td><span class="pill done">완료</span></td></tr>
+          <tr><td class="num">4</td><td>서식별 스키마 자동 추출</td><td>183개 추출, 실패 0</td><td><span class="pill done">완료</span></td></tr>
+          <tr><td class="num">5</td><td>규칙 기반 검증 엔진</td><td>누락·형식·합계 리포트</td><td><span class="pill next">다음</span></td></tr>
+          <tr><td class="num">6</td><td>로컬 LLM 연동</td><td>체크리스트 기반 판정</td><td><span class="pill open">미착수</span></td></tr>
+          <tr><td class="num">7</td><td>FastAPI 웹 UI</td><td>입력 → 검증 → 생성</td><td><span class="pill open">미착수</span></td></tr>
+          <tr><td class="num">8</td><td>AWS 이전</td><td>COM 분리 후 동작</td><td><span class="pill open">미착수</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      수치는 <code>schemas/</code>의 JSON 183개를 직접 집계한 값입니다.
+      3단계 "값 주입 → 산출"은 앵커 서식으로 확인한 결과이며, 이번에 추가된
+      AID·혁신 145개에 대해서는 아직 재확인하지 않았습니다.
+    </p>
+    <p>DocFlow · 캡스톤 디자인 · 2026.09.21 기준</p>
+  </footer>
+
+</div>
+</body>
+</html>

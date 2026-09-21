@@ -100,9 +100,18 @@ _NAME_RE = re.compile(
 )
 
 
+#: "[AID 서식 1-01~10호] 일반기안문(샘플 10종)"
+#: "[혁신 서식 9-03호] 용역구입비 지출품의서"
+_NAME_BRACKET_RE = re.compile(
+    r"^\[(?P<program>[^\]]+?)\s*서식\s*(?P<form_id>[\d\-~호+\s]+?)호?\]\s*"
+    r"(?P<title>.+)$"
+)
+
+
 def parse_form_name(stem: str) -> tuple[str, str, str]:
     """파일명에서 (서식번호, 사업명, 서식이름) 을 뽑는다."""
-    m = _NAME_RE.match(stem.strip())
+    stem = stem.strip()
+    m = _NAME_RE.match(stem) or _NAME_BRACKET_RE.match(stem)
     if not m:
         return "", "", stem
     form_id = m.group("form_id").replace("호", "").strip()

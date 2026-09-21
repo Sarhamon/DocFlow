@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import collections
 import json
 import sys
 from pathlib import Path
@@ -27,6 +28,9 @@ from docflow.schema.form import (  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT / "templates"
 OUT_ROOT = ROOT / "schemas"
+
+#: 서식이 아니라 서식 묶음을 설명하는 문서라 스키마를 뽑지 않는다.
+SKIP_WORDS = ("서식 목차", "서식 신구대조표")
 
 
 def find_label(cell: Cell, cells: list[Cell]) -> str:
@@ -195,17 +199,29 @@ def extract(template: Path) -> FormSchema:
 
 
 def main() -> int:
-    templates = sorted(TEMPLATE_ROOT.rglob("*.hwpx"))
+    templates = [
+        t
+        for t in sorted(TEMPLATE_ROOT.rglob("*.hwpx"))
+        if not any(w in t.stem for w in SKIP_WORDS)
+    ]
     if not templates:
         print(f"템플릿이 없습니다: {TEMPLATE_ROOT}  (먼저 tools/convert_templates.py 실행)")
         return 1
+
+    # 구버전 개정본이 같은 서식 번호를 쓰므로, 겹치는 번호는 파일명을 그대로 쓴다.
+    dup = collections.Counter(
+        (t.parent, parse_form_name(t.stem)[0]) for t in templates
+    )
 
     OUT_ROOT.mkdir(exist_ok=True)
     index: dict[str, list[dict]] = {}
     for template in templates:
         rel = template.relative_to(TEMPLATE_ROOT)
         schema = extract(template)
-        name = (schema.form_id or template.stem).replace("/", "_")
+        name = schema.form_id
+        if not name or dup[(template.parent, name)] > 1:
+            name = template.stem
+        name = name.replace("/", "_")
         # 템플릿 경로를 미러링한다. 원본 폴더명이 유지되어야 공개 가능한 서식과
         # 내부용 서식을 .gitignore 로 구분할 수 있다.
         out = OUT_ROOT / rel.parent / f"{name}.json"
