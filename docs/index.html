@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<meta name="description" content="3개 사업 183개 한글 서식의 HWPX 변환·스키마 추출 결과와 남은 과제를 정리한 DocFlow 중간 리포트.">
+<meta name="description" content="3개 사업 183개 한글 서식의 HWPX 변환·스키마 추출과 규칙 기반 검증 엔진 진행 현황을 정리한 DocFlow 리포트.">
 <meta property="og:title" content="DocFlow 서식 추출 현황">
-<meta property="og:description" content="서식 183개, 채울 지점 8,904곳. 커버리지 20.8% → 100%.">
+<meta property="og:description" content="서식 183개, 채울 지점 8,904곳. 검증 규칙 3종 동작.">
 <meta property="og:type" content="article">
 <title>DocFlow 서식 추출 현황</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -428,15 +428,15 @@
     <p class="eyebrow">DocFlow · 캡스톤 디자인</p>
     <h1>서식 183개, 채울 지점 8,904곳</h1>
     <p class="standfirst">
-      앵커(신산업)·AID·혁신 3개 사업의 한글 서식 전체를 HWPX로 변환하고
-      스키마를 추출했습니다. 커버리지가 20%에서 100%로 올라갔고,
-      파이프라인이 다루지 못한 서식은 하나도 없었습니다.
+      앵커(신산업)·AID·혁신 3개 사업의 한글 서식 전체를 HWPX로 변환하고 스키마를
+      추출했습니다. 파이프라인이 다루지 못한 서식은 하나도 없었습니다.
+      그 스키마 위에서 규칙 기반 검증 엔진이 필수 누락·금액 합계·날짜를 잡습니다.
     </p>
 
     <dl class="docstrip">
       <div><dt>문서번호</dt><dd>DocFlow-2026-0921</dd></div>
       <div><dt>시행일자</dt><dd>2026.09.21</dd></div>
-      <div><dt>단계</dt><dd>로드맵 4 / 8</dd></div>
+      <div><dt>단계</dt><dd>로드맵 5 / 8</dd></div>
       <div><dt>대상</dt><dd>3개 사업</dd></div>
     </dl>
   </header>
@@ -445,6 +445,7 @@
     <div class="fig"><b>183</b><span>스키마를 추출한 서식</span></div>
     <div class="fig"><b>8,904</b><span>채워야 할 셀 (슬롯)</span></div>
     <div class="fig"><b>281</b><span>명단·내역 반복영역</span></div>
+    <div class="fig"><b>3</b><span>동작하는 검증 규칙</span></div>
     <div class="fig is-ok"><b>0</b><span>변환·추출 실패</span></div>
   </div>
   <p class="figure-note">
@@ -604,7 +605,91 @@
 
   <!-- 5 -->
   <section>
-    <h2><span class="no">05</span> AWS 구성 (Phase 2)</h2>
+    <h2><span class="no">05</span> 검증 엔진</h2>
+    <p class="lede">
+      규칙 세 종류가 동작합니다. 설계의 축은 커버리지가 아니라 <strong>오탐을 줄이는 것</strong>입니다.
+      결재 문서라 틀린 경고가 섞이면 아무도 경고를 안 보게 됩니다.
+    </p>
+
+    <div class="flow">validate(schema, values, fields=None) -> list[Issue]
+                      <em>^표 셀</em>    <em>^누름틀</em></div>
+    <p class="figure-note">
+      표 셀과 누름틀을 따로 받습니다. <code>HwpxDocument.fill()</code> 이 누름틀 이름을 키로 받기
+      때문에, 나중에 값을 주입할 때 <code>fields</code> 를 그대로 넘길 수 있습니다.
+    </p>
+
+    <h3>규칙별 적용 범위</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>규칙</th><th>코드</th><th class="r">적용 서식</th><th class="r">검사 대상</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>필수 누락</td><td><code>REQUIRED_EMPTY</code></td><td class="r">177 / 183</td><td class="r">4,700</td></tr>
+          <tr><td>금액 합계</td><td><code>AMOUNT_TOTAL_MISMATCH</code></td><td class="r">78 / 183</td><td class="r">298</td></tr>
+          <tr><td>날짜</td><td><code>DATE_INVALID</code> <code>DATE_ORDER</code></td><td class="r">95 / 183</td><td class="r">206</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <dl class="bars">
+      <dt>필수 누락</dt> <dd class="track"><i style="width:96.7%"></i></dd> <dd>96.7%</dd>
+      <dt>날짜</dt>     <dd class="track"><i style="width:51.9%"></i></dd> <dd>51.9%</dd>
+      <dt>금액 합계</dt> <dd class="track"><i style="width:42.6%"></i></dd> <dd>42.6%</dd>
+    </dl>
+
+    <h3>일부러 빼는 것</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>제외 대상</th><th class="r">개수</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>항목명만 보고 잡은 빈 칸</td><td class="r">4,177</td><td>인접 셀 추론이라 첨부 확인란처럼 안 채우는 게 정상인 칸이 섞임</td></tr>
+          <tr><td>반복 영역 안의 칸</td><td class="r">168</td><td>명단은 수용 행을 다 채우지 않는 게 정상</td></tr>
+          <tr><td>이름 없는 수식 누름틀</td><td class="r">305</td><td>한글이 스스로 계산. 이름이 없어 키로 쓸 수도 없음</td></tr>
+          <tr><td>결재란 <code>apbN_*</code></td><td class="r">90</td><td>작성자가 아니라 결재선이 채우는 자리</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="figure-note">
+      마지막 항목을 빼지 않으면 <strong>규칙이 아니라 우연이 됩니다.</strong>
+      <code>apb4_date</code> 는 템플릿에 <code>00/00</code> 이 남아 있어 필수로 잡히는데
+      <code>apb1_date</code> 는 공백이라 안 잡힙니다. 같은 성격의 칸이 예시 글자가 남았는지로 갈립니다.
+    </p>
+
+    <h3>구현하며 걸린 함정</h3>
+    <ul class="items">
+      <li>
+        <span class="file">날짜</span>
+        <p>
+          <code>2024.5.2.(목) 13:00~17:00</code> 의 물결은 기간이 아니라 <strong>시각</strong>을
+          나눕니다. 물결로 쪼개면 뒷조각에 날짜가 없어 오탐이 납니다. 값에서 날짜만 뽑아
+          연속된 것끼리 순서를 봅니다.
+        </p>
+      </li>
+      <li>
+        <span class="file">금액 합계</span>
+        <p>
+          반복 영역을 기준으로 삼지 않습니다. 명단 첫 줄이 예시 행(<code>홍길동</code>)이라
+          반복 영역에서 빠지기 때문입니다. 교통비 내역서는 데이터가 7~16행인데 반복 영역이
+          8~16행이라, 그대로 더하면 <span class="num">45,000</span> 이 나와 합계
+          <span class="num">50,000</span> 과 안 맞습니다. 대신 합계 셀의 열에서 직전 합계
+          다음 행부터 셉니다.
+        </p>
+      </li>
+      <li>
+        <span class="file">반복 영역</span>
+        <p>
+          합계 행도 채워진 셀이 적어 빈 행으로 잡혀, 반복 영역 <span class="num">23</span>개가
+          합계 행을 데이터 행으로 삼키고 있었습니다. 합계 아래는 데이터가 아니므로(서명란·주의사항)
+          합계 행에서 영역을 끊도록 고쳤습니다. <span class="num">23</span> → <span class="num">0</span>.
+        </p>
+      </li>
+    </ul>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <h2><span class="no">06</span> AWS 구성 (Phase 2)</h2>
     <p class="lede">
       컴퓨팅을 둘로 나눈 것이 핵심입니다. FastAPI는 상시 떠 있어야 하지만 GPU가
       필요 없고, LLM은 GPU가 필요하지만 상시 떠 있을 필요가 없습니다.
@@ -627,21 +712,13 @@
 
   <!-- 6 -->
   <section>
-    <h2><span class="no">06</span> 아직 안 된 것</h2>
+    <h2><span class="no">07</span> 아직 안 된 것</h2>
     <p class="lede">
       발표 전에 메워야 할 순서대로 적었습니다. 위 세 개는 수치나 주장의 근거가
       비어 있는 항목입니다.
     </p>
 
     <div class="gaps">
-      <div class="gap">
-        <h4>자동 테스트가 0개 <span class="pill open">근거 없음</span></h4>
-        <p>
-          <code>tests/</code>가 비어 있습니다. "파싱 실패 0", "라운드트립 값 일치" 같은
-          주장을 재현할 방법이 저장소에 없습니다. 필드 추출·라운드트립·스키마 추출
-          세 개면 채워집니다.
-        </p>
-      </div>
       <div class="gap">
         <h4>신규 카테고리 값 주입 미검증 <span class="pill open">근거 없음</span></h4>
         <p>
@@ -651,11 +728,26 @@
         </p>
       </div>
       <div class="gap">
-        <h4>검증 체크리스트가 0개 <span class="pill next">다음 단계</span></h4>
+        <h4>표 셀 쓰기가 없다 <span class="pill open">7단계 전 필수</span></h4>
         <p>
-          스키마의 <code>checklist</code>가 183개 전부 비어 있습니다. 로드맵 5단계의
-          입력값입니다. 슬롯이 8,904개라 전부 채울 수 없으니 기안문 1종·정산서 1종만
-          수동으로 채워 규칙 엔진을 먼저 세우는 편이 낫습니다.
+          <code>HwpxDocument.fill()</code> 은 누름틀만 씁니다. 슬롯 8,904개가 전부 표
+          셀인데 표에 값을 넣는 경로가 아직 없습니다. 검증은 읽기만 해서 안 막히지만,
+          웹 UI에서 문서를 만들려면 반드시 필요합니다.
+        </p>
+      </div>
+      <div class="gap">
+        <h4>문서 간 금액 일치 미구현 <span class="pill next">다음 단계</span></h4>
+        <p>
+          규칙 코드가 맡기로 한 네 가지 중 마지막입니다. 지출품의서 금액과 정산서 금액을
+          맞추는 식이라 문서를 여러 개 받아야 하고, 입력 계약이 또 바뀝니다. 어떤 문서끼리
+          짝지을지부터 정해야 합니다.
+        </p>
+      </div>
+      <div class="gap">
+        <h4>누름틀 항목명이 영문 <span class="pill next">정리 필요</span></h4>
+        <p>
+          오류 메시지가 <code>'docnumber' 칸이 비어 있습니다</code> 로 나옵니다. 서식 예시가
+          같이 붙어 뜻은 통하지만, 교직원이 쓸 화면이라면 한글 이름이 필요합니다.
         </p>
       </div>
       <div class="gap">
@@ -679,7 +771,7 @@
 
   <!-- 로드맵 -->
   <section>
-    <h2><span class="no">07</span> 로드맵</h2>
+    <h2><span class="no">08</span> 로드맵</h2>
     <div class="scroll">
       <table>
         <thead><tr><th>#</th><th>단계</th><th>검증 기준</th><th>상태</th></tr></thead>
@@ -688,8 +780,8 @@
           <tr><td class="num">2</td><td>한컴 COM 어댑터 격리 + 일괄 변환</td><td>변환 193 = 원본 193</td><td><span class="pill done">완료</span></td></tr>
           <tr><td class="num">3</td><td>값 주입 → .hwp / .pdf 산출</td><td>한글에서 정상 열림</td><td><span class="pill done">완료</span></td></tr>
           <tr><td class="num">4</td><td>서식별 스키마 자동 추출</td><td>183개 추출, 실패 0</td><td><span class="pill done">완료</span></td></tr>
-          <tr><td class="num">5</td><td>규칙 기반 검증 엔진</td><td>누락·형식·합계 리포트</td><td><span class="pill next">다음</span></td></tr>
-          <tr><td class="num">6</td><td>로컬 LLM 연동</td><td>체크리스트 기반 판정</td><td><span class="pill open">미착수</span></td></tr>
+          <tr><td class="num">5</td><td>규칙 기반 검증 엔진</td><td>규칙 3종 + 테스트 35개</td><td><span class="pill next">진행 중</span></td></tr>
+          <tr><td class="num">6</td><td>로컬 LLM 연동</td><td>규칙 밖 정성 판정</td><td><span class="pill open">미착수</span></td></tr>
           <tr><td class="num">7</td><td>FastAPI 웹 UI</td><td>입력 → 검증 → 생성</td><td><span class="pill open">미착수</span></td></tr>
           <tr><td class="num">8</td><td>AWS 이전</td><td>COM 분리 후 동작</td><td><span class="pill open">미착수</span></td></tr>
         </tbody>
@@ -702,6 +794,8 @@
       수치는 <code>schemas/</code>의 JSON 183개를 직접 집계한 값입니다.
       3단계 "값 주입 → 산출"은 앵커 서식으로 확인한 결과이며, 이번에 추가된
       AID·혁신 145개에 대해서는 아직 재확인하지 않았습니다.
+      검증 엔진은 pytest 35개로 덮여 있고, 테스트는 서식 파일을 읽지 않고 스키마를
+      코드로 만들어 씁니다 — 원본이 내부 자료라 저장소에 없기 때문입니다.
     </p>
     <p>DocFlow · 캡스톤 디자인 · 2026.09.21 기준</p>
   </footer>
