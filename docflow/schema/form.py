@@ -36,6 +36,28 @@ def is_total_label(text: str) -> bool:
     return text.replace(" ", "").strip() in TOTAL_LABELS
 
 
+#: 자리표시자에 쓰인 날짜. 서식에는 `2000.00.00`, `20○○년 ○○월 ○○일` 처럼
+#: 숫자 자리를 0 이나 ○ 로 채워 둔다. 실제 입력값 파싱과는 패턴이 다르다.
+_PH_DATE = r"(?:[0-9○O]{4}\s*[.\-/년]\s*[0-9○O]{1,2}\s*[.\-/월]\s*[0-9○O]{1,2}\s*[.일]?)"
+_PH_WEEKDAY = r"(?:\s*\(\s*[월화수목금토일0○]\s*요?일?\s*\))?"
+_PH_TIME = (
+    r"(?:\s*[0-9○O]{1,2}\s*[:;]\s*[0-9○O]{2}"
+    r"(?:\s*[~\-]\s*[0-9○O]{1,2}\s*[:;]\s*[0-9○O]{2})?)?"
+)
+
+#: 칸 전체가 날짜(또는 날짜 기간)인 경우만 통과시킨다.
+#: `○○○○처-000000 2000.00.00` 처럼 문서번호가 붙은 칸을 날짜 칸으로 오인하지 않기 위함이다.
+DATE_PLACEHOLDER_RE = re.compile(
+    rf"^{_PH_DATE}{_PH_WEEKDAY}{_PH_TIME}"
+    rf"(?:\s*[~\-]\s*{_PH_DATE}{_PH_WEEKDAY}{_PH_TIME})?\s*$"
+)
+
+
+def is_date_placeholder(text: str) -> bool:
+    """자리표시자가 날짜 칸을 가리키는지."""
+    return bool(DATE_PLACEHOLDER_RE.match(" ".join(text.split())))
+
+
 class FieldSpec(BaseModel):
     """누름틀 하나. 기안문 계열에만 풍부하게 존재한다."""
 
