@@ -95,11 +95,12 @@ def _hwp_pids() -> set[int]:
     result = subprocess.run(
         ["tasklist", "/fi", "imagename eq Hwp.exe", "/fo", "csv", "/nh"],
         capture_output=True,
-        text=True,
         check=False,
     )
+    # tasklist 는 한글 윈도우에서 cp949 로 출력한다. 환경(PYTHONUTF8 등)에 따라 text=True 가
+    # 디코딩에 실패하므로 바이트로 받고, 필요한 PID 숫자만 읽는다.
     pids = set()
-    for line in result.stdout.splitlines():
+    for line in result.stdout.decode("utf-8", errors="replace").splitlines():
         parts = line.split('","')
         if len(parts) > 1 and parts[1].isdigit():
             pids.add(int(parts[1]))
