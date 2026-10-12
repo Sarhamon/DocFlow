@@ -34,12 +34,14 @@ def para(text: str = "", char: str = "10", pr: str = "11", ctrl: str = "") -> st
     )
 
 
-def cell(row: int, col: int, content: str = "", *, colspan: int = 1, rowspan: int = 1) -> str:
-    """셀 하나. content 는 문단 XML (para() 의 결과) 또는 빈 문자열."""
+def cell(
+    row: int, col: int, content: str = "", *, colspan: int = 1, rowspan: int = 1, border: str = "8"
+) -> str:
+    """셀 하나. content 는 문단 XML (para() 의 결과) 또는 빈 문자열. border 는 테두리 모양 id."""
     body = content or para()
     return (
         '<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" '
-        'borderFillIDRef="8">'
+        f'borderFillIDRef="{border}">'
         '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" '
         'linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" '
         f'hasTextRef="0" hasNumRef="0">{body}</hp:subList>'

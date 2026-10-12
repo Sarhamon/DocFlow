@@ -20,7 +20,8 @@ PLACEHOLDER_PATTERNS = [
     re.compile(r"0{2,}"),  # 2000.00.00, 0,000,000원, 재학생 00명, 학번 2000000000
     re.compile(r"[□▢☐]"),  # □현장견학 (선택 항목)
     re.compile(r"[ㅇㆍ]{2,}"),  # ㅇㅇㅇ (한글 이응을 자리표시자로 쓴 경우)
-    re.compile(r"홍길[동서남북]"),  # 예시 인명. 명단 예시 행을 헤더로 오인하지 않기 위함
+    re.compile(r"홍\s*길\s*[동서남북]"),  # 예시 인명 (`홍 길 동` 처럼 띄어 쓴 것도). 예시 행을
+    # 헤더로 오인하지 않기 위함
 ]
 
 
@@ -36,6 +37,11 @@ TOTAL_LABELS = {"합계", "계", "총계", "소계"}
 def is_total_label(text: str) -> bool:
     """셀 텍스트가 합계 항목명인지."""
     return text.replace(" ", "").strip() in TOTAL_LABELS
+
+
+def is_total_text(text: str) -> bool:
+    """합계 칸. `합계(반드시 부가세 포함)`, `합계 : 10,500원` 처럼 설명이나 값이 붙어도 합계다."""
+    return is_total_label(re.sub(r"\(.*?\)|\(.*$|:.*$", "", text))
 
 
 #: 자리표시자에 쓰인 날짜. 서식에는 `2000.00.00`, `20○○년 ○○월 ○○일` 처럼

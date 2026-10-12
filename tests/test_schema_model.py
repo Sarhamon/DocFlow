@@ -102,6 +102,12 @@ def test_헤더_행이_데이터_행_아래에_있으면_거부한다():
         RepeatSpec(table=0, start_row=5, end_row=9, header_rows=[5])
 
 
+def test_예시_항목_행은_헤더와_데이터_사이에_있어야_한다():
+    RepeatSpec(table=0, header_rows=[0], example_rows=[1, 2], start_row=3, end_row=5)
+    with pytest.raises(ValidationError, match="예시 항목 행"):
+        RepeatSpec(table=0, header_rows=[0], example_rows=[3], start_row=3, end_row=5)
+
+
 def test_합계_행이_없는_반복영역도_된다():
     rep = RepeatSpec(table=0, start_row=2, end_row=11)
     assert rep.total_row is None

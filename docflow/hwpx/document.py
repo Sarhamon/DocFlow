@@ -335,7 +335,10 @@ class HwpxDocument:
         않도록 호출하는 쪽이 알려준다. 없으면 표의 마지막 행까지로 본다.
 
         행이 모자라면 기본은 **아무것도 쓰지 않고** CapacityError 를 낸다.
-        extend=True 면 last_row 행을 복제해 필요한 만큼 늘린다(그 아래 행은 밀려난다).
+        extend=True 면 행을 복제해 필요한 만큼 늘린다(그 아래 행은 밀려난다). 복제하는 행은
+        영역의 가운데 행이고 마지막 행 바로 위에 넣는다. 서식은 영역의 첫 행과 마지막 행에만
+        굵은 테두리를 두므로, 마지막 행을 복제하면 늘린 행 사이에 이중선이 생긴다.
+        가운데 행이 없거나(영역이 두 행 이하) 복제할 수 없으면 마지막 행을 복제한다.
         어느 경우든 실패하면 문서는 호출 전 그대로다(늘린 행도, 이미 쓴 칸도 되돌린다).
         쓴 칸 수를 반환한다.
 
@@ -362,8 +365,8 @@ class HwpxDocument:
         snapshot = copy.deepcopy(self._root(section))
         was_dirty = section in self._dirty
         try:
-            for k in range(max(need, 0)):
-                self.insert_row(table, region_end + k)
+            if need > 0:
+                self._extend_region(table, first_row, region_end, need)
             targets = [
                 (first_row + i, col + j, v)
                 for i, line in enumerate(rows)
@@ -382,6 +385,21 @@ class HwpxDocument:
                 self._dirty.discard(section)
             raise
         return len(targets)
+
+    def _extend_region(self, table: int, first_row: int, last_row: int, need: int) -> None:
+        """반복영역 first_row..last_row 를 need 행 늘린다. 마지막 행은 영역 끝에 남긴다."""
+        middle = last_row - 1
+        if middle > first_row:
+            try:  # 가운데 행 복제가 막히면(누름틀·병합) 문서는 그대로이고 마지막 행으로 간다
+                self.insert_row(table, middle)
+            except HwpxError:
+                pass
+            else:
+                for k in range(1, need):
+                    self.insert_row(table, middle + k)
+                return
+        for k in range(need):
+            self.insert_row(table, last_row + k)
 
     def insert_row(self, table: int, after: int, *, clear: bool = True) -> int:
         """after 행을 복제해 그 바로 아래에 새 행을 넣는다. 새 행의 번호를 반환한다.

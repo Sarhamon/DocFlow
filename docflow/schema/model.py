@@ -1,6 +1,6 @@
 """서식 스키마 v2 — 서식 하나를 기계가 읽을 수 있는 형태로 기술한다.
 
-옛 모델(`schema/form.py`)이 실제 서식에서 틀리게 나온 지점을 바로잡은 것이다.
+옛 모델(v1, `schema/form.py` — M3 에서 삭제)이 실제 서식에서 틀리게 나온 지점을 바로잡은 것이다.
 
 * 반복영역이 합계 행을 포함하고 예시 행을 빼먹었다 -> 헤더 행 / 데이터 행 / 합계 행을 따로 둔다.
 * 헤더가 두 줄인 서식에서 열 이름이 비었다 -> 열마다 헤더 줄을 합친 이름을 둔다.
@@ -102,6 +102,10 @@ class RepeatSpec(BaseModel):
     end_row: int = Field(ge=0, description="마지막 데이터 행 (합계 행 제외)")
     total_row: int | None = Field(default=None, description="합계 행. 없으면 None")
     has_example: bool = Field(default=False, description="첫 데이터 행이 예시 값을 담고 있는가")
+    example_rows: list[int] = Field(
+        default_factory=list,
+        description="헤더와 데이터 행 사이에 있는, 모양이 다른 예시 항목 행. 생성할 때 비운다",
+    )
     columns: list[RepeatColumn] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
@@ -123,6 +127,9 @@ class RepeatSpec(BaseModel):
             raise ValueError("합계 행은 데이터 행 아래에 있어야 한다")
         if any(r >= self.start_row for r in self.header_rows):
             raise ValueError("헤더 행은 데이터 행 위에 있어야 한다")
+        top = max(self.header_rows, default=-1)
+        if any(not top < r < self.start_row for r in self.example_rows):
+            raise ValueError("예시 항목 행은 헤더 행과 데이터 행 사이에 있어야 한다")
         return self
 
 

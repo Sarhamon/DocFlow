@@ -372,6 +372,36 @@ def test_되돌린_뒤에_쓴_값도_저장된다(total_doc, tmp_path):
     assert reopen(total_doc, tmp_path).get_cell(0, 2, 1) == "롤백 후"
 
 
+def _borders(doc: HwpxDocument) -> list[str]:
+    """행마다 첫 칸의 테두리 모양 id."""
+    _s, tbl, _d = doc._table_elements()[0]
+    return [tr.find(f"{{{HP}}}tc").get("borderFillIDRef") for tr in tbl.findall(f"{{{HP}}}tr")]
+
+
+def _bordered(tmp_path, data_rows: int) -> HwpxDocument:
+    """교통비 지급 내역서처럼 영역 첫 행은 위 테두리(26), 마지막 행은 아래 테두리(24)가 굵다."""
+    styles = ["26"] + ["10"] * (data_rows - 2) + ["24"]
+    rows = [[hf.cell(0, 0, hf.para("성명"))]]
+    rows += [[hf.cell(r + 1, 0, border=b)] for r, b in enumerate(styles)]
+    rows += [[hf.cell(data_rows + 1, 0, hf.para("합계"), border="15")]]
+    body = hf.section(hf.table(data_rows + 2, 1, rows))
+    return HwpxDocument.open(hf.build(tmp_path / "b.hwpx", body))
+
+
+def test_늘린_행은_가운데_행의_테두리를_따른다(tmp_path):
+    """마지막 행을 복제하면 굵은 아래 테두리가 늘린 행마다 붙어 이중선이 생겼다."""
+    doc = _bordered(tmp_path, 4)
+    doc.fill_rows(0, 1, [["가"]] * 6, last_row=4, extend=True)
+    assert _borders(reopen(doc, tmp_path)) == ["8", "26", "10", "10", "10", "10", "24", "15"]
+    assert [row[0] for row in doc.tables()[0].grid()][1:7] == ["가"] * 6
+
+
+def test_가운데_행이_없으면_마지막_행을_복제한다(tmp_path):
+    doc = _bordered(tmp_path, 2)
+    doc.fill_rows(0, 1, [["가"]] * 3, last_row=2, extend=True)
+    assert _borders(doc) == ["8", "26", "24", "24", "15"]
+
+
 def test_영역이_표_밖이면_거부한다(total_doc):
     with pytest.raises(CellNotFound):
         total_doc.fill_rows(0, 2, [["x"]], last_row=9)

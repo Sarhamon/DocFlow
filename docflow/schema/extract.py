@@ -35,7 +35,7 @@ from docflow.schema.rules import (
     is_approval_placeholder,
     is_approval_title,
     is_placeholder,
-    is_total_label,
+    is_total_text,
     parse_form_name,
 )
 
@@ -132,10 +132,8 @@ def _is_serial(text: str) -> bool:
     return text.isdigit() and len(text) <= 3
 
 
-def _is_total_text(text: str) -> bool:
-    """합계 칸. `합계(반드시 부가세 포함)` 처럼 괄호 설명이 붙어도 합계로 본다."""
-    return is_total_label(re.sub(r"\(.*?\)|\(.*$", "", text))
-
+#: 숫자로만 된 칸 (1, 5, 1,700,000) — 항목명이 될 수 없다
+_NUMERIC_RE = re.compile(r"^[\d,.\-\s]+$")
 
 #: 연번으로 반복영역을 판정할 때의 최소 행 수
 MIN_SERIAL_ROWS = 3
@@ -233,7 +231,7 @@ def _make_repeat(
         start -= 1
         has_example = True
 
-    headers = _header_rows(layout, start)
+    headers, example_rows = _header_rows(layout, start, layout.by_row[start][0].col)
     if not headers:
         return None
 
@@ -264,7 +262,7 @@ def _make_repeat(
     total = end + 1
     total_row = (
         total
-        if total < table.rows and any(_is_total_text(t) for t in layout.row_texts(total))
+        if total < table.rows and any(is_total_text(t) for t in layout.row_texts(total))
         else None
     )
     return RepeatSpec(
@@ -273,7 +271,8 @@ def _make_repeat(
         start_row=start,
         end_row=end,
         total_row=total_row,
-        has_example=has_example,
+        has_example=has_example or bool(example_rows),
+        example_rows=example_rows,
         columns=columns,
     )
 
@@ -295,21 +294,36 @@ def _prefilled(first: str, second: str) -> str | None:
     return None
 
 
-def _header_rows(layout: _Layout, start: int) -> list[int]:
-    """데이터 바로 위의 헤더 행. 아래로 병합된 칸이 그 행까지 내려오면 윗줄도 헤더다."""
+def _header_rows(layout: _Layout, start: int, first_col: int) -> tuple[list[int], list[int]]:
+    """(헤더 행, 예시 항목 행). 아래로 병합된 칸이 헤더 행까지 내려오면 윗줄도 헤더다.
+
+    데이터 바로 위가 연번이 거꾸로 이어지는 행(5, 4, … 1)이면 모양이 다른 예시 항목이다
+    (인건비 입금계좌 확인서: 항목 하나가 세 줄에 병합돼 있다). 그 행들을 건너뛰어 진짜 헤더를
+    찾고, 건너뛴 행은 예시 항목 행으로 돌려준다.
+    """
+    def item_at(row: int) -> tuple[Cell | None, int | None]:
+        cell = layout.cover.get((row, first_col))
+        text = cell.text.strip() if cell is not None else ""
+        return cell, (int(text) if _is_serial(text) else None)
+
     h = start - 1
+    last_cell, last = item_at(start)
+    while h >= 0:
+        cell, n = item_at(h)
+        # 여러 줄에 병합된 항목은 같은 칸이 덮는다. 그 외에는 연번이 줄어들어야 한다
+        if n is None or not (cell is last_cell or last is None or n < last):
+            break
+        last_cell, last = cell, n
+        h -= 1
     if h < 0:
-        return []
-    texts = [_norm(t) for t in layout.row_texts(h)]
+        return [], []
     covering = [layout.cover[(h, k)] for k in range(layout.table.cols) if (h, k) in layout.cover]
     if any(is_placeholder(c.text) for c in covering) or not any(c.text for c in covering):
-        return []
-    if not any(texts) and not covering:
-        return []
+        return [], []
     rows = {h}
     for c in covering:  # 위에서 내려온 병합 칸 (연번·성명 등 두 줄짜리 헤더)
         rows.update(range(c.row, h))
-    return sorted(rows)
+    return sorted(rows), list(range(h + 1, start))
 
 
 # ---------------------------------------------------------------- 칸
@@ -319,6 +333,7 @@ def find_slots(layout: _Layout, repeats: list[RepeatSpec]) -> list[SlotSpec]:
     skip_rows: set[int] = set()
     for rep in repeats:
         skip_rows.update(rep.header_rows)
+        skip_rows.update(rep.example_rows)
         skip_rows.update(range(rep.start_row, rep.end_row + 1))
 
     slots: list[SlotSpec] = []
@@ -333,8 +348,18 @@ def find_slots(layout: _Layout, repeats: list[RepeatSpec]) -> list[SlotSpec]:
         else:
             continue
         left, above = _label_cells(layout, cell)
+        # 숫자(순번·금액·코드)는 항목명이 아니라 값이다. 왼쪽이 숫자면 위쪽 열 이름을 쓰고,
+        # 둘 다 없으면 항목명을 비운다
+        left, above = (
+            None if c is None or _NUMERIC_RE.match(c.text.strip()) else c for c in (left, above)
+        )
+        # 합계 칸은 아래로 이름을 물려주지 않는다. 합계 행 아래 빈 줄이 합계 칸으로 잡혔다
+        if above is not None and is_total_text(above.text):
+            above = None
         label_cell = left or above
         label = _norm(label_cell.text) if label_cell else ""
+        if is_total_text(text):  # `합계 : 10,500원 × 00시간` 처럼 칸 자체가 합계다
+            label = "합계"
         if origin == "empty" and not label:
             continue  # 항목명도 없는 빈 칸은 입력 지점으로 보기 어렵다
         approval = is_approval_placeholder(text) or any(

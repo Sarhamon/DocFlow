@@ -27,7 +27,7 @@ from docflow.schema.rules import (
 @pytest.mark.parametrize(
     "text",
     ["○○○○○과", "재학생 00명", "20○○년", "0,000,000원", "2000000000", "□현장견학", "OOO",
-     "홍길동"],
+     "홍길동", "홍 길 동"],
 )
 def test_자리표시자를_알아본다(text):
     assert is_placeholder(text)
