@@ -28,7 +28,6 @@ from xml.etree import ElementTree as ET
 from docflow.hwpx.formula import FormulaError, evaluate, format_result
 
 HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
-NS = {"hp": HP}
 T = f"{{{HP}}}t"
 FIELD_BEGIN = f"{{{HP}}}fieldBegin"
 FIELD_END = f"{{{HP}}}fieldEnd"
@@ -156,6 +155,8 @@ class HwpxDocument:
     #: 구역(section) XML 을 한 번만 파싱해 두고, 쓰기는 이 트리에 한다.
     _trees: dict[str, ET.Element] = dc_field(default_factory=dict, repr=False)
     _dirty: set[str] = dc_field(default_factory=set, repr=False)
+    #: _table_elements() 결과. 트리를 통째로 바꿀 때(fill_rows 롤백)만 무효화한다.
+    _tables_cache: list[tuple[str, ET.Element, int]] | None = dc_field(default=None, repr=False)
 
     # ---------------------------------------------------------------- 로딩
     @classmethod
@@ -198,21 +199,19 @@ class HwpxDocument:
                 )
         return found
 
-    def field_names(self) -> list[str]:
-        """중복 제거한 필드 이름 목록 (등장 순서 유지)."""
-        names: list[str] = []
-        for f in self.fields():
-            if f.name not in names:
-                names.append(f.name)
-        return names
-
     def _table_elements(self) -> list[tuple[str, ET.Element, int]]:
-        """(구역, 표 엘리먼트, 깊이) 를 tables() 와 같은 순서로 돌려준다."""
-        found: list[tuple[str, ET.Element, int]] = []
-        for section in self.section_names:
-            for el, depth in _walk_tables(self._root(section)):
-                found.append((section, el, depth))
-        return found
+        """(구역, 표 엘리먼트, 깊이) 를 tables() 와 같은 순서로 돌려준다.
+
+        셀 쓰기와 행 복제는 표를 더하거나 빼지 않으므로(중첩 표가 든 행은 복제를 거부한다)
+        한 번 찾은 목록을 재사용한다.
+        """
+        if self._tables_cache is None:
+            self._tables_cache = [
+                (section, el, depth)
+                for section in self.section_names
+                for el, depth in _walk_tables(self._root(section))
+            ]
+        return self._tables_cache
 
     def tables(self) -> list[Table]:
         """문서 전체의 표를 등장 순서대로 반환한다 (중첩 표 포함)."""
@@ -233,12 +232,26 @@ class HwpxDocument:
         """이름이 일치하는 모든 누름틀에 값을 채운다. 채운 개수를 반환."""
         filled = 0
         for section in self.section_names:
-            for name, _ftype, texts in _walk_fields(self._root(section)):
-                if name not in values or not texts:
+            root = self._root(section)
+            parents: dict[ET.Element, ET.Element] | None = None
+            for begin, texts in list(_walk_field_elements(root)):
+                name = begin.get("name", "")
+                if name not in values:
                     continue
-                texts[0].text = _clean(str(values[name]))
-                for extra in texts[1:]:
-                    extra.text = ""
+                value = _clean(str(values[name]))
+                if texts:
+                    texts[0].text = value
+                    for extra in texts[1:]:
+                        extra.text = ""
+                elif value:
+                    # 빈 누름틀은 fieldBegin 과 fieldEnd 사이에 <hp:t> 가 없다. 새로 만든다.
+                    if parents is None:
+                        parents = {child: p for p in root.iter() for child in p}
+                    ctrl = parents[begin]
+                    run = parents[ctrl]
+                    t = ET.Element(T)
+                    t.text = value
+                    run.insert(list(run).index(ctrl) + 1, t)
                 filled += 1
                 self._dirty.add(section)
         return filled
@@ -347,6 +360,7 @@ class HwpxDocument:
                 self.set_cell(table, r, c, v)
         except Exception:
             self._trees[section] = snapshot  # 늘린 행과 이미 쓴 칸을 모두 되돌린다
+            self._tables_cache = None
             if not was_dirty:
                 self._dirty.discard(section)
             raise
@@ -372,7 +386,7 @@ class HwpxDocument:
             raise CellNotFound(f"표 {table} 에 {after}행이 없다")
 
         source = trs[after]
-        cells = [_read_cell(tc) for tc in source.findall(TC)]
+        cells = [_read_cell(tc, text=False) for tc in source.findall(TC)]
         if any(c.row_span != 1 for c in cells) or sum(c.col_span for c in cells) != col_cnt:
             raise RowSpanConflict(
                 f"표 {table} {after}행은 복제할 수 없다 (행 병합이 있거나 위 행의 병합이 걸쳐 있다)"
@@ -412,7 +426,7 @@ class HwpxDocument:
         section, tbl, _depth = elements[table]
         for tr in tbl.findall(TR):
             for tc in tr.findall(TC):
-                cell = _read_cell(tc)
+                cell = _read_cell(tc, text=False)
                 if (cell.row, cell.col) == (row, col):
                     return section, tc
                 if (
@@ -579,7 +593,7 @@ def _walk_tables(parent: ET.Element, depth: int = 0):
             yield from _walk_tables(el, depth)
 
 
-def _read_cell(tc: ET.Element) -> Cell:
+def _read_cell(tc: ET.Element, *, text: bool = True) -> Cell:
     addr = tc.find(CELL_ADDR)
     span = tc.find(CELL_SPAN)
     return Cell(
@@ -587,7 +601,7 @@ def _read_cell(tc: ET.Element) -> Cell:
         col=int(addr.get("colAddr", 0)) if addr is not None else 0,
         row_span=int(span.get("rowSpan", 1)) if span is not None else 1,
         col_span=int(span.get("colSpan", 1)) if span is not None else 1,
-        text=_cell_text(tc),
+        text=_cell_text(tc) if text else "",
     )
 
 

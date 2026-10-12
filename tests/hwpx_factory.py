@@ -64,13 +64,19 @@ def table(rows: int, cols: int, cells_by_row: list[list[str]], height: int | Non
     )
 
 
-def field(name: str, value: str, fid: str = "100") -> str:
-    """누름틀이 든 run. fieldBegin / 값 / fieldEnd."""
-    return (
+def field(name: str, value: str | None, fid: str = "100") -> str:
+    """누름틀이 든 run. fieldBegin / 값 / fieldEnd.
+
+    value=None 이면 실제 서식의 빈 누름틀처럼 사이에 <hp:t> 가 없고 뒤에 빈 <hp:t/> 만 있다.
+    """
+    begin = (
         f'<hp:run charPrIDRef="10"><hp:ctrl><hp:fieldBegin id="{fid}" type="CLICK_HERE" '
-        f'name="{name}"/></hp:ctrl><hp:t>{escape(value)}</hp:t>'
-        f'<hp:ctrl><hp:fieldEnd beginIDRef="{fid}"/></hp:ctrl></hp:run>'
+        f'name="{name}"/></hp:ctrl>'
     )
+    end = f'<hp:ctrl><hp:fieldEnd beginIDRef="{fid}"/></hp:ctrl>'
+    if value is None:
+        return f"{begin}{end}<hp:t/></hp:run>"
+    return f"{begin}<hp:t>{escape(value)}</hp:t>{end}</hp:run>"
 
 
 def section(body: str) -> str:

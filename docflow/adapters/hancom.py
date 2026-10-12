@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """한컴오피스 COM 어댑터 — **로컬(Windows) 전용**.
 
 Phase 2 에서 AWS 로 옮길 때 이 모듈만 떼어내거나 별도 Windows 워커로 분리한다.
@@ -81,7 +80,7 @@ class Hancom:
                 check=False,
             )
 
-    def __enter__(self) -> "Hancom":
+    def __enter__(self) -> Hancom:
         return self
 
     def __exit__(self, *exc) -> None:

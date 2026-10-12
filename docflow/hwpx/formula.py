@@ -86,8 +86,6 @@ def _tokenize(src: str) -> list[tuple[str, str]]:
     while pos < len(src):
         m = _TOKEN_RE.match(src, pos)
         if not m or m.end() == pos:
-            if src[pos:].strip() == "":
-                break
             raise FormulaError(f"해석할 수 없는 수식: {src!r}")
         kind = m.lastgroup
         tokens.append((kind, m.group(kind)))

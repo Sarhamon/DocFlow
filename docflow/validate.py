@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """규칙 기반 검증 — 입력값이 서식 규칙을 지키는지 확인한다.
 
 결재 문서라 같은 입력에 같은 판정이 나와야 하므로 재현 가능한 규칙만 여기서
@@ -236,7 +235,7 @@ def _date_issues(key: str, label: str, raw: str) -> list[Issue]:
         return [Issue("DATE_INVALID", f"'{label}' 에 없는 날짜가 있습니다: {raw}", key)]
 
     dates = [d for d in found if d is not None]
-    for start, end in zip(dates, dates[1:]):
+    for start, end in zip(dates, dates[1:], strict=False):  # 인접한 두 날짜씩
         if start > end:
             return [
                 Issue(

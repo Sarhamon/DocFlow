@@ -142,3 +142,18 @@ def test_산술에_쓰는_칸이_숫자가_아니면_오류():
     g = grid(["메모", ""])
     with pytest.raises(FormulaError, match="숫자가 아닌"):
         evaluate("=a1+1", g, 0, 1)
+
+
+def test_끝의_공백은_무시한다():
+    assert evaluate("=1+2   ", grid(["x"]), 0, 0) == 3
+
+
+def test_해석할_수_없는_문자는_오류():
+    with pytest.raises(FormulaError, match="해석할 수 없는"):
+        evaluate("=1 $ 2", grid(["x"]), 0, 0)
+
+
+@pytest.mark.parametrize("bad", ["=*3", "=)", "=,1"])
+def test_식이_시작될_수_없는_토큰은_오류(bad):
+    with pytest.raises(FormulaError, match="예상하지 못한"):
+        evaluate(bad, grid(["x"]), 0, 0)

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """templates/ 의 HWPX 서식에서 서식별 스키마 JSON 을 추출한다.
 
     python tools/extract_schema.py

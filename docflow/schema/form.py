@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """서식 스키마 — 서식 하나를 기계가 읽을 수 있는 형태로 기술한다.
 
 `tools/extract_schema.py` 가 HWPX 템플릿에서 자동 추출하고,

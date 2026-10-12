@@ -208,6 +208,15 @@ def test_누름틀_채우기와_표_쓰기를_함께_쓴다(tmp_path):
     assert again.get_cell(0, 0, 0) == "표 값"
 
 
+def test_빈_누름틀도_채운다(tmp_path):
+    """실제 서식의 빈 누름틀(seal 등)은 fieldBegin 과 fieldEnd 사이에 <hp:t> 가 없다."""
+    body = hf.field("receiptdate", None) + hf.field("seal", None, fid="101")
+    doc = HwpxDocument.open(hf.build(tmp_path / "e.hwpx", hf.section(body)))
+    assert doc.fill({"receiptdate": "2026. 10. 12.", "seal": ""}) == 2
+    again = reopen(doc, tmp_path)
+    assert {f.name: f.value for f in again.fields()} == {"receiptdate": "2026. 10. 12.", "seal": ""}
+
+
 # ------------------------------------------------------------------ 행 복제
 @pytest.fixture
 def total_doc(tmp_path):
@@ -321,6 +330,14 @@ def test_extend_도중_실패하면_행도_되돌린다(total_doc, tmp_path):
     assert total_doc.tables()[0].grid() == before
     assert _height(total_doc) == h
     assert reopen(total_doc, tmp_path).tables()[0].grid() == before
+
+
+def test_되돌린_뒤에_쓴_값도_저장된다(total_doc, tmp_path):
+    """롤백은 트리를 통째로 바꾸므로 표 목록 캐시가 옛 트리를 가리키면 안 된다."""
+    with pytest.raises(CellNotFound):
+        total_doc.fill_rows(0, 2, [["a", "b", "c", "d", "e"]] * 4, last_row=3, extend=True)
+    total_doc.set_cell(0, 2, 1, "롤백 후")
+    assert reopen(total_doc, tmp_path).get_cell(0, 2, 1) == "롤백 후"
 
 
 def test_영역이_표_밖이면_거부한다(total_doc):
@@ -598,3 +615,101 @@ def test_치환_값의_제어문자도_지운다(tmp_path):
     texts = [t.text for t in doc._root("Contents/section0.xml").iter(f"{{{HP}}}t")]
     assert "2026년 3월" in texts
     _valid_xml(doc, tmp_path)
+
+
+# ------------------------------------------------------------ 방어 경로 (커버리지 점검에서 추가)
+def _one_cell_doc(tmp_path, content: str, rows: int = 1) -> HwpxDocument:
+    table = hf.table(rows, 1, [[hf.cell(r, 0, content if r == 0 else "")] for r in range(rows)])
+    return HwpxDocument.open(hf.build(tmp_path / "c.hwpx", hf.section(table)))
+
+
+def test_fill은_여러_노드에_걸친_누름틀을_첫_노드로_모은다(tmp_path):
+    """알려진 한계: 본문처럼 여러 문단인 누름틀은 구조가 한 노드로 뭉개진다 (replace_text 사용)."""
+    doc = _body_doc(tmp_path)
+    assert doc.fill({"content_body": "새 본문"}) == 1
+    assert doc.fields()[0].value == "새 본문"
+
+
+def test_없는_표를_가리키면_거부한다(total_doc):
+    with pytest.raises(CellNotFound):
+        total_doc.insert_row(9, 0)
+    with pytest.raises(CellNotFound):
+        total_doc.fill_rows(9, 0, [["x"]])
+
+
+def test_tr_개수가_rowCnt와_다르면_복제를_거부한다(tmp_path):
+    table = hf.table(3, 1, [[hf.cell(0, 0)], [hf.cell(1, 0)]])  # rowCnt 3, tr 2개
+    doc = HwpxDocument.open(hf.build(tmp_path / "m.hwpx", hf.section(table)))
+    with pytest.raises(HwpxError, match="rowCnt"):
+        doc.insert_row(0, 0)
+
+
+def test_수식이_둘인_칸에는_결과를_쓰지_않는다(tmp_path):
+    two = hf.para().replace(
+        '<hp:run charPrIDRef="10"/>',
+        hf.formula("=SUM(ABOVE)", "1", fid="1") + hf.formula("=SUM(ABOVE)", "2", fid="2"),
+    )
+    doc = _one_cell_doc(tmp_path, two)
+    with pytest.raises(HwpxError, match="2개"):
+        doc.set_formula_result(0, 0, 0, "9")
+
+
+def test_결과를_쓸_자리가_없는_수식은_거부한다(tmp_path):
+    no_slot = hf.formula_para("=SUM(ABOVE)", "1").replace("<hp:t>1</hp:t>", "")
+    doc = _one_cell_doc(tmp_path, no_slot)
+    with pytest.raises(HwpxError, match="자리"):
+        doc.set_formula_result(0, 0, 0, "9")
+
+
+def test_수식_결과가_여러_노드면_첫_노드에_쓰고_나머지는_비운다(tmp_path):
+    split = hf.formula_para("=SUM(ABOVE)", "15,000").replace(
+        "<hp:t>15,000</hp:t>", "<hp:t>15,</hp:t><hp:t>000</hp:t>"
+    )
+    doc = _one_cell_doc(tmp_path, split)
+    doc.set_formula_result(0, 0, 0, "84,000")
+    assert doc.get_cell(0, 0, 0) == "84,000"
+
+
+def test_subList가_없는_셀은_거부한다(tmp_path):
+    import re
+
+    broken = re.sub(r"<hp:subList.*?</hp:subList>", "", hf.cell(0, 0), flags=re.S)
+    table = f'<hp:tbl id="1" rowCnt="1" colCnt="1"><hp:tr>{broken}</hp:tr></hp:tbl>'
+    doc = HwpxDocument.open(hf.build(tmp_path / "s.hwpx", hf.section(table)))
+    with pytest.raises(HwpxError, match="subList"):
+        doc.set_cell(0, 0, 0, "x")
+
+
+def test_문단이_없는_셀은_거부한다(tmp_path):
+    import re
+
+    empty = re.sub(r"<hp:p .*?</hp:p>", "", hf.cell(0, 0), flags=re.S)
+    table = f'<hp:tbl id="1" rowCnt="1" colCnt="1"><hp:tr>{empty}</hp:tr></hp:tbl>'
+    doc = HwpxDocument.open(hf.build(tmp_path / "p.hwpx", hf.section(table)))
+    with pytest.raises(HwpxError, match="문단"):
+        doc.set_cell(0, 0, 0, "x")
+
+
+def test_여러_줄을_써도_제어문자_run은_첫_문단에만_있다(doc):
+    doc.set_cell(0, 0, 0, "가\n나\n다")
+    ns = {"hp": HP}
+    assert len(doc._root("Contents/section0.xml").findall(".//hp:colPr", ns)) == 1
+    assert doc.get_cell(0, 0, 0) == "가\n나\n다"
+
+
+def test_제어문자_run만_있는_문단에도_글자를_쓴다(tmp_path):
+    ctrl_only = hf.para("", ctrl='<hp:ctrl><hp:colPr id="" type="NEWSPAPER"/></hp:ctrl>')
+    doc = _one_cell_doc(tmp_path, ctrl_only)
+    doc.set_cell(0, 0, 0, "새 글자")
+    assert doc.get_cell(0, 0, 0) == "새 글자"
+    ns = {"hp": HP}
+    assert doc._root("Contents/section0.xml").find(".//hp:colPr", ns) is not None
+
+
+def test_줄배치_캐시가_없는_문단에도_새_run을_넣는다(tmp_path):
+    ctrl_only = hf.para("", ctrl='<hp:ctrl><hp:colPr id="" type="NEWSPAPER"/></hp:ctrl>').replace(
+        hf.LINESEG, ""
+    )
+    doc = _one_cell_doc(tmp_path, ctrl_only)
+    doc.set_cell(0, 0, 0, "새 글자")
+    assert doc.get_cell(0, 0, 0) == "새 글자"

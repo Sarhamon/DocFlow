@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """규칙 기반 검증 테스트.
 
 실제 서식은 내부 자료라 저장소에 없다. 그래서 스키마를 파일에서 읽지 않고
@@ -219,7 +218,8 @@ def test_달력에_없는_날은_None():
 def test_시각의_물결은_기간이_아니다():
     """`13:00~17:00` 의 물결은 시각을 나눈다. 날짜는 하나뿐이다."""
     assert find_dates("2026.5.2.(목) 13:00~17:00") == [date(2026, 5, 2)]
-    assert check_dates(날짜_스키마("2024.5.2.(목) 13:00~17:00"), 날짜_값("2026.5.2.(목) 13:00~17:00")) == []
+    schema = 날짜_스키마("2024.5.2.(목) 13:00~17:00")
+    assert check_dates(schema, 날짜_값("2026.5.2.(목) 13:00~17:00")) == []
 
 
 def test_날짜가_맞으면_통과():
@@ -243,7 +243,8 @@ def test_날짜로_못_읽으면_잡는다():
 
 
 def test_기간이_거꾸로면_잡는다():
-    issues = check_dates(날짜_스키마("0000.00.00 ~ 0000.00.00", "사업기간"), 날짜_값("2026.03.20 ~ 2026.03.15"))
+    schema = 날짜_스키마("0000.00.00 ~ 0000.00.00", "사업기간")
+    issues = check_dates(schema, 날짜_값("2026.03.20 ~ 2026.03.15"))
 
     assert len(issues) == 1
     assert issues[0].code == "DATE_ORDER"
@@ -273,7 +274,9 @@ def test_빈_날짜_칸은_넘어간다():
     FieldSpec(name="docnumber", type="CLICK_HERE", placeholder="○○○○처-000000"),
     FieldSpec(name="enforcedate", type="CLICK_HERE", placeholder="2000.00.00"),
     FieldSpec(name="telephone", type="CLICK_HERE", placeholder="031-441-0000"),
-    FieldSpec(name="address", type="CLICK_HERE", placeholder="경기도 안양시 만안구 양화로 37번길 34"),
+    FieldSpec(
+        name="address", type="CLICK_HERE", placeholder="경기도 안양시 만안구 양화로 37번길 34"
+    ),
     FieldSpec(name="publication", type="CLICK_HERE", placeholder="공개"),
     FieldSpec(name="apb4_date", type="CLICK_HERE", placeholder="00/00"),
     FieldSpec(name="apb4_sign", type="CLICK_HERE", placeholder="○○○"),
@@ -319,7 +322,11 @@ def test_결재란은_비어도_안_잡는다():
 
 
 def test_누름틀을_채우면_통과():
-    fields = {"docnumber": "교무처-001234", "enforcedate": "2026.03.15", "telephone": "031-441-1234"}
+    fields = {
+        "docnumber": "교무처-001234",
+        "enforcedate": "2026.03.15",
+        "telephone": "031-441-1234",
+    }
     assert check_required(기안문_스키마(), {}, fields) == []
 
 

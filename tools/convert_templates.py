@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """forms/ 의 .hwp 서식을 templates/ 아래 .hwpx 로 일괄 변환한다 (로컬 전용).
 
     python tools/convert_templates.py "forms/ysu_forms/[2026 앵커(신산업)] 서식모음"
