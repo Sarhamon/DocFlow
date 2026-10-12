@@ -99,6 +99,8 @@ class Cell:
     row_span: int
     col_span: int
     text: str
+    #: 누름틀·수식이 든 칸 (중첩 표 안 포함). set_cell 로 쓸 수 없고 fill() 로 채운다.
+    has_field: bool = False
 
 
 @dataclass
@@ -226,6 +228,21 @@ class HwpxDocument:
             )
             for i, (section, el, depth) in enumerate(self._table_elements())
         ]
+
+    def outline(self) -> list[tuple[str, int | str]]:
+        """표와 누름틀을 문서 순서대로 늘어놓는다: ("table", 표 번호) / ("field", 누름틀 이름).
+
+        한 파일에 서식 변형이 여러 개 든 경우 그 경계를 찾는 데 쓴다. 수식 누름틀은 뺀다.
+        """
+        index = {id(el): i for i, (_s, el, _d) in enumerate(self._table_elements())}
+        found: list[tuple[str, int | str]] = []
+        for section in self.section_names:
+            for el in self._root(section).iter():
+                if el.tag == TBL:
+                    found.append(("table", index[id(el)]))
+                elif el.tag == FIELD_BEGIN and el.get("type") != "FORMULA":
+                    found.append(("field", el.get("name", "")))
+        return found
 
     # ---------------------------------------------------------------- 쓰기
     def fill(self, values: dict[str, str]) -> int:
@@ -369,9 +386,14 @@ class HwpxDocument:
     def insert_row(self, table: int, after: int, *, clear: bool = True) -> int:
         """after 행을 복제해 그 바로 아래에 새 행을 넣는다. 새 행의 번호를 반환한다.
 
-        아래 행의 번호와 표의 행 수는 함께 밀린다. 복제할 행은 모든 칸이 행 병합 없이
-        그 행에서 시작해야 한다(아니면 RowSpanConflict). clear=True 면 새 행의 글자를
-        비운다. 예시 값이나 연번이 그대로 복제돼 조용히 틀리는 것을 막기 위해서다.
+        아래 행의 번호와 표의 행 수는 함께 밀린다. 복제할 행의 칸은 행 병합 없이 그 행에서
+        시작해야 한다(아니면 RowSpanConflict). 위에서 내려와 이 행을 덮는 병합 칸(명단 왼쪽의
+        `참석대상` 같은 묶음 이름)은 새 행까지 덮도록 한 행 늘린다.
+
+        clear=True 면 새 행의 글자를 비운다. 예시 값이나 연번이 그대로 복제돼 조용히 틀리는
+        것을 막기 위해서다. 행마다 있는 수식(`=PRODUCT(D?:E?)`)은 `?` 가 자기 행을 가리키므로
+        그대로 복제하고 결과만 비운다(recalculate_formulas 로 다시 채운다). 누름틀이 든 칸은
+        이름이 겹치므로 복제하지 않는다(FieldInCell).
         """
         elements = self._table_elements()
         if not 0 <= table < len(elements):
@@ -387,9 +409,18 @@ class HwpxDocument:
 
         source = trs[after]
         cells = [_read_cell(tc, text=False) for tc in source.findall(TC)]
-        if any(c.row_span != 1 for c in cells) or sum(c.col_span for c in cells) != col_cnt:
+        spanning = [  # 위 행에서 시작해 이 행을 덮는 병합 칸
+            tc
+            for tr in trs[:after]
+            for tc in tr.findall(TC)
+            if (c := _read_cell(tc, text=False)).row + c.row_span - 1 >= after
+        ]
+        width = sum(c.col_span for c in cells) + sum(
+            _read_cell(tc, text=False).col_span for tc in spanning
+        )
+        if any(c.row_span != 1 for c in cells) or width != col_cnt:
             raise RowSpanConflict(
-                f"표 {table} {after}행은 복제할 수 없다 (행 병합이 있거나 위 행의 병합이 걸쳐 있다)"
+                f"표 {table} {after}행은 복제할 수 없다 (이 행에서 아래로 병합된 칸이 있다)"
             )
 
         if any(el.tag == TBL for el in source.iter()):
@@ -398,7 +429,15 @@ class HwpxDocument:
         clone = copy.deepcopy(source)  # 여기서 실패해도 문서는 그대로다
         for tc in clone.findall(TC):
             tc.find(CELL_ADDR).set("rowAddr", str(after + 1))
-            if clear:
+            fields = list(_walk_field_elements(tc))
+            if any(begin.get("type") != "FORMULA" for begin, _texts in fields):
+                raise FieldInCell(f"표 {table} {after}행에 누름틀이 있어 복제할 수 없다")
+            if not clear:
+                continue
+            if fields:
+                for begin, texts in fields:
+                    _set_formula_text(tc, begin, texts, "")
+            else:
                 _write_cell(tc, "")
 
         tbl.insert(list(tbl).index(source) + 1, clone)
@@ -414,8 +453,14 @@ class HwpxDocument:
             for tc in clone.findall(TC)
             if (sz := tc.find(CELL_SZ)) is not None  # 자식 없는 엘리먼트는 거짓이다
         ]
-        if size is not None and heights:
-            size.set("height", str(int(size.get("height", 0)) + max(heights)))
+        added = max(heights, default=0)
+        if size is not None:
+            size.set("height", str(int(size.get("height", 0)) + added))
+        for tc in spanning:
+            span = tc.find(CELL_SPAN)
+            span.set("rowSpan", str(int(span.get("rowSpan", 1)) + 1))
+            if (sz := tc.find(CELL_SZ)) is not None:
+                sz.set("height", str(int(sz.get("height", 0)) + added))
         self._dirty.add(section)
         return after + 1
 
@@ -482,20 +527,7 @@ class HwpxDocument:
         begin, texts = formulas[0]
         if not texts:
             raise HwpxError(f"표 {table} ({row},{col}) 수식에 결과를 쓸 자리가 없다")
-        text = _clean(text)
-        texts[0].text = text
-        for extra in texts[1:]:
-            extra.text = ""
-        for param in begin.iter():
-            name = param.get("name")
-            if name == "LastResult":
-                param.text = text
-            elif name == "Command" and ";;" in (param.text or ""):
-                param.text = param.text.rsplit(";;", 1)[0] + ";;" + text
-        for p in tc.iter(PARA):
-            if any(el is begin for el in p.iter()):
-                for seg in p.findall(LINESEG_ARRAY):
-                    p.remove(seg)
+        _set_formula_text(tc, begin, texts, text)
         self._dirty.add(section)
 
     def recalculate_formulas(self, table: int | None = None) -> Recalc:
@@ -570,6 +602,27 @@ def _walk_field_elements(root: ET.Element):
             open_stack[-1][1].append(el)
 
 
+def _set_formula_text(
+    tc: ET.Element, begin: ET.Element, texts: list[ET.Element], text: str
+) -> None:
+    """수식의 표시 결과와 저장된 마지막 결과(LastResult)를 text 로 바꾼다."""
+    text = _clean(text)
+    if texts:
+        texts[0].text = text
+        for extra in texts[1:]:
+            extra.text = ""
+    for param in begin.iter():
+        name = param.get("name")
+        if name == "LastResult":
+            param.text = text
+        elif name == "Command" and ";;" in (param.text or ""):
+            param.text = param.text.rsplit(";;", 1)[0] + ";;" + text
+    for p in tc.iter(PARA):
+        if any(el is begin for el in p.iter()):
+            for seg in p.findall(LINESEG_ARRAY):
+                p.remove(seg)
+
+
 def _walk_fields(root: ET.Element):
     """(name, type, [텍스트 노드]) 를 문서 순서대로 yield 한다."""
     for begin, texts in _walk_field_elements(root):
@@ -602,6 +655,7 @@ def _read_cell(tc: ET.Element, *, text: bool = True) -> Cell:
         row_span=int(span.get("rowSpan", 1)) if span is not None else 1,
         col_span=int(span.get("colSpan", 1)) if span is not None else 1,
         text=_cell_text(tc) if text else "",
+        has_field=text and any(el.tag == FIELD_BEGIN for el in tc.iter()),
     )
 
 

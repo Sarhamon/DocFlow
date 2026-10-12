@@ -277,10 +277,42 @@ def test_행병합이_걸친_행은_복제를_거부한다(tmp_path):
     doc = HwpxDocument.open(hf.build(tmp_path / "f.hwpx", hf.section(hf.table(2, 2, rows))))
     before = doc.tables()[0].grid()
     with pytest.raises(RowSpanConflict):
-        doc.insert_row(0, 0)  # (0,0) 이 2행에 걸쳐 있다
-    with pytest.raises(RowSpanConflict):
-        doc.insert_row(0, 1)  # 1행에는 위 행의 병합 때문에 칸이 하나뿐이다
+        doc.insert_row(0, 0)  # (0,0) 이 이 행에서 아래로 병합돼 있다
     assert doc.tables()[0].grid() == before
+
+
+def test_위에서_내려온_병합_칸은_새_행까지_늘린다(tmp_path):
+    """회의계획서: 명단 왼쪽의 `참석대상` 이 데이터 행 전체에 세로로 병합돼 있다."""
+    rows = [
+        [hf.cell(0, 0, hf.para("참석대상"), rowspan=3), hf.cell(0, 1, hf.para("성명"))],
+        [hf.cell(1, 1, hf.para("홍길동"))],
+        [hf.cell(2, 1)],
+    ]
+    doc = HwpxDocument.open(hf.build(tmp_path / "f.hwpx", hf.section(hf.table(3, 2, rows))))
+    assert doc.insert_row(0, 2) == 3
+    doc.set_cell(0, 3, 1, "새 사람")
+    again = reopen(doc, tmp_path).tables()[0]
+    group = next(c for c in again.cells if (c.row, c.col) == (0, 0))
+    assert (again.rows, group.row_span) == (4, 4)
+    assert [row[1] for row in again.grid()] == ["성명", "홍길동", "", "새 사람"]
+
+
+def test_행마다_있는_수식은_복제하고_결과만_비운다(tmp_path):
+    """물품 구입 요구서: 금액 칸이 `=PRODUCT(A?:B?)` 로 자기 행의 수량 x 단가다."""
+    rows = [
+        [hf.cell(0, 0, hf.para("2")), hf.cell(0, 1, hf.para("3")),
+         hf.cell(0, 2, hf.formula_para("=PRODUCT(A?:B?)", "6"))],
+    ]  # fmt: skip
+    doc = HwpxDocument.open(hf.build(tmp_path / "f.hwpx", hf.section(hf.table(1, 3, rows))))
+    doc.insert_row(0, 0)
+    assert [(f.row, f.formula, f.text) for f in doc.formula_cells()] == [
+        (0, "=PRODUCT(A?:B?)", "6"),
+        (1, "=PRODUCT(A?:B?)", ""),
+    ]
+    doc.set_cell(0, 1, 0, "4")
+    doc.set_cell(0, 1, 1, "5")
+    doc.recalculate_formulas()
+    assert reopen(doc, tmp_path).get_cell(0, 1, 2) == "20"
 
 
 def test_누름틀이_든_행은_복제를_거부하고_문서를_바꾸지_않는다(tmp_path):

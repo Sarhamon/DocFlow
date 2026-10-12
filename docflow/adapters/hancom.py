@@ -11,6 +11,9 @@ import time
 from pathlib import Path
 
 PROG_ID = "HWPFrame.HwpObject"
+#: 한글은 이 길이 이상의 경로에 저장하지 못하고 SaveAs 가 이유 없이 False 를 돌려준다.
+#: (2026-10 확인: 258자는 성공, 264자는 실패)
+MAX_PATH = 260
 
 
 class HancomUnavailable(RuntimeError):
@@ -56,6 +59,11 @@ class Hancom:
             raise RuntimeError(f"열기 실패: {src}")
         try:
             if not self.hwp.SaveAs(str(dst), fmt, ""):
+                if len(str(dst)) >= MAX_PATH:
+                    raise RuntimeError(
+                        f"저장 실패: 경로가 {len(str(dst))}자라 한글이 저장하지 못한다 "
+                        f"({MAX_PATH}자 미만이어야 한다): {dst}"
+                    )
                 raise RuntimeError(f"저장 실패: {dst}")
         finally:
             self.hwp.Clear(1)  # 1 = 저장하지 않고 닫기

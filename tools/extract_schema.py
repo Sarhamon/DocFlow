@@ -1,273 +1,132 @@
-"""templates/ 의 HWPX 서식에서 서식별 스키마 JSON 을 추출한다.
+"""templates/ 의 HWPX 서식에서 서식별 스키마(v2) JSON 을 추출한다.
 
-    python tools/extract_schema.py
+    python tools/extract_schema.py            # templates/ 전체
+    python tools/extract_schema.py --prune    # 이번에 만들지 않은 옛 JSON 을 지운다
 
-산출: schemas/<서식번호>.json, schemas/index.json
+산출: schemas/<templates 와 같은 경로>.json, schemas/<원본폴더>/index.json
 """
+
 from __future__ import annotations
 
-import collections
+import argparse
 import json
+import logging
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from docflow.hwpx.document import Cell, HwpxDocument, Table  # noqa: E402
-from docflow.schema.form import (  # noqa: E402
-    FieldSpec,
-    FormSchema,
-    RepeatSpec,
-    SlotSpec,
-    TableSpec,
-    is_placeholder,
-    is_total_label,
-    parse_form_name,
-)
+from docflow.config import Settings, get_settings  # noqa: E402
+from docflow.hwpx.document import HwpxDocument  # noqa: E402
+from docflow.log import setup_logging  # noqa: E402
+from docflow.schema.extract import extract, template_path  # noqa: E402
+from docflow.schema.model import FormSchema  # noqa: E402
+from docflow.schema.rules import parse_location  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE_ROOT = ROOT / "templates"
-OUT_ROOT = ROOT / "schemas"
+log = logging.getLogger("extract_schema")
 
 #: 서식이 아니라 서식 묶음을 설명하는 문서라 스키마를 뽑지 않는다.
-SKIP_WORDS = ("서식 목차", "서식 신구대조표")
+SKIP_WORDS = ("서식 목차", "서식목차", "서식 신구대조표")
 
 
-def find_label(cell: Cell, cells: list[Cell]) -> str:
-    """셀의 항목명을 찾는다: 같은 행 왼쪽 -> 같은 열 위쪽 순."""
-    left = [
-        c
-        for c in cells
-        if c.row == cell.row and c.col < cell.col and c.text and not is_placeholder(c.text)
-    ]
-    if left:
-        return max(left, key=lambda c: c.col).text
-    above = [
-        c
-        for c in cells
-        if c.col == cell.col and c.row < cell.row and c.text and not is_placeholder(c.text)
-    ]
-    if above:
-        return max(above, key=lambda c: c.row).text
-    return ""
+def is_form(template: Path) -> bool:
+    return not any(w in template.stem for w in SKIP_WORDS)
 
 
-def build_slots(table: Table) -> list[SlotSpec]:
-    """표에서 값을 채워야 할 지점을 뽑는다.
-
-    - placeholder: ○○○ / 0000 / □ 등이 박혀 있는 셀 (가장 확실한 신호)
-    - empty:       항목명이 붙어 있는 빈 셀
-    """
-    slots: list[SlotSpec] = []
-    for cell in table.cells:
-        if is_placeholder(cell.text):
-            kind = "placeholder"
-        elif not cell.text:
-            kind = "empty"
-        else:
-            continue
-        label = find_label(cell, table.cells)
-        if kind == "empty" and not label:
-            continue  # 항목명도 없는 빈 셀은 입력 지점으로 보기 어렵다
-        slots.append(
-            SlotSpec(
-                id=f"t{table.index}.r{cell.row}.c{cell.col}",
-                table=table.index,
-                row=cell.row,
-                col=cell.col,
-                label=label,
-                placeholder=cell.text,
-                kind=kind,
-            )
-        )
-    return slots
-
-
-def find_repeats(table: Table) -> list[RepeatSpec]:
-    """명단·내역처럼 빈 행이 연달아 나오는 반복 영역을 찾는다.
-
-    판정: 채워진 셀이 열 수의 30% 이하인 행이 3줄 이상 이어지면 반복 영역.
-    열 이름을 못 찾으면 채울 방법이 없으므로 헤더가 있는 영역만 남긴다.
-    """
-    grid = table.grid()
-    if table.rows < 4 or table.cols < 2:
-        return []
-
-    filled = [sum(1 for c in row if c.strip()) for row in grid]
-    sparse = max(1, int(table.cols * 0.3))
-
-    repeats: list[RepeatSpec] = []
-    start = None
-    for r in range(table.rows + 1):
-        is_sparse = r < table.rows and filled[r] <= sparse
-        if is_sparse and start is None:
-            start = r
-        elif not is_sparse and start is not None:
-            if r - start >= 3:
-                # 합계 행도 채워진 셀이 적어 빈 행으로 잡힌다. 합계 아래는 데이터가
-                # 아니므로(서명란·주의사항) 합계 행에서 영역을 끊는다.
-                end = r - 1
-                for x in range(start, end + 1):
-                    if _is_total_row(grid[x]):
-                        end = x - 1
-                        break
-                if end >= start:
-                    rep = _make_repeat(table, grid, filled, start, end)
-                    if any(rep.header):
-                        repeats.append(rep)
-            start = None
-    return repeats
-
-
-def _is_total_row(row) -> bool:
-    return any(is_total_label(c) for c in row)
-
-
-def _find_header(grid, filled, start: int) -> list[str]:
-    """반복 영역 위쪽에서 열 이름 행을 찾는다.
-
-    바로 위에는 보통 예시 행(`1 / 홍길동 / 2000000000`)이 있고 그 위가 진짜 헤더다.
-    예시 행은 자리표시자를 포함하므로 그걸로 걸러낸다.
-    """
-    for r in range(start - 1, max(-1, start - 7), -1):
-        row = grid[r]
-        if filled[r] < 2:
-            continue
-        if any(is_placeholder(c) for c in row):
-            continue  # 예시 행
-        return [" ".join(c.split()) for c in row]
-    return []
-
-
-def _make_repeat(table: Table, grid, filled, start: int, end: int) -> RepeatSpec:
-    header = _find_header(grid, filled, start)
-    return RepeatSpec(
-        id=f"t{table.index}.r{start}-{end}",
-        table=table.index,
-        start_row=start,
-        end_row=end,
-        header=header,
+def extract_file(template: Path, settings: Settings) -> FormSchema:
+    rel = template.relative_to(settings.templates)
+    return extract(
+        HwpxDocument.open(template),
+        location=parse_location(rel.parent),
+        template=template_path(template, settings.root),
     )
 
 
-def extract(template: Path) -> FormSchema:
-    doc = HwpxDocument.open(template)
-    form_id, program, title = parse_form_name(template.stem)
-
-    grouped: dict[str, FieldSpec] = {}
-    for f in doc.fields():
-        spec = grouped.get(f.name)
-        if spec is None:
-            grouped[f.name] = FieldSpec(
-                name=f.name, type=f.type, occurrences=1, placeholder=f.value
-            )
-        else:
-            spec.occurrences += 1
-            if not spec.placeholder:
-                spec.placeholder = f.value
-
-    tables = doc.tables()
-    table_specs: list[TableSpec] = []
-    slots: list[SlotSpec] = []
-    repeats: list[RepeatSpec] = []
-    for t in tables:
-        grid = t.grid()
-        header = [c for c in grid[0]] if grid else []
-        table_specs.append(
-            TableSpec(
-                index=t.index,
-                rows=t.rows,
-                cols=t.cols,
-                depth=t.depth,
-                header=header,
-                grid=grid,
-            )
-        )
-        table_repeats = find_repeats(t)
-        repeats.extend(table_repeats)
-        covered = {
-            (t.index, r)
-            for rep in table_repeats
-            for r in range(rep.start_row, rep.end_row + 1)
-        }
-        # 반복 영역 안의 빈 셀은 개별 슬롯으로 잡지 않는다 (영역이 대신한다)
-        slots.extend(
-            s
-            for s in build_slots(t)
-            if not (s.kind == "empty" and (s.table, s.row) in covered)
-        )
-
-    return FormSchema(
-        form_id=form_id,
-        title=title,
-        program=program,
-        category=template.parent.name,
-        template=str(template.relative_to(ROOT)).replace("\\", "/"),
-        fields=list(grouped.values()),
-        tables=table_specs,
-        slots=slots,
-        repeats=repeats,
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="HWPX 서식에서 스키마 JSON 을 추출한다")
+    parser.add_argument(
+        "--prune", action="store_true", help="schemas/ 에서 이번에 만들지 않은 JSON 을 지운다"
     )
-
-
-def main() -> int:
-    templates = [
-        t
-        for t in sorted(TEMPLATE_ROOT.rglob("*.hwpx"))
-        if not any(w in t.stem for w in SKIP_WORDS)
-    ]
+    args = parser.parse_args(argv)
+    setup_logging()
+    settings = get_settings()
+    templates = sorted(t for t in settings.templates.rglob("*.hwpx") if is_form(t))
     if not templates:
-        print(f"템플릿이 없습니다: {TEMPLATE_ROOT}  (먼저 tools/convert_templates.py 실행)")
+        log.error("템플릿이 없습니다: %s (먼저 convert_templates 실행)", settings.templates)
         return 1
 
-    # 구버전 개정본이 같은 서식 번호를 쓰므로, 겹치는 번호는 파일명을 그대로 쓴다.
-    dup = collections.Counter(
-        (t.parent, parse_form_name(t.stem)[0]) for t in templates
-    )
-
-    OUT_ROOT.mkdir(exist_ok=True)
     index: dict[str, list[dict]] = {}
+    written: set[Path] = set()
+    totals: Counter[str] = Counter()
+    failed: list[tuple[Path, str]] = []
+    no_target: list[str] = []
     for template in templates:
-        rel = template.relative_to(TEMPLATE_ROOT)
-        schema = extract(template)
-        name = schema.form_id
-        if not name or dup[(template.parent, name)] > 1:
-            name = template.stem
-        name = name.replace("/", "_")
-        # 템플릿 경로를 미러링한다. 원본 폴더명이 유지되어야 공개 가능한 서식과
-        # 내부용 서식을 .gitignore 로 구분할 수 있다.
-        out = OUT_ROOT / rel.parent / f"{name}.json"
+        rel = template.relative_to(settings.templates)
+        try:
+            schema = extract_file(template, settings)
+        except Exception as exc:  # 한 건 실패가 배치를 멈추지 않도록
+            failed.append((rel, str(exc)))
+            log.error("실패 %s: %s", rel, exc)
+            continue
+        # 템플릿 경로를 그대로 미러링한다. 원본 폴더명이 유지되어야 .gitignore 한 줄로 가려진다.
+        out = (settings.schemas / rel).with_suffix(".json")
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
-            json.dumps(schema.model_dump(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        out.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
+        written.add(out)
+
+        counts = {
+            "fields": len(schema.fields),
+            "tables": len(schema.tables),
+            "slots": len(schema.slots),
+            "formulas": len(schema.formulas),
+            "repeats": len(schema.repeats),
+            "variants": len(schema.variants),
+        }
+        totals.update(counts)
+        if not schema.slots and not schema.repeats:
+            no_target.append(str(rel))
         index.setdefault(rel.parts[0], []).append(
             {
                 "form_id": schema.form_id,
                 "title": schema.title,
+                "program": schema.program,
+                "category_no": schema.category_no,
                 "category": schema.category,
-                "schema": str(out.relative_to(OUT_ROOT)).replace("\\", "/"),
-                "fields": len(schema.fields),
-                "tables": len(schema.tables),
-                "slots": len(schema.slots),
-                "repeats": len(schema.repeats),
+                "archived": schema.archived,
+                "schema": out.relative_to(settings.schemas).as_posix(),
+                **counts,
             }
         )
-        print(
-            f"  {schema.form_id:<10} 필드 {len(schema.fields):>3} "
-            f"표 {len(schema.tables):>3} 슬롯 {len(schema.slots):>4} "
-            f"반복 {len(schema.repeats):>2}  {schema.title}"
+        log.info(
+            "%-10s 필드 %3d 표 %3d 슬롯 %4d 반복 %2d  %s",
+            schema.form_id, counts["fields"], counts["tables"], counts["slots"],
+            counts["repeats"], schema.title,
         )
 
     # 목록도 서식 이름을 담으므로 원본과 같은 폴더 안에 둔다 (통째로 ignore 되도록)
     for group, entries in index.items():
-        (OUT_ROOT / group / "index.json").write_text(
-            json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-    total = sum(len(v) for v in index.values())
-    print(f"\n서식 {total}개 -> {OUT_ROOT}")
-    return 0
+        out = settings.schemas / group / "index.json"
+        out.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        written.add(out)
+
+    stale = sorted(set(settings.schemas.rglob("*.json")) - written)
+    if stale and args.prune:
+        for path in stale:
+            path.unlink()
+        log.info("이번에 만들지 않은 JSON %d개를 지웠습니다", len(stale))
+    elif stale:
+        log.warning("이번에 만들지 않은 JSON %d개가 남아 있습니다 (--prune 으로 정리)", len(stale))
+
+    done = sum(len(v) for v in index.values())
+    log.info(
+        "서식 %d개 추출, 실패 %d -> %s | 누름틀 %d 표 %d 슬롯 %d 수식 %d 반복영역 %d 변형 %d",
+        done, len(failed), settings.schemas, totals["fields"], totals["tables"],
+        totals["slots"], totals["formulas"], totals["repeats"], totals["variants"],
+    )
+    for rel in no_target:
+        log.warning("채울 지점이 없는 서식: %s", rel)
+    return 0 if not failed and not no_target else 2
 
 
 if __name__ == "__main__":

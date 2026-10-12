@@ -83,6 +83,8 @@ class RepeatColumn(BaseModel):
     col: int = Field(ge=0)
     label: str = Field(default="", description="헤더 줄들을 합친 열 이름")
     input_type: InputType = "text"
+    #: computed 면 행마다 수식(`=PRODUCT(D?:E?)`)이 있는 열이다. 쓰지 않고 다시 계산한다.
+    role: Role = "input"
     #: 데이터 행마다 미리 채워져 있는 값 (연번, 기본 금액 등). None 이면 비어 있다.
     prefilled: str | None = None
 
@@ -135,7 +137,9 @@ class TableSpec(BaseModel):
 class Variant(BaseModel):
     """한 파일에 든 서식 변형 하나 (예: 기안문 1-01호 / 02호 / 03호 / 04호).
 
-    변형 n 은 표 ``first_table..last_table`` 과, 누름틀마다 n 번째 등장분으로 이루어진다.
+    변형 n 은 표 ``first_table..last_table`` 과 그 사이의 누름틀로 이루어진다. 변형마다 누름틀
+    구성이 조금씩 다를 수 있다(지출품의서는 증빙 종류에 따라 `CARD_CNT` 가 0~3번 나온다).
+    누름틀은 이름으로 채우므로 고른 변형에 든 것만 남기면 그대로 채워진다.
     사용자는 변형 하나를 고르고, 고르지 않은 변형의 쪽은 생성 단계에서 제외한다.
     """
 
@@ -155,8 +159,10 @@ class FormSchema(BaseModel):
     schema_version: int = SCHEMA_VERSION
     form_id: str = ""
     title: str
-    program: str = ""
-    category: str = ""
+    program: str = Field(default="", description="사업 (앵커(신산업) / AID / 혁신)")
+    category_no: int | None = Field(default=None, description="카테고리 번호 (1 기안문 …)")
+    category: str = Field(default="", description="사업 간에 통일한 카테고리 이름")
+    archived: bool = Field(default=False, description="지난 학년도 서식")
     template: str = Field(default="", description="저장소 루트 기준 HWPX 템플릿 경로")
     variants: list[Variant] = Field(default_factory=list, description="비어 있으면 변형 없음")
     fields: list[FieldSpec] = Field(default_factory=list)

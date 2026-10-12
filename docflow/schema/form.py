@@ -1,60 +1,23 @@
-"""서식 스키마 — 서식 하나를 기계가 읽을 수 있는 형태로 기술한다.
+"""서식 스키마 v1 (옛 모델) — 서식 하나를 기계가 읽을 수 있는 형태로 기술한다.
 
-`tools/extract_schema.py` 가 HWPX 템플릿에서 자동 추출하고,
-검증 체크리스트(`checklist`)는 이후 단계에서 채운다.
+추출기는 이제 v2 모델(`schema/model.py`)을 만든다. 이 모듈은 옛 모델을 받는
+`validate.py` 를 위해 남겨 두었고, M3 에서 검증 엔진이 v2 로 옮겨가면 지운다.
 """
 from __future__ import annotations
 
-import re
-
 from pydantic import BaseModel, Field
 
-#: 서식에 미리 박혀 있는 자리표시자 패턴. 실제 채워야 할 지점을 찾는 신호다.
-#: 예) ○○○○○과, 재학생 00명, 20○○년, 0,000,000원, 2000000000, □현장견학
-PLACEHOLDER_PATTERNS = [
-    re.compile(r"[○◯〇●]{2,}"),   # ○○○○○과, 20○○년
-    re.compile(r"[OＯ]{3,}"),      # OOO
-    re.compile(r"0{2,}"),          # 2000.00.00, 0,000,000원, 재학생 00명, 학번 2000000000
-    re.compile(r"[□▢☐]"),          # □현장견학 (선택 항목)
-    re.compile(r"[ㅇㆍ]{2,}"),       # ㅇㅇㅇ (한글 이응을 자리표시자로 쓴 경우)
-    re.compile(r"홍길[동서남북]"),    # 예시 인명. 명단 예시 행을 헤더로 오인하지 않기 위함
-]
-
-
-def is_placeholder(text: str) -> bool:
-    """셀 텍스트가 채워 넣어야 할 자리표시자를 담고 있는지."""
-    return any(p.search(text) for p in PLACEHOLDER_PATTERNS)
-
-
-#: 합계 행의 항목명. 반복 영역의 끝을 정하고, 금액 합계 검증의 기준점이 된다.
-TOTAL_LABELS = {"합계", "계", "총계", "소계"}
-
-
-def is_total_label(text: str) -> bool:
-    """셀 텍스트가 합계 항목명인지."""
-    return text.replace(" ", "").strip() in TOTAL_LABELS
-
-
-#: 자리표시자에 쓰인 날짜. 서식에는 `2000.00.00`, `20○○년 ○○월 ○○일` 처럼
-#: 숫자 자리를 0 이나 ○ 로 채워 둔다. 실제 입력값 파싱과는 패턴이 다르다.
-_PH_DATE = r"(?:[0-9○O]{4}\s*[.\-/년]\s*[0-9○O]{1,2}\s*[.\-/월]\s*[0-9○O]{1,2}\s*[.일]?)"
-_PH_WEEKDAY = r"(?:\s*\(\s*[월화수목금토일0○]\s*요?일?\s*\))?"
-_PH_TIME = (
-    r"(?:\s*[0-9○O]{1,2}\s*[:;]\s*[0-9○O]{2}"
-    r"(?:\s*[~\-]\s*[0-9○O]{1,2}\s*[:;]\s*[0-9○O]{2})?)?"
+# 판정 함수는 rules.py 로 옮겼다. 옛 모델을 쓰는 validate.py(M3 에서 다시 짠다)를 위해
+# 다시 내보낸다.
+from docflow.schema.rules import (  # noqa: F401
+    DATE_PLACEHOLDER_RE,
+    PLACEHOLDER_PATTERNS,
+    TOTAL_LABELS,
+    is_date_placeholder,
+    is_placeholder,
+    is_total_label,
+    parse_form_name,
 )
-
-#: 칸 전체가 날짜(또는 날짜 기간)인 경우만 통과시킨다.
-#: `○○○○처-000000 2000.00.00` 처럼 문서번호가 붙은 칸을 날짜 칸으로 오인하지 않기 위함이다.
-DATE_PLACEHOLDER_RE = re.compile(
-    rf"^{_PH_DATE}{_PH_WEEKDAY}{_PH_TIME}"
-    rf"(?:\s*[~\-]\s*{_PH_DATE}{_PH_WEEKDAY}{_PH_TIME})?\s*$"
-)
-
-
-def is_date_placeholder(text: str) -> bool:
-    """자리표시자가 날짜 칸을 가리키는지."""
-    return bool(DATE_PLACEHOLDER_RE.match(" ".join(text.split())))
 
 
 class FieldSpec(BaseModel):
@@ -119,30 +82,3 @@ class FormSchema(BaseModel):
         default_factory=list,
         description="검증 규칙. 5·6단계에서 채운다.",
     )
-
-
-#: "(서식 5-05호) [앵커(신산업)] 교통비 지급 내역서"
-#: "(서식 1-01~04호) [앵커(신산업)] 일반기안문(샘플)"
-_NAME_RE = re.compile(
-    r"^\(서식\s*(?P<form_id>[\d\-~호\s]+?)호?\)\s*"
-    r"(?:\[(?P<program>[^\]]+)\]\s*)?"
-    r"(?P<title>.+)$"
-)
-
-
-#: "[AID 서식 1-01~10호] 일반기안문(샘플 10종)"
-#: "[혁신 서식 9-03호] 용역구입비 지출품의서"
-_NAME_BRACKET_RE = re.compile(
-    r"^\[(?P<program>[^\]]+?)\s*서식\s*(?P<form_id>[\d\-~호+\s]+?)호?\]\s*"
-    r"(?P<title>.+)$"
-)
-
-
-def parse_form_name(stem: str) -> tuple[str, str, str]:
-    """파일명에서 (서식번호, 사업명, 서식이름) 을 뽑는다."""
-    stem = stem.strip()
-    m = _NAME_RE.match(stem) or _NAME_BRACKET_RE.match(stem)
-    if not m:
-        return "", "", stem
-    form_id = m.group("form_id").replace("호", "").strip()
-    return form_id, (m.group("program") or "").strip(), m.group("title").strip()

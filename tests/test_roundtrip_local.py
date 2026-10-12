@@ -6,7 +6,7 @@ M1(HWPX 코어)의 완료 기준이다. 내부 자료가 필요해서 `pytest -m
 - 표 셀: 수식 칸을 뺀 모든 앵커 셀에 여러 줄·XML 특수문자가 든 값을 쓴다.
   누름틀이 든 칸(FieldInCell)은 거부되는 게 정상이라 건너뛴다.
 - 행 복제: 표마다 마지막 행을 복제하고 새 행에 쓴다.
-  누름틀·행 병합이 걸린 행의 거부(FieldInCell / RowSpanConflict)는 정상이다.
+  누름틀이 든 행, 이 행에서 아래로 병합된 행의 거부(FieldInCell / RowSpanConflict)는 정상이다.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from docflow.hwpx.document import FieldInCell, HwpxDocument, RowSpanConflict
 
 pytestmark = pytest.mark.local
 
-#: 2026-10 측정: 서식 193개, 셀 57,431 / 행 복제 1,815 / 누름틀 2,301 라운드트립 일치
+#: 2026-10 측정: 서식 193개, 셀 57,431 / 행 복제 2,049 / 누름틀 2,301 라운드트립 일치
 EXPECTED_FILES = 193
 
 
@@ -49,8 +49,13 @@ def _roundtrip(path, tmp_path) -> list[str]:
             continue
         # 복제한 행 아래는 밀렸으니 그 표의 기대값은 새 행 앞까지만 남긴다
         cells = {k: v for k, v in cells.items() if k[0] != t.index or k[1] < new}
-        doc.set_cell(t.index, new, 0, "새 행")
-        cells[(t.index, new, 0)] = "새 행"
+        # 새 행의 첫 칸은 왼쪽 묶음 칸에 가려졌거나 수식일 수 있다
+        target = next(
+            (c for c in doc.tables()[t.index].cells if c.row == new and not c.has_field), None
+        )
+        if target is not None:
+            doc.set_cell(t.index, new, target.col, "새 행")
+            cells[(t.index, new, target.col)] = "새 행"
 
     again = HwpxDocument.open(doc.save(tmp_path / path.name))
     errors = [
