@@ -20,9 +20,13 @@ class Settings:
     templates: Path
     schemas: Path
     out: Path
+    #: 서비스 데이터 (DB, 서식 버전별 템플릿, 문서 산출물). 내부 서식 파생물이라 커밋하지 않는다
+    data: Path
 
     @classmethod
-    def from_root(cls, root: Path, out: Path | None = None) -> Settings:
+    def from_root(
+        cls, root: Path, out: Path | None = None, data: Path | None = None
+    ) -> Settings:
         root = Path(root).resolve()
         return cls(
             root=root,
@@ -30,7 +34,12 @@ class Settings:
             templates=root / "templates",
             schemas=root / "schemas",
             out=Path(out).resolve() if out else root / "out",
+            data=Path(data).resolve() if data else root / "data",
         )
+
+    @property
+    def database_url(self) -> str:
+        return f"sqlite:///{(self.data / 'docflow.db').as_posix()}"
 
     def mirror(self, src: Path, *, kind: str) -> Path:
         """forms/ 아래 원본 경로를 templates/ 또는 schemas/ 의 같은 경로로 옮긴다.
@@ -50,7 +59,11 @@ class Settings:
 
 
 def get_settings() -> Settings:
-    """환경변수 DOCFLOW_ROOT / DOCFLOW_OUT 이 있으면 우선하고, 없으면 저장소 루트를 쓴다."""
+    """환경변수 DOCFLOW_ROOT / DOCFLOW_OUT / DOCFLOW_DATA 가 있으면 우선한다.
+
+    없으면 저장소 루트 기준이다.
+    """
     root = Path(os.environ.get("DOCFLOW_ROOT") or _REPO_ROOT)
     out = os.environ.get("DOCFLOW_OUT")
-    return Settings.from_root(root, Path(out) if out else None)
+    data = os.environ.get("DOCFLOW_DATA")
+    return Settings.from_root(root, Path(out) if out else None, Path(data) if data else None)

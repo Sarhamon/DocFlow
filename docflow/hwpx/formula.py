@@ -5,7 +5,7 @@
 
 지원하는 문법 (서식 193개의 수식 305개를 조사해 정했다)::
 
-    =SUM(ABOVE)            위쪽 칸의 합 (숫자가 아닌 칸을 만나면 거기서 멈춘다)
+    =SUM(ABOVE)            위쪽 칸의 합 (빈 칸은 건너뛰고 글자 칸을 만나면 멈춘다)
     =SUM(?3:?6)            범위의 합. ? 는 "수식이 든 칸의 열/행"
     =PRODUCT(F?:G?)        범위의 곱
     =e?+f?+h?+I?           칸 참조와 사칙연산, 괄호
@@ -100,6 +100,8 @@ class _Calc:
         self.grid = grid
         self.row = row
         self.col = col
+        #: 계산하며 읽은 칸 (행, 열)
+        self.reads: set[tuple[int, int]] = set()
 
     # -- 토큰 도우미
     def peek(self) -> tuple[str, str] | None:
@@ -210,6 +212,7 @@ class _Calc:
     def text_at(self, row: int, col: int) -> str:
         if not (0 <= row < len(self.grid) and 0 <= col < len(self.grid[0])):
             raise FormulaError(f"표 밖의 칸을 참조한다 (행 {row + 1}, 열 {col + 1})")
+        self.reads.add((row, col))
         return self.grid[row][col]
 
     def cell_value(self, row: int, col: int) -> Decimal:
@@ -232,17 +235,33 @@ class _Calc:
         return values
 
     def directional(self, which: str) -> list[Decimal]:
-        """ABOVE / LEFT: 숫자가 아닌 칸을 만나기 전까지의 숫자들."""
+        """ABOVE / LEFT: 글자가 든 칸을 만나기 전까지의 숫자들. 빈 칸은 건너뛴다.
+
+        한글이 그렇게 계산한다. 정산서(AID 3-01)의 `남은금액` 합계는 빈 칸 9개 위의
+        7,000,000 을 더한 값으로 저장돼 있다. 빈 칸에서 멈추면 명단을 일부만 채운 표에서
+        쓴 행 아래의 빈 행 때문에 합계가 0 이 된다.
+        """
         step = (-1, 0) if which == "ABOVE" else (0, -1)
         r, c = self.row + step[0], self.col + step[1]
         values: list[Decimal] = []
         while 0 <= r < len(self.grid) and 0 <= c < len(self.grid[0]):
-            number = parse_number(self.grid[r][c])
-            if number is None:
+            text = self.grid[r][c].strip()
+            number = parse_number(text)
+            if number is None and text:
                 break
-            values.append(number)
+            self.reads.add((r, c))
+            if number is not None:
+                values.append(number)
             r, c = r + step[0], c + step[1]
         return values
+
+
+class _Reader(_Calc):
+    """읽는 칸만 모은다. 글자가 든 칸도 0 으로 읽고 끝까지 따라간다."""
+
+    def cell_value(self, row: int, col: int) -> Decimal:
+        self.text_at(row, col)
+        return Decimal(0)
 
 
 def _product(xs: list[Decimal]) -> Decimal:
@@ -265,3 +284,16 @@ def evaluate(formula: str, grid: Grid, row: int, col: int) -> Decimal:
     if calc.peek() is not None:
         raise FormulaError(f"수식 뒤에 남는 부분이 있다: {formula!r}")
     return value
+
+
+def operands(formula: str, grid: Grid, row: int, col: int) -> set[tuple[int, int]]:
+    """수식이 값을 읽는 칸 (행, 열). 스키마가 이 칸들을 금액 칸으로 본다.
+
+    ABOVE / LEFT 는 계산할 때와 같이 글자 칸에서 멈추므로 머리 칸은 들지 않는다.
+    """
+    src = formula.strip()
+    if not src.startswith("="):
+        raise FormulaError(f"수식이 '=' 로 시작하지 않는다: {formula!r}")
+    calc = _Reader(_tokenize(src[1:]), grid, row, col)
+    calc.expr()
+    return calc.reads

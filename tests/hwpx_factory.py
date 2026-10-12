@@ -90,6 +90,54 @@ def section(body: str) -> str:
     )
 
 
+#: 쪽 설정. 실제 서식은 구역 첫 문단의 첫 run 에 둔다.
+SEC_PR = (
+    '<hp:secPr id="" textDirection="HORIZONTAL">'
+    '<hp:pagePr width="59528" height="84188"/></hp:secPr>'
+)
+
+
+def para_runs(runs: str, pr: str = "11") -> str:
+    """run XML 을 그대로 담은 문단."""
+    return (
+        f'<hp:p id="0" paraPrIDRef="{pr}" styleIDRef="0" pageBreak="0" columnBreak="0" '
+        f'merged="0">{runs}{LINESEG}</hp:p>'
+    )
+
+
+def body(*paras: str) -> str:
+    """구역 바로 아래에 문단이 여럿인 본문 (기안문처럼). 첫 문단 앞머리에 쪽 설정 run 을 둔다."""
+    first = paras[0].replace(">", f'><hp:run charPrIDRef="0">{SEC_PR}</hp:run>', 1)
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<hs:sec xmlns:hs="{HS}" xmlns:hp="{HP}">{first}{"".join(paras[1:])}</hs:sec>'
+    )
+
+
+def body_field(name: str = "content_body", fid: str = "900") -> list[str]:
+    """여러 문단에 걸친 본문 누름틀 (기안문 content_body 와 같은 모양).
+
+    시작 문단: 누름틀 시작 run + `1. 관련` / 사이 문단 세 개(마지막은 빈 문단) /
+    끝 문단: `붙임 1부.  끝.` + 누름틀 끝 + 누름틀 밖의 `결재란`.
+    """
+    begin = (
+        f'<hp:run charPrIDRef="10"><hp:ctrl><hp:fieldBegin id="{fid}" type="CLICK_HERE" '
+        f'name="{name}"/></hp:ctrl></hp:run><hp:run charPrIDRef="22"><hp:t>1. 관련</hp:t></hp:run>'
+    )
+    end = (
+        '<hp:run charPrIDRef="22"><hp:t>붙임 1부.  끝.</hp:t></hp:run>'
+        f'<hp:run charPrIDRef="10"><hp:ctrl><hp:fieldEnd beginIDRef="{fid}"/></hp:ctrl></hp:run>'
+        '<hp:run charPrIDRef="5"><hp:t>결재란</hp:t></hp:run>'
+    )
+    return [
+        para_runs(begin, pr="16"),
+        para("  가. 20○○년도 사업계획서", char="22", pr="25"),
+        para("  나. 장 소 : 강의실", char="22", pr="25"),
+        para("", pr="25"),
+        para_runs(end, pr="26"),
+    ]
+
+
 def build(path: Path, *sections: str) -> Path:
     """mimetype + section 들로 최소 HWPX 를 만든다."""
     with zipfile.ZipFile(path, "w") as zf:

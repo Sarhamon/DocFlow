@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from docflow.adapters.hancom import Hancom  # noqa: E402
+from docflow.adapters.hancom import Hancom, cleanup_hwp  # noqa: E402
 from docflow.config import Settings, get_settings  # noqa: E402
 from docflow.log import setup_logging  # noqa: E402
 
@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     failed: list[tuple[Path, str]] = []
+    cleanup_hwp("orphans")  # 지난 실행이 남긴 창 없는 한글에 붙으면 Open() 에서 멈춘다
     with Hancom() as hancom:
         for i, (src, dst) in enumerate(jobs, 1):
             rel = dst.relative_to(settings.templates)

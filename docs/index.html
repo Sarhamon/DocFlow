@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<meta name="description" content="3개 사업 183개 한글 서식의 HWPX 변환·스키마 추출과 규칙 기반 검증 엔진 진행 현황을 정리한 DocFlow 리포트.">
-<meta property="og:title" content="DocFlow 서식 추출 현황">
-<meta property="og:description" content="서식 183개, 채울 지점 8,904곳. 검증 규칙 3종 동작.">
+<meta name="description" content="서식 기반 문서 자동 생성·검증 시스템 DocFlow 의 마일스톤별 개발 진행 현황.">
+<meta property="og:title" content="DocFlow 개발 진행 현황">
+<meta property="og:description" content="마일스톤 7/13 완료 (진행도 52%). 서식 3종이 입력부터 HWP·PDF 까지 관통하고 웹 API 로 문서를 만든다. 다음은 M7 인증.">
 <meta property="og:type" content="article">
-<title>DocFlow 서식 추출 현황</title>
+<title>DocFlow 개발 진행 현황</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans+KR:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
@@ -419,396 +419,475 @@
     .bars .track { margin-bottom: 4px; }
     .bars dd { text-align: left; margin-bottom: 8px; }
   }
+
+  /* ---------- 전체 진행 막대 (마일스톤 규모 가중) ---------- */
+
+  .progress { margin: 0 0 10px; }
+  .progress .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .progress .head b {
+    font-family: var(--f-data);
+    font-size: 40px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -.02em;
+    color: var(--ok);
+  }
+  .progress .head span { font-size: 13px; color: var(--ink-mute); }
+  .segs {
+    display: flex;
+    gap: 3px;
+    height: 34px;
+  }
+  .segs i {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-style: normal;
+    font-family: var(--f-data);
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--surface-2);
+    color: var(--ink-faint);
+    min-width: 0;
+    overflow: hidden;
+  }
+  .segs i.done { background: var(--ok); color: var(--surface); }
+  .segs i.next { background: var(--mark-bg); color: var(--mark); box-shadow: inset 0 0 0 1px var(--mark); }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin: 10px 0 0;
+  }
+  .legend span::before {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+    vertical-align: -1px;
+    background: var(--surface-2);
+  }
+  .legend .l-done::before { background: var(--ok); }
+  .legend .l-next::before { background: var(--mark-bg); box-shadow: inset 0 0 0 1px var(--mark); }
+
+  /* ---------- 마일스톤 목록 ---------- */
+
+  .ms { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+  .ms li {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) max-content;
+    gap: 4px 14px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    align-items: baseline;
+  }
+  .ms .id {
+    font-family: var(--f-data);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .ms li.done .id { color: var(--ok); }
+  .ms li.next .id { color: var(--mark); }
+  .ms .name { font-weight: 600; font-size: 15px; }
+  .ms .name small {
+    font-family: var(--f-data);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-faint);
+    margin-left: 6px;
+  }
+  .ms .proof {
+    grid-column: 2 / 4;
+    font-size: 13.5px;
+    color: var(--ink-mute);
+    margin: 0;
+    max-width: 70ch;
+  }
+  .ms li.todo .name { font-weight: 500; color: var(--ink-mute); }
+
+  /* ---------- 계층 상태 ---------- */
+
+  .layers { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  .layers > div {
+    background: var(--surface);
+    padding: 12px 16px;
+    display: grid;
+    grid-template-columns: minmax(150px, max-content) 1fr max-content;
+    gap: 4px 16px;
+    align-items: baseline;
+  }
+  .layers b { font-family: var(--f-data); font-size: 12.5px; font-weight: 600; }
+  .layers span { font-size: 13.5px; color: var(--ink-mute); }
+
+  @media (max-width: 560px) {
+    .ms li { grid-template-columns: 36px minmax(0, 1fr); }
+    .ms li .pill { grid-column: 2; justify-self: start; }
+    .ms .proof { grid-column: 2; }
+    .layers > div { grid-template-columns: 1fr; }
+    .layers .pill { justify-self: start; }
+    .segs i { font-size: 0; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <header class="masthead">
-    <p class="eyebrow">DocFlow · 캡스톤 디자인</p>
-    <h1>서식 183개, 채울 지점 8,904곳</h1>
+    <p class="eyebrow">DocFlow · 캡스톤 디자인 · 개발 진행 현황</p>
+    <h1>서식 3종 관통, API 로 문서를 만든다</h1>
     <p class="standfirst">
-      앵커(신산업)·AID·혁신 3개 사업의 한글 서식 전체를 HWPX로 변환하고 스키마를
-      추출했습니다. 파이프라인이 다루지 못한 서식은 하나도 없었습니다.
-      그 스키마 위에서 규칙 기반 검증 엔진이 필수 누락·금액 합계·날짜를 잡습니다.
+      서식 기반 문서 자동 생성·검증 시스템을 기능명세 기준으로 다시 짜고 있습니다.
+      <strong>문서 엔진(M0~M4)</strong> 위에서 서식 3종이 입력 → 검증 → 생성 → HWP·PDF 까지
+      한 번에 통과했고(M5), 같은 흐름을 <strong>웹 API</strong> 로 감쌌습니다(M6).
+      다음은 로그인(M7)과 사용자 화면(M8)입니다.
     </p>
 
     <dl class="docstrip">
-      <div><dt>문서번호</dt><dd>DocFlow-2026-0921</dd></div>
-      <div><dt>시행일자</dt><dd>2026.09.21</dd></div>
-      <div><dt>단계</dt><dd>로드맵 5 / 8</dd></div>
-      <div><dt>대상</dt><dd>3개 사업</dd></div>
+      <div><dt>문서번호</dt><dd>DocFlow-2026-1012</dd></div>
+      <div><dt>기준일</dt><dd>2026.10.12</dd></div>
+      <div><dt>마일스톤</dt><dd>7 / 13 완료</dd></div>
+      <div><dt>다음</dt><dd>M7 인증 (IAM)</dd></div>
     </dl>
   </header>
 
-  <div class="figures">
-    <div class="fig"><b>183</b><span>스키마를 추출한 서식</span></div>
-    <div class="fig"><b>8,904</b><span>채워야 할 셀 (슬롯)</span></div>
-    <div class="fig"><b>281</b><span>명단·내역 반복영역</span></div>
-    <div class="fig"><b>3</b><span>동작하는 검증 규칙</span></div>
-    <div class="fig is-ok"><b>0</b><span>변환·추출 실패</span></div>
+  <!-- 전체 진행도 -->
+  <div class="progress" role="img" aria-label="전체 진행도 52퍼센트. M0부터 M6까지 완료, M7 다음, M8부터 M12까지 미착수">
+    <div class="head">
+      <b>52%</b>
+      <span>마일스톤 규모(S=1, M=2, L=3)로 가중한 진행도 · 29점 중 15점</span>
+    </div>
+    <div class="segs">
+      <i class="done" style="flex:1">M0</i>
+      <i class="done" style="flex:3">M1</i>
+      <i class="done" style="flex:2">M2</i>
+      <i class="done" style="flex:3">M3</i>
+      <i class="done" style="flex:1">M4</i>
+      <i class="done" style="flex:2">M5</i>
+      <i class="done" style="flex:3">M6</i>
+      <i class="next" style="flex:2">M7</i>
+      <i style="flex:3">M8</i>
+      <i style="flex:3">M9</i>
+      <i style="flex:2">M10</i>
+      <i style="flex:2">M11</i>
+      <i style="flex:2">M12</i>
+    </div>
+    <p class="legend"><span class="l-done">완료</span><span class="l-next">다음</span><span>미착수</span></p>
+  </div>
+
+  <div class="figures" style="margin-top:28px">
+    <div class="fig is-ok"><b>183</b><span>처리한 서식 (3개 사업 전부)</span></div>
+    <div class="fig"><b>4,953</b><span>채울 표 칸 (슬롯)</span></div>
+    <div class="fig"><b>280</b><span>명단·내역 반복영역</span></div>
+    <div class="fig is-ok"><b>0</b><span>올바른 입력에서 나온 오탐</span></div>
+    <div class="fig"><b>441</b><span>자동 테스트 (기본 418 + 로컬 23)</span></div>
   </div>
   <p class="figure-note">
-    원본 <span class="num">.hwp</span> 193개를 변환했고, 그중 서식이 아닌 문서
-    10건(서식 목차 9, 서식 신구대조표 1)을 제외한 183개에서 스키마를 뽑았습니다.
+    원본 <span class="num">.hwp</span> 193개 중 서식 목차·신구대조표 10건을 뺀 183개가 대상입니다.
+    로컬 테스트는 실제 서식과 한컴오피스로 돌고, 기본 테스트는 코드로 만든 문서만 써서 어디서나 돕니다.
   </p>
 
   <!-- 1 -->
   <section>
-    <h2><span class="no">01</span> 이번에 한 것</h2>
+    <h2><span class="no">01</span> 마일스톤</h2>
     <p class="lede">
-      기존에는 앵커 서식 38개만 처리된 상태였습니다. AID 47개와 혁신 108개를
-      파이프라인에 태워 전체를 관통시켰습니다.
+      문서 엔진 → 서비스 → 인증 → 화면 → LLM 순서로 쌓습니다. 각 단계는 <strong>실제 서식으로 잰 증거</strong>가
+      나와야 끝난 것으로 칩니다. 규모는 S·M·L 로 적었습니다.
     </p>
 
-    <div class="flow"><b>forms/</b>          원본 .hwp <b>193개</b>
-   │  tools/convert_templates.py   <em>[한컴 COM]</em>
-<b>templates/</b>      .hwpx <b>193개</b>   실패 0
-   │  tools/extract_schema.py      <em>[순수 파이썬]</em>
-<b>schemas/</b>        .json <b>183개</b>   실패 0
-                  누름틀 630 · 표 2,501 · 슬롯 8,904 · 반복영역 281</div>
-
-    <dl class="bars">
-      <dt>작업 전</dt>
-      <dd class="track"><i style="width:20.8%"></i></dd>
-      <dd>38 / 183</dd>
-      <dt>작업 후</dt>
-      <dd class="track"><i style="width:100%"></i></dd>
-      <dd>183 / 183</dd>
-    </dl>
-    <p class="figure-note" style="margin-bottom:0">서식 커버리지 — 20.8% → 100%</p>
+    <ol class="ms">
+      <li class="done">
+        <span class="id">M0</span><span class="name">기반<small>S</small></span><span class="pill done">완료</span>
+        <p class="proof">테스트·린트가 한 명령으로 돈다. 경로·환경 설정과 로깅을 한 곳에 모았다.</p>
+      </li>
+      <li class="done">
+        <span class="id">M1</span><span class="name">HWPX 코어 — 읽기·쓰기<small>L</small></span><span class="pill done">완료</span>
+        <p class="proof">
+          서식 193개 전부 <strong>쓰기 → 저장 → 다시 읽기 일치</strong>: 표 칸 <span class="num">57,431</span>,
+          행 복제 <span class="num">2,049</span>, 누름틀 <span class="num">2,301</span>.
+          병합 칸, 반복영역 행 늘리기, 수식 재계산(<span class="num">305</span>개 해석)까지.
+        </p>
+      </li>
+      <li class="done">
+        <span class="id">M2</span><span class="name">서식 파이프라인 — 변환·스키마 추출<small>M</small></span><span class="pill done">완료</span>
+        <p class="proof">
+          변환 <span class="num">193</span> · 추출 <span class="num">183</span>, 실패 0, 채울 지점이 없는 서식 0.
+          스키마가 가리키는 칸 <strong>전부에 실제로 쓸 수 있음</strong>을 확인했다.
+        </p>
+      </li>
+      <li class="done">
+        <span class="id">M3</span><span class="name">검증 엔진<small>L</small></span><span class="pill done">완료</span>
+        <p class="proof">
+          규칙 4종이 서식 <span class="num">183 / 107 / 49</span>개에 적용된다. 올바른 값을 넣으면 오탐 0,
+          일부러 넣은 오류는 <strong>그 자리에서 그 코드로</strong> 잡힌다.
+        </p>
+      </li>
+      <li class="done">
+        <span class="id">M4</span><span class="name">변환 어댑터 — HWP·PDF<small>S</small></span><span class="pill done">완료</span>
+        <p class="proof">
+          채운 서식을 HWP·PDF 로 바꾸고 한글이 다시 연다. 자동화가 비정상 종료해 남은 한글이 있어도
+          다음 변환이 멈추지 않는다. 시간 초과·재시도 1회·260자 넘는 경로까지.
+        </p>
+      </li>
+      <li class="done">
+        <span class="id">M5</span><span class="name">수직 슬라이스 — 서식 3종 관통<small>M</small></span><span class="pill done">완료</span>
+        <p class="proof">
+          기안문(변형 10종 중 하나 선택·여러 문단 본문)·정산서(표 중심)·교통비 지급 내역서(반복영역+합계)가
+          명령줄 하나로 입력 → 검증 → HWPX → HWP·PDF 까지 통과한다. 서식 183개의 변형
+          <span class="num">230</span>건 전부를 만들어 오류 0, 일부러 넣은 오류는 만들기 전에 그 자리에서 잡힌다.
+        </p>
+      </li>
+      <li class="done">
+        <span class="id">M6</span><span class="name">서비스·저장 (FastAPI)<small>L</small></span><span class="pill done">완료</span>
+        <p class="proof">
+          API 만으로 새 문서 → 임시저장 → 재조회 → 검증 → 만들기 → 내려받기. 서식은 버전으로 쌓아
+          <strong>작성 당시 버전</strong>으로 계속 만들고, 완료 문서는 복제해서 고친다. 입력값·검증 결과·적용 규칙을 이력에 남긴다.
+        </p>
+      </li>
+      <li class="next">
+        <span class="id">M7</span><span class="name">인증 (IAM)<small>M</small></span><span class="pill next">다음</span>
+        <p class="proof">발급한 계정으로만 로그인, 첫 로그인 비밀번호 변경, 타인 문서·관리자 경로 차단.</p>
+      </li>
+      <li class="todo">
+        <span class="id">M8</span><span class="name">사용자 화면<small>L</small></span><span class="pill open">미착수</span>
+        <p class="proof">서식 선택 → 입력(실시간 점검) → 검증 → 수정 → 내려받기를 브라우저에서 끝까지.</p>
+      </li>
+      <li class="todo">
+        <span class="id">M9</span><span class="name">관리자 페이지<small>L</small></span><span class="pill open">미착수</span>
+        <p class="proof">새 서식을 올려 승인하면 사용자 화면에 나타난다. 입력폼·규칙·계정 관리.</p>
+      </li>
+      <li class="todo">
+        <span class="id">M10</span><span class="name">LLM 연동 (EXAONE 3.5)<small>M</small></span><span class="pill open">미착수</span>
+        <p class="proof">본문 초안 생성과 숫자·날짜 인용 검사, 체크리스트 기반 정성 판정.</p>
+      </li>
+      <li class="todo">
+        <span class="id">M11</span><span class="name">문서 간 검증·운영 현황<small>M</small></span><span class="pill open">미착수</span>
+        <p class="proof">계획서–정산서 금액 대조, 통계·로그인 이력·감사 로그.</p>
+      </li>
+      <li class="todo">
+        <span class="id">M12</span><span class="name">클라우드 이전<small>M</small></span><span class="pill open">미착수</span>
+        <p class="proof">변환을 별도 워커로 떼어 내고 로컬과 같은 시나리오가 클라우드에서 통과한다.</p>
+      </li>
+    </ol>
   </section>
 
   <!-- 2 -->
   <section>
-    <h2><span class="no">02</span> 추출 결과</h2>
+    <h2><span class="no">02</span> 계층별 상태</h2>
     <p class="lede">
-      사업마다 서식 수는 다르지만 서식 한 개당 슬롯 수는 <span class="num">44~52</span>개로
-      비슷합니다. 서식 묶음이 달라도 구조가 크게 다르지 않다는 뜻입니다.
+      위 계층은 아래 계층의 인터페이스에만 기댑니다. 한컴오피스에 기대는 곳은 변환 어댑터 하나뿐이고,
+      나머지는 순수 파이썬이라 <strong>한글 없이도 생성·검증이 됩니다</strong>(한컴 모듈을 막고 전체 테스트로 확인).
     </p>
 
-    <div class="scroll">
-      <table>
-        <caption>사업별 추출 내역</caption>
-        <thead>
-          <tr>
-            <th>사업</th><th class="r">서식</th><th class="r">누름틀</th>
-            <th class="r">표</th><th class="r">슬롯</th><th class="r">반복영역</th>
-            <th class="r">서식당 슬롯</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td>혁신</td><td class="r">94</td><td class="r">333</td><td class="r">1,383</td><td class="r">4,912</td><td class="r">158</td><td class="r">52.3</td></tr>
-          <tr><td>AID</td><td class="r">45</td><td class="r">167</td><td class="r">630</td><td class="r">2,322</td><td class="r">63</td><td class="r">51.6</td></tr>
-          <tr><td>앵커(신산업)</td><td class="r">38</td><td class="r">130</td><td class="r">479</td><td class="r">1,652</td><td class="r">45</td><td class="r">43.5</td></tr>
-          <tr><td>미분류</td><td class="r">6</td><td class="r">0</td><td class="r">9</td><td class="r">18</td><td class="r">15</td><td class="r">3.0</td></tr>
-        </tbody>
-        <tfoot>
-          <tr><td>합계</td><td class="r">183</td><td class="r">630</td><td class="r">2,501</td><td class="r">8,904</td><td class="r">281</td><td class="r">48.7</td></tr>
-        </tfoot>
-      </table>
+    <div class="layers">
+      <div><b>docflow/hwpx</b><span>HWPX 읽기·쓰기, 수식 계산</span><span class="pill done">M1</span></div>
+      <div><b>docflow/schema</b><span>판정 규칙, 스키마 모델, 추출기</span><span class="pill done">M2</span></div>
+      <div><b>docflow/validate</b><span>규칙 4종, 칸 단위·문서 단위 호출, 규칙 설정</span><span class="pill done">M3</span></div>
+      <div><b>docflow/convert</b><span>변환 작업 요청/결과 · 한컴 어댑터(자식 프로세스·시간 초과·재시도·정리)</span><span class="pill done">M4</span></div>
+      <div><b>docflow/generate · pipeline</b><span>입력값 → HWPX 생성(결재란 비우기·반복 행 정리·변형 선택) · 검증 → 생성 → 변환 흐름</span><span class="pill done">M5</span></div>
+      <div><b>docflow/service · web</b><span>서식 목록·버전, 문서·이력, 파일 저장소 · FastAPI</span><span class="pill done">M6</span></div>
+      <div><b>인증 · 화면</b><span>IAM, 사용자 화면, 관리자 페이지</span><span class="pill open">M7–M9</span></div>
+      <div><b>LLM</b><span>초안 생성, 정성 판정</span><span class="pill open">M10</span></div>
     </div>
 
-    <h3>카테고리별 슬롯 분포</h3>
-    <dl class="bars">
-      <dt>기안문</dt>          <dd class="track"><i class="mark" style="width:100%"></i></dd>   <dd>2,136</dd>
-      <dt>계획서·보고서</dt>   <dd class="track"><i style="width:97.6%"></i></dd> <dd>2,084</dd>
-      <dt>학생지원비</dt>      <dd class="track"><i style="width:36.2%"></i></dd> <dd>773</dd>
-      <dt>국내외여비</dt>      <dd class="track"><i style="width:34.4%"></i></dd> <dd>734</dd>
-      <dt>인건비</dt>          <dd class="track"><i style="width:32.8%"></i></dd> <dd>700</dd>
-      <dt>회의비</dt>          <dd class="track"><i style="width:11.5%"></i></dd> <dd>245</dd>
-      <dt>도서구입비</dt>      <dd class="track"><i style="width:11.0%"></i></dd> <dd>234</dd>
-      <dt>정산서</dt>          <dd class="track"><i style="width:4.6%"></i></dd>  <dd>99</dd>
-    </dl>
-    <p class="figure-note">
-      카테고리 이름이 사업마다 달라 같은 분류끼리 합산했습니다.
-      기안문은 서식 <span class="num">11</span>개뿐인데 슬롯이 가장 많습니다. 결재란이
-      <code>apb1_*</code>~<code>apb8_*</code>로 여덟 벌씩 반복되기 때문입니다.
-      슬롯 최다는 <strong>일반기안문(샘플 10종)</strong>으로 한 장에 <span class="num">360</span>개입니다.
-    </p>
+    <div class="flow" style="margin-top:18px"><b>forms/</b>       원본 .hwp 193        <em>[한컴 COM]</em>
+   │ convert_templates
+<b>templates/</b>   .hwpx 193             실패 0
+   │ sync_forms (스키마 추출)          <em>[순수 파이썬]</em>
+<b>서식 버전</b>    183 (DB + data/)      버전마다 템플릿·스키마 보관
+   │ 입력값 → validate → generate      <em>[순수 파이썬]</em>
+<b>문서.hwpx</b>
+   │ HancomConverter (한 번에 하나)    <em>[한컴 COM · 자식 프로세스]</em>
+<b>문서.hwp, .pdf</b>                  내려받기: 서식번호_문서명_작성일</div>
   </section>
 
   <!-- 3 -->
   <section>
-    <h2><span class="no">03</span> 설계 근거 재검증</h2>
+    <h2><span class="no">03</span> 서식에서 뽑아낸 것</h2>
     <p class="lede">
-      README의 설계 결정은 앵커 38개를 해부해서 나온 것이었습니다. 표본이
-      <span class="num">4.8</span>배로 늘어난 지금도 같은 결론이 나오는지 확인했습니다.
+      스키마는 서식 하나를 기계가 읽는 형태로 적은 것입니다. 작성자가 채우는 칸, 결재선이 채우는 칸,
+      수식이 계산하는 칸을 나눠 담습니다.
     </p>
 
-    <h3>① 누름틀은 기안문 계열에만 몰려 있다 — 유지</h3>
-    <p>
-      기안문·품의서 계열 <strong>15개 서식</strong>이 전체 누름틀 630개 중
-      <strong>547개(87%)</strong>를 차지합니다. 고유 이름은 51종입니다.
-      나머지 168개 서식이 83개를 나눠 갖습니다.
+    <div class="scroll">
+      <table>
+        <caption>사업별 추출 내역 (스키마 v2)</caption>
+        <thead>
+          <tr>
+            <th>사업</th><th class="r">서식</th><th class="r">누름틀</th><th class="r">표</th>
+            <th class="r">슬롯</th><th class="r">결재란 칸</th><th class="r">수식</th><th class="r">반복영역</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>혁신</td><td class="r">98</td><td class="r">289</td><td class="r">1,389</td><td class="r">2,678</td><td class="r">471</td><td class="r">113</td><td class="r">163</td></tr>
+          <tr><td>AID</td><td class="r">47</td><td class="r">147</td><td class="r">633</td><td class="r">1,243</td><td class="r">277</td><td class="r">48</td><td class="r">67</td></tr>
+          <tr><td>앵커(신산업)</td><td class="r">38</td><td class="r">111</td><td class="r">479</td><td class="r">1,032</td><td class="r">148</td><td class="r">144</td><td class="r">50</td></tr>
+        </tbody>
+        <tfoot>
+          <tr><td>합계</td><td class="r">183</td><td class="r">547</td><td class="r">2,501</td><td class="r">4,953</td><td class="r">896</td><td class="r">305</td><td class="r">280</td></tr>
+        </tfoot>
+      </table>
+    </div>
+    <p class="figure-note">
+      혁신 98개 중 51개는 지난 학년도 서식(<code>archived</code>)입니다. 한 파일에 여러 서식이 든
+      기안문·지출품의서 9개는 변형 <span class="num">58</span>개로 나눴습니다.
+      카테고리 이름은 사업마다 달랐던 표기(<code>계획서및보고서</code> / <code>계획서 및 보고서</code>)를 하나로 맞췄습니다.
     </p>
 
-    <h3>② 표 셀 채우기가 주 메커니즘이다 — 강화</h3>
-    <p>
-      누름틀이 아예 없는 서식이 <strong>85개(46%)</strong>입니다. 38개 표본에서는
-      42%였는데, 표본이 5배로 늘어도 비율이 유지됐습니다.
-      누름틀을 보조로 두고 표 셀 채우기를 주 경로로 잡은 결정이 더 탄탄해졌습니다.
-    </p>
-
-    <h3>③ 새 서식 유형도 전부 읽힌다 — 신규 확인</h3>
-    <p>
-      AID·혁신에서 앵커에 없던 카테고리가 들어왔습니다 — 국외여비 신청서, 회의록,
-      물품 검수확인서, 용역 구입 요구서, 도서구입비. 그럼에도
-      <strong>슬롯과 반복영역이 둘 다 0인 서식은 0개</strong>였습니다.
-      183개 전부에서 채울 지점을 찾아냈다는 뜻이고, 일반화 가능성의 근거입니다.
+    <h3>검증 규칙별 적용 서식</h3>
+    <dl class="bars">
+      <dt>필수 누락</dt> <dd class="track"><i style="width:100%"></i></dd>   <dd>183 / 183</dd>
+      <dt>날짜</dt>      <dd class="track"><i style="width:58.5%"></i></dd> <dd>107 / 183</dd>
+      <dt>금액 합계</dt>  <dd class="track"><i style="width:26.8%"></i></dd> <dd>49 / 183</dd>
+    </dl>
+    <p class="figure-note">
+      금액 합계는 <strong>작성자가 적는 합계 칸</strong>만 셉니다. 수식 합계 305개는 우리가 다시 계산해 쓰므로 틀릴 수 없어
+      규칙 대상이 아닙니다. 옛 엔진의 177 / 78 / 95 와는 판정 기준이 달라 직접 비교하지 않습니다.
     </p>
   </section>
 
   <!-- 4 -->
   <section>
-    <h2><span class="no">04</span> 고친 것</h2>
+    <h2><span class="no">04</span> 실제 서식이 잡아낸 결함</h2>
     <p class="lede">
-      새 서식을 태우자 기존 코드가 세 군데서 걸렸습니다. 전부 서식 수가 늘어나야
-      드러나는 문제였습니다.
+      코드로 만든 테스트만으로는 안 보이던 문제들입니다. 183개 서식 전부를 대상으로 하는 로컬 회귀 테스트와
+      한글 렌더링 확인에서 나왔고, 모두 고친 뒤 같은 테스트로 막아 두었습니다.
     </p>
 
     <ul class="items">
       <li>
-        <span class="file">schema/form.py</span>
-        <p>
-          파일명 파서가 앵커 형식 <code>(서식 5-05호) [앵커] 제목</code>만 처리해서
-          AID·혁신의 <code>[AID 서식 1-01~10호] 제목</code>이 통째로 실패했습니다.
-          <strong>155개(80%)의 서식번호·사업명이 비어 있었습니다.</strong>
-          <code>_NAME_BRACKET_RE</code>를 추가해 두 형식을 모두 받습니다.
-        </p>
+        <span class="file">M1 쓰기</span>
+        <p>처음부터 비어 있는 누름틀(직인·접수일 등)은 글자 자리가 없어 <strong>250곳이 조용히 안 채워졌다.</strong></p>
       </li>
       <li>
-        <span class="file">extract_schema.py</span>
-        <p>
-          서식 목차·신구대조표 <strong>10건</strong>이 서식으로 섞여 들어와 수치를
-          부풀렸습니다. <code>SKIP_WORDS</code>로 제외합니다.
-        </p>
+        <span class="file">M1 쓰기</span>
+        <p>명단 행을 늘리면 마지막 행의 굵은 아래 테두리까지 복제돼 <strong>늘린 행 사이에 이중선</strong>이 생겼다. 가운데 행을 복제하도록 고쳤다.</p>
       </li>
       <li>
-        <span class="file">extract_schema.py</span>
-        <p>
-          구버전 개정본이 같은 서식 번호를 써서 출력 파일명이 겹쳤고,
-          <strong>10개가 덮어써져 사라졌습니다.</strong> 번호가 겹치면 파일명을
-          그대로 쓰도록 바꿔 183개 전부 보존합니다.
-        </p>
+        <span class="file">M1 속도</span>
+        <p>칸 하나 쓸 때마다 문서 전체를 훑어 193개 라운드트립이 <span class="num">464</span>초 걸렸다 → <span class="num">35</span>초.</p>
+      </li>
+      <li>
+        <span class="file">M2 추출</span>
+        <p>예시 이름을 띄어 쓴 <code>홍 길 동</code>, 여러 줄에 병합된 예시 항목 때문에 <strong>예시·데이터 행을 헤더로</strong> 잡았다.</p>
+      </li>
+      <li>
+        <span class="file">M2 추출</span>
+        <p>순번·금액 같은 숫자를 항목명으로 쓴 칸이 <span class="num">287</span>개 → 0. 합계 행 아래 빈 줄이 합계 칸으로 잡힌 것도 바로잡았다.</p>
+      </li>
+      <li>
+        <span class="file">M3 검증</span>
+        <p>합계를 셀 때 <strong>연번과 날짜(2026.10.12 → 2026원)까지 더하는 오탐</strong>. 옛 엔진에도 있던 결함이었다.</p>
+      </li>
+      <li>
+        <span class="file">M4 변환</span>
+        <p>경로가 260자를 넘으면 한글이 이유 없이 저장에 실패한다. 짧은 임시 폴더에서 변환한 뒤 옮긴다.</p>
+      </li>
+      <li>
+        <span class="file">M5 수식</span>
+        <p><code>SUM(ABOVE)</code> 가 빈 칸에서 멈춰 <strong>명단을 일부만 채우면 합계가 0</strong>이 됐다. 한글은 빈 칸을 건너뛴다.
+          고치자 서식 수식이 표시값과 맞는 수가 <span class="num">220</span> → <span class="num">304</span>/305 — 그동안 "낡은 값"으로 보던 84건이 이 결함이었다.</p>
+      </li>
+      <li>
+        <span class="file">M5 추출</span>
+        <p>수식이 읽는 빈 입력칸(정산서의 집행 금액 등) <span class="num">131</span>개가 글 칸으로 잡혀, 글을 넣으면 합계를 계산하지 못했다. 금액 칸으로 바로잡았다.</p>
+      </li>
+      <li>
+        <span class="file">M5 생성</span>
+        <p>쓰지 않은 명단 행에 미리 적힌 <code>5,000</code> 이 남아 수식 합계가 <strong>쓰지 않은 행까지 더했다</strong>. 쓰지 않은 행은 비운다.</p>
       </li>
     </ul>
-
-    <h3>작업 중 잡은 것</h3>
-    <p>
-      제외어를 처음에 <code>"신구대조표"</code>로 뒀더니
-      <code>(서식 2-06호) 계획서 신구대조표</code>가 같이 걸렸습니다. 이건 사업 변경
-      시 쓰는 <strong>실제 서식</strong>이라 <code>"서식 신구대조표"</code>로 좁혔습니다.
-      제외 규칙이 조용히 진짜 데이터를 지우는 경우라 확인이 필요했습니다.
-    </p>
   </section>
 
   <!-- 5 -->
   <section>
-    <h2><span class="no">05</span> 검증 엔진</h2>
+    <h2><span class="no">05</span> 클라우드로 옮길 때</h2>
     <p class="lede">
-      규칙 세 종류가 동작합니다. 설계의 축은 커버리지가 아니라 <strong>오탐을 줄이는 것</strong>입니다.
-      결재 문서라 틀린 경고가 섞이면 아무도 경고를 안 보게 됩니다.
+      한글이 필요한 곳은 <strong>형식 변환</strong> 하나입니다. 변환은 요청/결과 인터페이스 뒤에 숨겨 두어,
+      클라우드에서는 구현만 바꿔 끼우면 됩니다.
     </p>
 
-    <div class="flow">validate(schema, values, fields=None) -> list[Issue]
-                      <em>^표 셀</em>    <em>^누름틀</em></div>
-    <p class="figure-note">
-      표 셀과 누름틀을 따로 받습니다. <code>HwpxDocument.fill()</code> 이 누름틀 이름을 키로 받기
-      때문에, 나중에 값을 주입할 때 <code>fields</code> 를 그대로 넘길 수 있습니다.
-    </p>
-
-    <h3>규칙별 적용 범위</h3>
     <div class="scroll">
       <table>
-        <thead>
-          <tr><th>규칙</th><th>코드</th><th class="r">적용 서식</th><th class="r">검사 대상</th></tr>
-        </thead>
+        <thead><tr><th>기능</th><th>한글 필요</th></tr></thead>
         <tbody>
-          <tr><td>필수 누락</td><td><code>REQUIRED_EMPTY</code></td><td class="r">177 / 183</td><td class="r">4,700</td></tr>
-          <tr><td>금액 합계</td><td><code>AMOUNT_TOTAL_MISMATCH</code></td><td class="r">78 / 183</td><td class="r">298</td></tr>
-          <tr><td>날짜</td><td><code>DATE_INVALID</code> <code>DATE_ORDER</code></td><td class="r">95 / 183</td><td class="r">206</td></tr>
+          <tr><td>서식 로딩 · 입력폼 · 검증 · 값 주입 · 수식 계산 · HWPX 생성</td><td><span class="pill done">불필요</span></td></tr>
+          <tr><td>결과물 HWP · PDF 변환</td><td><span class="pill open">필요</span></td></tr>
+          <tr><td>관리자가 새 <code>.hwp</code> 서식 등록 (HWPX 로 올리면 불필요)</td><td><span class="pill open">필요</span></td></tr>
         </tbody>
       </table>
     </div>
-
-    <dl class="bars">
-      <dt>필수 누락</dt> <dd class="track"><i style="width:96.7%"></i></dd> <dd>96.7%</dd>
-      <dt>날짜</dt>     <dd class="track"><i style="width:51.9%"></i></dd> <dd>51.9%</dd>
-      <dt>금액 합계</dt> <dd class="track"><i style="width:42.6%"></i></dd> <dd>42.6%</dd>
-    </dl>
-
-    <h3>일부러 빼는 것</h3>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>제외 대상</th><th class="r">개수</th><th>이유</th></tr></thead>
-        <tbody>
-          <tr><td>항목명만 보고 잡은 빈 칸</td><td class="r">4,177</td><td>인접 셀 추론이라 첨부 확인란처럼 안 채우는 게 정상인 칸이 섞임</td></tr>
-          <tr><td>반복 영역 안의 칸</td><td class="r">168</td><td>명단은 수용 행을 다 채우지 않는 게 정상</td></tr>
-          <tr><td>이름 없는 수식 누름틀</td><td class="r">305</td><td>한글이 스스로 계산. 이름이 없어 키로 쓸 수도 없음</td></tr>
-          <tr><td>결재란 <code>apbN_*</code></td><td class="r">90</td><td>작성자가 아니라 결재선이 채우는 자리</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="figure-note">
-      마지막 항목을 빼지 않으면 <strong>규칙이 아니라 우연이 됩니다.</strong>
-      <code>apb4_date</code> 는 템플릿에 <code>00/00</code> 이 남아 있어 필수로 잡히는데
-      <code>apb1_date</code> 는 공백이라 안 잡힙니다. 같은 성격의 칸이 예시 글자가 남았는지로 갈립니다.
-    </p>
-
-    <h3>구현하며 걸린 함정</h3>
-    <ul class="items">
-      <li>
-        <span class="file">날짜</span>
-        <p>
-          <code>2024.5.2.(목) 13:00~17:00</code> 의 물결은 기간이 아니라 <strong>시각</strong>을
-          나눕니다. 물결로 쪼개면 뒷조각에 날짜가 없어 오탐이 납니다. 값에서 날짜만 뽑아
-          연속된 것끼리 순서를 봅니다.
-        </p>
-      </li>
-      <li>
-        <span class="file">금액 합계</span>
-        <p>
-          반복 영역을 기준으로 삼지 않습니다. 명단 첫 줄이 예시 행(<code>홍길동</code>)이라
-          반복 영역에서 빠지기 때문입니다. 교통비 내역서는 데이터가 7~16행인데 반복 영역이
-          8~16행이라, 그대로 더하면 <span class="num">45,000</span> 이 나와 합계
-          <span class="num">50,000</span> 과 안 맞습니다. 대신 합계 셀의 열에서 직전 합계
-          다음 행부터 셉니다.
-        </p>
-      </li>
-      <li>
-        <span class="file">반복 영역</span>
-        <p>
-          합계 행도 채워진 셀이 적어 빈 행으로 잡혀, 반복 영역 <span class="num">23</span>개가
-          합계 행을 데이터 행으로 삼키고 있었습니다. 합계 아래는 데이터가 아니므로(서명란·주의사항)
-          합계 행에서 영역을 끊도록 고쳤습니다. <span class="num">23</span> → <span class="num">0</span>.
-        </p>
-      </li>
-    </ul>
-  </section>
-
-  <!-- 6 -->
-  <section>
-    <h2><span class="no">06</span> AWS 구성 (Phase 2)</h2>
-    <p class="lede">
-      컴퓨팅을 둘로 나눈 것이 핵심입니다. FastAPI는 상시 떠 있어야 하지만 GPU가
-      필요 없고, LLM은 GPU가 필요하지만 상시 떠 있을 필요가 없습니다.
-      요구사항이 정반대라 한 인스턴스에 올리지 않았습니다.
-    </p>
 
     <div class="svc">
-      <div><b>EC2 (g4dn.xlarge)</b><span>EXAONE 3.5 7.8B 추론. T4 16GB에 Q4 양자화로 적재. 실습·시연 때만 켜고 끕니다.</span></div>
-      <div><b>ECS Fargate</b><span>FastAPI 웹 UI와 문서 생성. HWPX 조작은 순수 파이썬이라 같은 컨테이너 안에서 함수 호출로 끝납니다.</span></div>
-      <div><b>ECR</b><span>Fargate가 띄울 컨테이너 이미지. 서식이 내부 자료라 프라이빗 리포지토리로 둡니다.</span></div>
-      <div><b>S3</b><span>템플릿·스키마 읽기, 생성 문서 쓰기. 산출물은 수명주기 규칙으로 자동 삭제합니다.</span></div>
-      <div><b>RDS</b><span>문서 생성 이력과 검증 결과. 결재선과 문서 간 금액 대조가 관계형 질의라 선택했습니다.</span></div>
+      <div><b>ECS Fargate</b><span>웹 서비스와 문서 생성·검증. 순수 파이썬이라 Linux 컨테이너에서 그대로 돈다.</span></div>
+      <div><b>변환 백엔드</b><span>Windows 변환 워커 / HWPX 그대로 제공 / 한글 밖 PDF 변환기 중 실제 서식 품질로 고른다 (M12 전 결정).</span></div>
+      <div><b>EC2 (GPU)</b><span>EXAONE 3.5 추론. 필요할 때만 켜고 끈다.</span></div>
+      <div><b>S3 · RDS</b><span>템플릿·산출물 파일과 문서 이력(입력값·검증 결과·서식 버전).</span></div>
     </div>
-
-    <p class="figure-note" style="margin-top:14px;margin-bottom:0">
-      GPU 인스턴스는 상시 가동 시 월 <span class="num">$380</span>입니다. 필요할 때만
-      켜는 것이 비용 구조의 전제이고, 발표에서 컴퓨팅 분리를 설명하는 근거이기도 합니다.
-    </p>
   </section>
 
   <!-- 6 -->
   <section>
-    <h2><span class="no">07</span> 아직 안 된 것</h2>
+    <h2><span class="no">06</span> 남은 일과 정할 것</h2>
     <p class="lede">
-      발표 전에 메워야 할 순서대로 적었습니다. 위 세 개는 수치나 주장의 근거가
-      비어 있는 항목입니다.
+      M5에서 실제 서식으로 확인한 것들입니다. 산출물에 남는 서식 문구는 지금은 <strong>경고로 알리고</strong>,
+      입력값의 <code>replace</code> 로 바꿀 수 있게 해 두었습니다.
     </p>
 
     <div class="gaps">
       <div class="gap">
-        <h4>신규 카테고리 값 주입 미검증 <span class="pill open">근거 없음</span></h4>
+        <h4>본문에 남는 작성일·서명란 <span class="pill open">팀 결정</span></h4>
         <p>
-          슬롯 추출이 된다고 값 주입까지 되는 건 별개입니다. 회의록·국외여비·물품
-          검수확인서처럼 이번에 처음 들어온 유형은 아직 값을 넣어 <span class="num">.hwp</span>로
-          뽑아본 적이 없습니다. 표본 몇 개면 확인됩니다.
+          서식 230건 중 130건에서 표 밖 본문의 <code>20○○년 ○○월 ○○일</code>(198곳)과 서명란 <code>○ ○ ○</code>(168곳)이
+          산출물에 남습니다. 작성일을 만든 날로 자동으로 채울지 정합니다.
         </p>
       </div>
       <div class="gap">
-        <h4>표 셀 쓰기가 없다 <span class="pill open">7-2 전 필수</span></h4>
+        <h4>서식 제목 줄 <span class="pill open">팀 결정</span></h4>
+        <p><code>[ AID 서식 1-03호 ] &lt;… 기안문 - 부서용&gt;</code> 같은 안내 줄이 산출물에 그대로 남습니다. 지울지 정합니다.</p>
+      </div>
+      <div class="gap">
+        <h4>금액 칸 형식 검사 <span class="pill next">M8 전</span></h4>
+        <p>금액 칸에 글자를 넣어도 막는 검증 규칙이 없습니다. 수식이 계산하지 못하면 경고만 나옵니다. 규칙 추가를 제안합니다(명세 IN_15).</p>
+      </div>
+      <div class="gap">
+        <h4>스키마에 안 잡히는 예시 값 <span class="pill open">M9</span></h4>
         <p>
-          <code>HwpxDocument.fill()</code> 은 누름틀만 씁니다. 슬롯 8,904개가 전부 표
-          셀인데 표에 값을 넣는 경로가 아직 없습니다. 검증은 읽기만 해서 안 막히지만,
-          웹 UI에서 문서를 만들려면 반드시 필요합니다.
+          자리표시자가 아닌 예시 값(<code>장소: 강남 코엑스</code>, <code>20OO.OO.OO</code>)은 입력칸으로 잡히지 않습니다.
+          지금은 칸 좌표로 덮어쓸 수 있고, 관리자 입력폼 관리에서 항목으로 승인하게 할 계획입니다.
         </p>
       </div>
       <div class="gap">
-        <h4>문서 간 금액 일치 미구현 <span class="pill next">다음 단계</span></h4>
+        <h4>클라우드 변환 방식과 HWP 필요 여부 <span class="pill open">팀 결정</span></h4>
         <p>
-          규칙 코드가 맡기로 한 네 가지 중 마지막입니다. 지출품의서 금액과 정산서 금액을
-          맞추는 식이라 문서를 여러 개 받아야 하고, 입력 계약이 또 바뀝니다. 어떤 문서끼리
-          짝지을지부터 정해야 합니다.
+          결과물을 HWP 로 꼭 줘야 하는지 먼저 정하면 선택지가 줄어듭니다. 서버에서 한글을 자동화로 돌리는
+          라이선스도 확인이 필요합니다.
         </p>
       </div>
       <div class="gap">
-        <h4>로그인과 사용자/관리자 구분이 없다 <span class="pill open">7-3</span></h4>
-        <p>
-          관리자가 계정을 발급하고 사용자는 그 아이디로만 쓰는 IAM 방식으로 정했습니다.
-          가입 신청은 없고, 문서는 계정별로 보관하며, 사업별 접근 제한은 두지 않습니다.
-          서식 등록·입력폼·검증 규칙은 관리자가, 문서 생성은 사용자가 맡습니다.
-          자세한 기능은 <code>docs/functional-spec.md</code> 에 있습니다.
-        </p>
+        <h4>로그인 도입 · 웹 화면 방식 <span class="pill next">M7 전</span></h4>
+        <p>IAM 방식 로그인은 기획에 없던 범위라 팀 합의가 필요합니다. 화면은 서버 렌더링 + HTMX 를 제안합니다.</p>
       </div>
-      <div class="gap">
-        <h4>누름틀 항목명이 영문 <span class="pill next">정리 필요</span></h4>
-        <p>
-          오류 메시지가 <code>'docnumber' 칸이 비어 있습니다</code> 로 나옵니다. 서식 예시가
-          같이 붙어 뜻은 통하지만, 교직원이 쓸 화면이라면 한글 이름이 필요합니다.
-        </p>
-      </div>
-      <div class="gap">
-        <h4>카테고리 이름이 사업마다 다름 <span class="pill next">정리 필요</span></h4>
-        <p>
-          같은 분류를 혁신은 <code>2_계획서및보고서</code>, 앵커는
-          <code>2. [계획서 및 보고서] 관련 서식</code>으로 씁니다. 폴더명을 그대로 쓰고
-          있어 사업을 가로지르는 통합 분류가 안 됩니다.
-        </p>
-      </div>
-      <div class="gap">
-        <h4>서식 번호 없는 6건 <span class="pill next">보류 가능</span></h4>
-        <p>
-          행정지원처의 성범죄 경력 조회 동의서(부서용/회신용)입니다. 외부 기관 양식이라
-          서식 번호 체계 밖에 있고, AID·혁신에 중복 배포되어 실질 2종입니다.
-          파일명으로 저장돼 동작에는 지장이 없습니다.
-        </p>
-      </div>
-    </div>
-  </section>
-
-  <!-- 로드맵 -->
-  <section>
-    <h2><span class="no">08</span> 로드맵</h2>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>#</th><th>단계</th><th>검증 기준</th><th>상태</th></tr></thead>
-        <tbody>
-          <tr><td class="num">1</td><td>프로젝트 스캐폴딩 + HWPX 코어</td><td>필드 추출</td><td><span class="pill done">완료</span></td></tr>
-          <tr><td class="num">2</td><td>한컴 COM 어댑터 격리 + 일괄 변환</td><td>변환 193 = 원본 193</td><td><span class="pill done">완료</span></td></tr>
-          <tr><td class="num">3</td><td>누름틀 값 주입 → .hwp / .pdf 산출</td><td>한글에서 정상 열림</td><td><span class="pill done">완료</span></td></tr>
-          <tr><td class="num">4</td><td>서식별 스키마 자동 추출</td><td>183개 추출, 실패 0</td><td><span class="pill done">완료</span></td></tr>
-          <tr><td class="num">5</td><td>규칙 기반 검증 엔진</td><td>규칙 3종 + 테스트 35개</td><td><span class="pill next">진행 중</span></td></tr>
-          <tr><td class="num">6</td><td>로컬 LLM 연동</td><td>규칙 밖 정성 판정</td><td><span class="pill open">미착수</span></td></tr>
-          <tr><td class="num">7-1</td><td>표 셀·반복영역 값 주입</td><td>재읽기 값 일치</td><td><span class="pill open">미착수</span></td></tr>
-          <tr><td class="num">7-2</td><td>웹 UI — 사용자 화면</td><td>서식 선택 → 입력 → 검증 → 수정 → 다운로드</td><td><span class="pill open">미착수</span></td></tr>
-          <tr><td class="num">7-3</td><td>로그인(IAM) + 관리자 페이지</td><td>계정 발급, 서식·규칙 관리</td><td><span class="pill open">미착수</span></td></tr>
-          <tr><td class="num">8</td><td>AWS 이전</td><td>COM 분리 후 동작</td><td><span class="pill open">미착수</span></td></tr>
-        </tbody>
-      </table>
     </div>
   </section>
 
   <footer>
     <p>
-      수치는 <code>schemas/</code>의 JSON 183개를 직접 집계한 값입니다.
-      3단계 "누름틀 값 주입 → 산출"은 앵커 서식으로 확인한 결과이며, 이번에 추가된
-      AID·혁신 145개에 대해서는 아직 재확인하지 않았습니다.
-      검증 엔진은 pytest 35개로 덮여 있고, 테스트는 서식 파일을 읽지 않고 스키마를
-      코드로 만들어 씁니다 — 원본이 내부 자료라 저장소에 없기 때문입니다.
+      수치는 2026.10.12 에 <code>templates/</code> 183개 서식을 현재 코드로 다시 추출·검증해 집계했습니다.
+      진행도는 <code>docs/dev-roadmap.md</code> 의 마일스톤 규모(S·M·L)를 1·2·3 점으로 가중했습니다.
+      실제 서식은 내부 자료라 저장소에 없고, 그 서식으로 도는 테스트는 <code>pytest -m local</code> 로 분리했습니다.
     </p>
-    <p>DocFlow · 캡스톤 디자인 · 2026.10.06 기준</p>
+    <p>DocFlow · 캡스톤 디자인 · 2026.10.12 기준</p>
   </footer>
 
 </div>

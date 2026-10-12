@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
+from docflow.config import Settings
 from docflow.hwpx.document import Cell, HwpxDocument, Table
+from docflow.hwpx.formula import FormulaError, operands
 from docflow.schema.model import (
     FieldSpec,
     FormSchema,
@@ -37,6 +39,7 @@ from docflow.schema.rules import (
     is_placeholder,
     is_total_text,
     parse_form_name,
+    parse_location,
 )
 
 
@@ -61,11 +64,12 @@ def extract(
     ]
     repeats: list[RepeatSpec] = []
     slots: list[SlotSpec] = []
-    for t in tables:
-        layout = _Layout(t)
+    layouts = [_Layout(t) for t in tables]
+    for layout in layouts:
         found = find_repeats(layout)
         repeats.extend(found)
         slots.extend(find_slots(layout, found))
+    _type_formula_operands(formulas, layouts, slots, repeats)
 
     return FormSchema(
         form_id=form_id,
@@ -85,6 +89,38 @@ def extract(
         formulas=formulas,
         repeats=repeats,
     )
+
+
+def _type_formula_operands(
+    formulas: list[FormulaSpec],
+    layouts: list[_Layout],
+    slots: list[SlotSpec],
+    repeats: list[RepeatSpec],
+) -> None:
+    """수식이 읽는 입력칸은 금액이다. 자리표시자 없이 비어 있던 칸은 항목명만으로 유형을 몰라
+    글(text)로 남는데, 거기에 글을 쓰면 합계를 계산하지 못한다(정산서의 집행 금액 칸)."""
+    read: dict[int, set[tuple[int, int]]] = defaultdict(set)
+    for f in formulas:
+        layout = layouts[f.table]
+        try:
+            cells = operands(f.formula, layout.table.grid(), f.row, f.col)
+        except FormulaError:
+            continue
+        for r, c in cells:
+            if (anchor := layout.cover.get((r, c))) is not None:
+                read[f.table].add((anchor.row, anchor.col))
+    for s in slots:
+        if s.role == "input" and s.input_type == "text" and (s.row, s.col) in read[s.table]:
+            s.input_type = "amount"
+    for rep in repeats:
+        for col in rep.columns:
+            rows = range(rep.start_row, rep.end_row + 1)
+            if (
+                col.role == "input"
+                and col.input_type == "text"
+                and any((r, col.col) in read[rep.table] for r in rows)
+            ):
+                col.input_type = "amount"
 
 
 # ---------------------------------------------------------------- 표 배치
@@ -478,3 +514,21 @@ def find_variants(doc: HwpxDocument, form_id: str, table_count: int) -> list[Var
 def template_path(path: PurePath, root: PurePath) -> str:
     """저장소 루트 기준 / 구분자 경로."""
     return PurePath(path).relative_to(root).as_posix()
+
+
+#: 서식이 아니라 서식 묶음을 설명하는 문서라 스키마를 뽑지 않는다.
+SKIP_WORDS = ("서식 목차", "서식목차", "서식 신구대조표")
+
+
+def is_form(template: PurePath) -> bool:
+    return not any(w in PurePath(template).stem for w in SKIP_WORDS)
+
+
+def extract_file(template: Path, settings: Settings) -> FormSchema:
+    """templates/ 아래 템플릿 하나의 스키마. 경로에서 사업·카테고리를 읽는다."""
+    rel = Path(template).relative_to(settings.templates)
+    return extract(
+        HwpxDocument.open(template),
+        location=parse_location(rel.parent),
+        template=template_path(template, settings.root),
+    )

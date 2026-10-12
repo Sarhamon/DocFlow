@@ -686,7 +686,7 @@ def _one_cell_doc(tmp_path, content: str, rows: int = 1) -> HwpxDocument:
 
 
 def test_fill은_여러_노드에_걸친_누름틀을_첫_노드로_모은다(tmp_path):
-    """알려진 한계: 본문처럼 여러 문단인 누름틀은 구조가 한 노드로 뭉개진다 (replace_text 사용)."""
+    """fill() 은 여러 문단인 누름틀을 한 노드로 뭉갠다. 본문은 fill_text() 로 쓴다."""
     doc = _body_doc(tmp_path)
     assert doc.fill({"content_body": "새 본문"}) == 1
     assert doc.fields()[0].value == "새 본문"

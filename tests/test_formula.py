@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from docflow.hwpx.formula import FormulaError, evaluate, format_result, parse_number
+from docflow.hwpx.formula import FormulaError, evaluate, format_result, operands, parse_number
 
 D = Decimal
 
@@ -68,6 +68,12 @@ def test_SUM_ABOVE는_위쪽_숫자를_더한다():
 def test_SUM_ABOVE는_숫자가_아닌_칸에서_멈춘다():
     g = grid(["9,999"], ["제목"], ["1"], ["2"], [""])
     assert evaluate("=SUM(ABOVE)", g, 4, 0) == 3  # '제목' 위의 9,999 는 더하지 않는다
+
+
+def test_SUM_ABOVE는_빈_칸을_건너뛴다():
+    # 정산서처럼 첫 항목만 쓰고 나머지 행이 빈 표. 한글은 빈 칸을 건너뛰고 글자 칸에서 멈춘다
+    g = grid(["남은금액"], ["7,000,000"], [""], [""], ["1,000"], [""])
+    assert evaluate("=SUM(ABOVE)", g, 5, 0) == 7001000
 
 
 def test_SUM_LEFT():
@@ -157,3 +163,20 @@ def test_해석할_수_없는_문자는_오류():
 def test_식이_시작될_수_없는_토큰은_오류(bad):
     with pytest.raises(FormulaError, match="예상하지 못한"):
         evaluate(bad, grid(["x"]), 0, 0)
+
+
+# ------------------------------------------------------------------ 읽는 칸
+def test_수식이_읽는_칸을_돌려준다():
+    g = grid(["항목", "예산", "집행", "남은"], ["강사료", "", "", ""], ["합계", "", "", ""])
+    assert operands("=b?-c?", g, 1, 3) == {(1, 1), (1, 2)}
+    assert operands("=SUM(?2:?2)", g, 2, 1) == {(1, 1)}
+
+
+def test_ABOVE는_머리_칸_앞까지만_읽는다():
+    g = grid(["예산"], [""], ["9,000"], [""])
+    assert operands("=SUM(ABOVE)", g, 3, 0) == {(1, 0), (2, 0)}
+
+
+def test_글자가_든_칸도_읽는_칸으로_센다():
+    g = grid(["가나다", "1"], ["", ""])
+    assert operands("=A1+B1", g, 1, 0) == {(0, 0), (0, 1)}

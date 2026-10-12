@@ -43,6 +43,7 @@ SUBLIST = f"{{{HP}}}subList"
 SZ = f"{{{HP}}}sz"
 CELL_SZ = f"{{{HP}}}cellSz"
 LINESEG_ARRAY = f"{{{HP}}}linesegarray"
+SEC_PR = f"{{{HP}}}secPr"
 
 _SECTION_RE = re.compile(r"^Contents/section\d+\.xml$")
 #: XML 1.0 에 쓸 수 없는 문자. 들어가면 문서가 깨지므로 값을 쓰기 전에 걸러낸다.
@@ -146,6 +147,19 @@ class Table:
                 for k in range(c.col, min(c.col + c.col_span, self.cols)):
                     out[r][k] = c.text if (r, k) == (c.row, c.col) else ""
         return out
+
+
+@dataclass
+class Block:
+    """구역 바로 아래의 문단 하나. 본문은 이 문단들이 차례로 이어진 것이다."""
+
+    section: str
+    #: 구역 안에서의 순번
+    index: int
+    #: 이 문단에 든 표 번호 (중첩 표 포함, tables() 와 같은 번호)
+    tables: list[int]
+    #: 표 밖의 글자
+    text: str
 
 
 @dataclass
@@ -274,36 +288,111 @@ class HwpxDocument:
         return filled
 
     def replace_text(self, replacements: dict[str, str], *, field: str | None = None) -> int:
-        """텍스트 노드 안의 문구를 제자리에서 바꾼다. 바꾼 횟수를 반환한다.
+        """문단 안의 문구를 제자리에서 바꾼다. 바꾼 횟수를 반환한다.
 
-        본문 누름틀(content_body)은 여러 문단에 걸쳐 있어서 fill() 로 덮어쓰면 문단 구조가
-        한 줄로 뭉개진다. 서식에 박힌 자리표시자("20○○년", "0,000,000원" 등)만 이 메서드로
-        바꾸면 문단·문자 모양이 그대로 남는다. field 를 주면 그 이름의 누름틀 안만 바꾼다.
+        서식에 박힌 자리표시자("20○○년", "0,000,000원" 등)만 바꾸므로 문단·문자 모양이 그대로
+        남는다. field 를 주면 그 이름의 누름틀 안만 바꾼다.
 
-        한 노드 안에 통째로 들어 있는 문구만 찾는다. 문구가 여러 노드에 걸쳐 있으면 바꾸지 못한다.
+        한 문단 안이면 문구가 여러 텍스트 노드에 걸쳐 있어도 찾는다. 서식은 강조한 글자만 다른
+        글자 모양으로 나눠 두므로(`사업담당자` / ` ` / `: ○ ○ ○`) 노드 하나만 보면 못 찾는다.
+        바꾼 글은 문구가 시작하는 노드에 들어가 그 노드의 글자 모양을 따른다. 문단은 넘지 않는다.
         """
         done = 0
         for section in self.section_names:
             root = self._root(section)
             if field is None:
-                nodes = [el for el in root.iter(T)]
+                groups = [(p, _own_texts(p)) for p in root.iter(PARA)]
             else:
-                nodes = [
-                    t
-                    for begin, texts in _walk_field_elements(root)
-                    if begin.get("name") == field
-                    for t in texts
-                ]
-            for t in nodes:
-                text = t.text or ""
-                for old, new in replacements.items():
-                    if old and old in text:
-                        text = text.replace(old, _clean(new))
-                        done += 1
-                if text != (t.text or ""):
-                    t.text = text
+                parents = {child: p for p in root.iter() for child in p}
+                by_para: dict[int, tuple[ET.Element, list[ET.Element]]] = {}
+                for begin, texts in _walk_field_elements(root):
+                    if begin.get("name") != field:
+                        continue
+                    for t in texts:
+                        p = _paragraph_of(t, parents)
+                        by_para.setdefault(id(p), (p, []))[1].append(t)
+                groups = list(by_para.values())
+            for p, nodes in groups:
+                n = _replace_in_nodes(nodes, replacements)
+                if n:
+                    done += n
+                    _drop_linesegs(p)
                     self._dirty.add(section)
         return done
+
+    def fill_text(self, name: str, text: str) -> int:
+        """이름이 일치하는 누름틀에 여러 줄 글을 채운다. 줄마다 문단 하나가 된다. 채운 개수를 반환.
+
+        기안문 본문(content_body)처럼 누름틀이 여러 문단에 걸쳐 있으면 fill() 로는 한 줄로
+        뭉개진다. 첫 줄은 누름틀이 시작하는 문단에, 마지막 줄은 끝나는 문단에 쓰고 그 사이 줄은
+        사이 문단에 쓴다. 문단이 모자라면 사이 문단을 복제하고 남으면 지운다. 문단·문자 모양은
+        서식의 것을 따른다. 시작과 끝이 같은 문단이면 줄을 공백으로 이어 한 줄로 쓴다.
+        """
+        lines = _clean(str(text)).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        filled = 0
+        for section in self.section_names:
+            root = self._root(section)
+            parents = {child: p for p in root.iter() for child in p}
+            ends = {e.get("beginIDRef"): e for e in root.iter(FIELD_END)}
+            for begin, texts in list(_walk_field_elements(root)):
+                if begin.get("name") != name:
+                    continue
+                first = _paragraph_of(begin, parents)
+                last = _paragraph_of(ends[begin.get("id")], parents)
+                if first is last:
+                    _put_text(texts, " ".join(lines), begin, parents, after=True)
+                else:
+                    _fill_paragraphs(first, last, texts, lines, begin, ends, parents)
+                filled += 1
+                self._dirty.add(section)
+        return filled
+
+    def blocks(self) -> list[Block]:
+        """구역 바로 아래 문단들을 문서 순서대로 돌려준다 (구역이 여럿이면 이어서)."""
+        index = {id(el): i for i, (_s, el, _d) in enumerate(self._table_elements())}
+        return [
+            Block(
+                section=section,
+                index=i,
+                tables=[index[id(el)] for el in p.iter() if el.tag == TBL],
+                text=_block_text(p),
+            )
+            for section in self.section_names
+            for i, p in enumerate(self._root(section))
+            if p.tag == PARA
+        ]
+
+    def remove_blocks(self, blocks: list[Block]) -> int:
+        """문단들을 지운다. 지운 개수를 반환. 표 번호가 바뀌므로 표 쓰기를 마친 뒤에 부른다.
+
+        구역의 첫 문단에는 쪽 설정(secPr)이 들어 있다. 그 문단을 지우면 쪽 설정을 담은 run 을
+        남는 첫 문단 앞으로 옮긴다. 구역의 문단이 모두 지워지면 쪽 설정만 남긴 빈 문단 하나를 둔다.
+        """
+        by_section: dict[str, set[int]] = {}
+        for b in blocks:
+            by_section.setdefault(b.section, set()).add(b.index)
+        removed = 0
+        for section, targets in by_section.items():
+            root = self._root(section)
+            paras = [p for p in root if p.tag == PARA]
+            settings = [run for run in paras[0].findall(RUN) if run.find(SEC_PR) is not None]
+            gone = [p for i, p in enumerate(paras) if i in targets]
+            keep = [p for p in paras if p not in gone]
+            if paras[0] in gone and settings:
+                if not keep:
+                    keep = [_blank_paragraph(paras[0])]
+                    root.insert(list(root).index(paras[0]), keep[0])
+                for run in reversed(settings):
+                    paras[0].remove(run)
+                    keep[0].insert(0, run)
+                for seg in keep[0].findall(LINESEG_ARRAY):
+                    keep[0].remove(seg)
+            for p in gone:
+                root.remove(p)
+            removed += len(gone)
+            self._dirty.add(section)
+        self._tables_cache = None
+        return removed
 
     def get_cell(self, table: int, row: int, col: int) -> str:
         """앵커 셀의 텍스트."""
@@ -620,6 +709,143 @@ def _walk_field_elements(root: ET.Element):
             open_stack[-1][1].append(el)
 
 
+def _own_texts(p: ET.Element) -> list[ET.Element]:
+    """문단에 바로 속한 텍스트 노드. 문단 안의 표 칸·글상자 문단은 따로 센다."""
+    found: list[ET.Element] = []
+
+    def walk(node: ET.Element) -> None:
+        for el in node:
+            if el.tag == PARA:
+                continue
+            if el.tag == T:
+                found.append(el)
+            else:
+                walk(el)
+
+    walk(p)
+    return found
+
+
+def _replace_in_nodes(nodes: list[ET.Element], replacements: dict[str, str]) -> int:
+    """이어 붙인 노드들의 글에서 문구를 바꾼다. 걸친 노드 중 첫 노드에 바꾼 글을 둔다."""
+    count = 0
+    for old, new in replacements.items():
+        if not old:
+            continue
+        new = _clean(new)
+        start = 0
+        while True:
+            texts = [t.text or "" for t in nodes]
+            i = "".join(texts).find(old, start)
+            if i < 0:
+                break
+            j = i + len(old)
+            pos, first, last = 0, None, None
+            for k, text in enumerate(texts):
+                if first is None and i < pos + len(text):
+                    first = (k, i - pos)
+                if j <= pos + len(text):
+                    last = (k, j - pos)
+                    break
+                pos += len(text)
+            (a, ia), (b, jb) = first, last
+            if a == b:
+                nodes[a].text = texts[a][:ia] + new + texts[a][jb:]
+            else:
+                nodes[a].text = texts[a][:ia] + new
+                for k in range(a + 1, b):
+                    nodes[k].text = ""
+                nodes[b].text = texts[b][jb:]
+            count += 1
+            start = i + len(new)
+    return count
+
+
+def _paragraph_of(el: ET.Element, parents: dict[ET.Element, ET.Element]) -> ET.Element:
+    """el 을 담은 가장 가까운 문단."""
+    while el.tag != PARA:
+        el = parents[el]
+    return el
+
+
+def _drop_linesegs(p: ET.Element) -> None:
+    for seg in p.findall(LINESEG_ARRAY):
+        p.remove(seg)
+
+
+def _put_text(
+    texts: list[ET.Element],
+    value: str,
+    marker: ET.Element,
+    parents: dict[ET.Element, ET.Element],
+    *,
+    after: bool,
+) -> None:
+    """누름틀 안의 텍스트 노드들을 value 하나로 바꾼다.
+
+    노드가 없으면(빈 누름틀) marker(fieldBegin/fieldEnd) 의 바로 뒤(after) 또는 앞에 새로 만든다.
+    """
+    if texts:
+        texts[0].text = value
+        for extra in texts[1:]:
+            extra.text = ""
+    elif value:
+        ctrl = parents[marker]
+        run = parents[ctrl]
+        t = ET.Element(T)
+        t.text = value
+        run.insert(list(run).index(ctrl) + (1 if after else 0), t)
+    _drop_linesegs(_paragraph_of(marker, parents))
+
+
+def _fill_paragraphs(
+    first: ET.Element,
+    last: ET.Element,
+    texts: list[ET.Element],
+    lines: list[str],
+    begin: ET.Element,
+    ends: dict[str | None, ET.Element],
+    parents: dict[ET.Element, ET.Element],
+) -> None:
+    """first 문단에서 시작해 last 문단에서 끝나는 누름틀에 lines 를 문단별로 쓴다."""
+    container = parents[first]
+    if parents.get(last) is not container:
+        raise HwpxError("누름틀의 시작 문단과 끝 문단이 같은 곳에 있지 않다")
+    siblings = list(container)
+    middle = siblings[siblings.index(first) + 1 : siblings.index(last)]
+    # 고치기 전에 전부 확인한다 (일부만 바뀌는 것을 막는다)
+    inner = [el.tag for p in middle for el in p.iter()]
+    if TBL in inner:
+        raise HwpxError("누름틀 사이 문단에 표가 있어 여러 줄로 채울 수 없다")
+    if FIELD_BEGIN in inner or FIELD_END in inner:
+        raise HwpxError("누름틀 사이 문단에 다른 누름틀이 있어 여러 줄로 채울 수 없다")
+
+    in_first = {id(el) for el in first.iter()}
+    in_last = {id(el) for el in last.iter()}
+    head, body = lines[0], lines[1:-1]
+    tail = lines[-1] if len(lines) > 1 else ""
+
+    model = next((p for p in middle if any(True for _ in p.iter(T))), None)
+    template = copy.deepcopy(model) if model is not None else _blank_paragraph(first)
+    for run in template.findall(RUN):
+        if run.find(CTRL) is not None:
+            template.remove(run)
+
+    for p in middle[len(body) :]:
+        container.remove(p)
+    kept = middle[: len(body)]
+    while len(kept) < len(body):
+        clone = copy.deepcopy(template)
+        container.insert(list(container).index(kept[-1] if kept else first) + 1, clone)
+        kept.append(clone)
+    for p, line in zip(kept, body, strict=True):
+        _set_paragraph_text(p, line)
+
+    _put_text([t for t in texts if id(t) in in_first], head, begin, parents, after=True)
+    end = ends[begin.get("id")]
+    _put_text([t for t in texts if id(t) in in_last], tail, end, parents, after=False)
+
+
 def _set_formula_text(
     tc: ET.Element, begin: ET.Element, texts: list[ET.Element], text: str
 ) -> None:
@@ -696,6 +922,22 @@ def _cell_text(tc: ET.Element) -> str:
 
     walk(tc, [])
     return "\n".join(x for x in lines if x).strip()
+
+
+def _block_text(p: ET.Element) -> str:
+    """문단의 글자. 문단 안의 표는 빼고, 글상자 같은 개체 안의 글자는 넣는다."""
+    parts: list[str] = []
+
+    def walk(node: ET.Element) -> None:
+        for el in node:
+            if el.tag == TBL:
+                continue
+            if el.tag == T:
+                parts.append(el.text or "")
+            walk(el)
+
+    walk(p)
+    return "".join(parts).strip()
 
 
 # ------------------------------------------------------------------ 셀 쓰기

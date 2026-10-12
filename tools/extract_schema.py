@@ -17,30 +17,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from docflow.config import Settings, get_settings  # noqa: E402
-from docflow.hwpx.document import HwpxDocument  # noqa: E402
+from docflow.config import get_settings  # noqa: E402
 from docflow.log import setup_logging  # noqa: E402
-from docflow.schema.extract import extract, template_path  # noqa: E402
-from docflow.schema.model import FormSchema  # noqa: E402
-from docflow.schema.rules import parse_location  # noqa: E402
+from docflow.schema.extract import (  # noqa: E402,F401 (다른 도구·테스트가 여기서 가져간다)
+    extract_file,
+    is_form,
+)
 
 log = logging.getLogger("extract_schema")
-
-#: 서식이 아니라 서식 묶음을 설명하는 문서라 스키마를 뽑지 않는다.
-SKIP_WORDS = ("서식 목차", "서식목차", "서식 신구대조표")
-
-
-def is_form(template: Path) -> bool:
-    return not any(w in template.stem for w in SKIP_WORDS)
-
-
-def extract_file(template: Path, settings: Settings) -> FormSchema:
-    rel = template.relative_to(settings.templates)
-    return extract(
-        HwpxDocument.open(template),
-        location=parse_location(rel.parent),
-        template=template_path(template, settings.root),
-    )
 
 
 def main(argv: list[str] | None = None) -> int:

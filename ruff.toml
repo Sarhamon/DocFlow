@@ -3,3 +3,7 @@ target-version = "py312"
 
 [lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[lint.flake8-bugbear]
+# FastAPI 의 의존성·파라미터 선언은 기본값 자리에 쓰는 것이 정해진 방식이다
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Body"]
