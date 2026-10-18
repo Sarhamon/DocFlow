@@ -1,18 +1,27 @@
-"""DocFlow 웹 API (M6). 화면(M8)과 로그인(M7)은 이 API 위에 올린다.
+"""DocFlow 웹 API (M6·M7). 화면(M8)은 이 API 위에 올린다.
 
     uvicorn --factory docflow.web.app:create_app          # 개발 서버
     python tools/sync_forms.py                            # templates/ 의 서식을 먼저 등록
+    python tools/manage_users.py create-root admin 관리자  # 루트 관리자를 먼저 만든다
 
 경로는 모두 /api 아래다. 오류는 {"detail": ...} 로 돌려주고, 검증 오류(422)는 오류 목록을 함께 준다.
+인증 오류는 {"detail", "reason"} 이다. reason 으로 화면이 분기한다(expired, duplicate_login,
+password_change_required, locked …).
+
+로그인은 세션 쿠키다. /api/health 와 /api/auth/login 말고는 모두 로그인이 필요하고, 초기
+비밀번호를 바꾸기 전에는 /api/auth/* 만 쓸 수 있다. 문서는 로그인한 본인 것만 보인다.
+/api/admin/* 는 관리자 전용이다.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+import os
+from collections.abc import Callable, Iterator
+from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import Body, Depends, FastAPI, Query, Request
+from fastapi import Body, Depends, FastAPI, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,8 +31,9 @@ from docflow.convert import Converter
 from docflow.generate import GenerateError
 from docflow.pipeline import InputError, skeleton
 from docflow.service import catalog
+from docflow.service.auth import AuthError, AuthService, Client, Forbidden, SessionInvalid
 from docflow.service.catalog import NotFound
-from docflow.service.db import Document, DocumentEvent, Form, connect
+from docflow.service.db import Document, DocumentEvent, Form, User, UserSession, connect, now
 from docflow.service.documents import (
     Conflict,
     DocumentService,
@@ -34,6 +44,7 @@ from docflow.service.documents import (
 from docflow.service.storage import FileStore, LocalFileStore
 
 API = "/api"
+COOKIE = "docflow_session"
 
 
 # ---------------------------------------------------------------- 요청 본문
@@ -44,6 +55,36 @@ class NewDocument(BaseModel):
 
 class Rename(BaseModel):
     title: str = Field(min_length=1, max_length=300)
+
+
+class LoginRequest(BaseModel):
+    login_id: str = Field(min_length=1, max_length=50)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class PasswordChange(BaseModel):
+    current: str = Field(max_length=128)
+    new: str = Field(max_length=128)
+
+
+class NewUser(BaseModel):
+    login_id: str
+    name: str = Field(max_length=50)
+    role: Literal["user", "admin"] = "user"
+    department: str = Field("", max_length=100)
+    phone: str | None = Field(None, max_length=30)
+    email: str | None = Field(None, max_length=255)
+
+
+class UserUpdate(BaseModel):
+    name: str | None = Field(None, max_length=50)
+    department: str | None = Field(None, max_length=100)
+    phone: str | None = Field(None, max_length=30)
+    email: str | None = Field(None, max_length=255)
+
+
+class StatusChange(BaseModel):
+    status: Literal["active", "inactive", "deleted"]
 
 
 class GenerateRequest(BaseModel):
@@ -107,6 +148,33 @@ def outcome_dict(out: GenerateOutcome) -> dict[str, Any]:
     }
 
 
+def user_dict(user: User) -> dict[str, Any]:
+    return {
+        "id": user.id,
+        "login_id": user.login_id,
+        "name": user.name,
+        "department": user.department,
+        "phone": user.phone,
+        "email": user.email,
+        "role": user.role,
+        "status": user.status,
+        "locked": user.locked_at is not None,
+        "must_change_password": user.must_change_password,
+        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+        "created_at": user.created_at.isoformat(),
+    }
+
+
+def session_dict(row: UserSession, at: datetime) -> dict[str, Any]:
+    """우측 상단 타이머가 쓴다: 남은 초, 자동 연장을 썼는지."""
+    return {
+        "user": user_dict(row.user),
+        "expires_at": row.expires_at.isoformat(),
+        "remaining_seconds": max(0, int((row.expires_at - at).total_seconds())),
+        "grace_used": row.grace_used,
+    }
+
+
 def page(items: list[dict], total: int, number: int, size: int) -> dict[str, Any]:
     return {"items": items, "total": total, "page": number, "size": size}
 
@@ -118,8 +186,13 @@ def create_app(
     converter: Converter | None | str = "auto",
     store: FileStore | None = None,
     database_url: str | None = None,
+    clock: Callable[[], datetime] = now,
 ) -> FastAPI:
-    """앱을 만든다. converter 가 "auto" 면 한컴오피스가 있을 때만 한컴 변환기를 쓴다."""
+    """앱을 만든다. converter 가 "auto" 면 한컴오피스가 있을 때만 한컴 변환기를 쓴다.
+
+    clock 은 세션 시간 계산에 쓴다(테스트가 시간을 옮긴다). HTTPS 로 띄울 때는 환경변수
+    DOCFLOW_SECURE_COOKIE=1 로 쿠키에 Secure 를 붙인다.
+    """
     settings = settings or get_settings()
     settings.data.mkdir(parents=True, exist_ok=True)
     sessions: sessionmaker = connect(database_url or settings.database_url)
@@ -129,7 +202,9 @@ def create_app(
 
         converter = HancomConverter() if available() else None
 
-    app = FastAPI(title="DocFlow", version="0.6")
+    secure_cookie = os.environ.get("DOCFLOW_SECURE_COOKIE") == "1"
+
+    app = FastAPI(title="DocFlow", version="0.7")
     app.state.sessions = sessions
     app.state.store = store
     app.state.converter = converter
@@ -143,16 +218,139 @@ def create_app(
     def service(s: Session = Depends(session)) -> DocumentService:
         return DocumentService(s, store, converter)
 
-    def owner() -> int | None:
-        """요청한 계정. 로그인(M7) 전에는 None 이라 계정 구분이 없다."""
-        return None
+    def auth(s: Session = Depends(session)) -> AuthService:
+        return AuthService(s, clock)
+
+    def current_session(request: Request, svc: AuthService = Depends(auth)) -> UserSession:
+        return svc.authenticate(request.cookies.get(COOKIE))
+
+    def current_user(row: UserSession = Depends(current_session)) -> User:
+        """로그인한 계정. 초기 비밀번호를 바꾸기 전에는 막는다 (AU_02)."""
+        if row.user.must_change_password:
+            raise Forbidden("비밀번호를 먼저 바꾼다", "password_change_required")
+        return row.user
+
+    def admin_user(user: User = Depends(current_user)) -> User:
+        """관리자 전용 경로 (AU_06). 루트도 관리자다."""
+        if user.role not in ("admin", "root"):
+            raise Forbidden("관리자만 쓸 수 있다")
+        return user
+
+    def owner(user: User = Depends(current_user)) -> int:
+        """문서 주인. 로그인한 본인 문서만 보인다 (관리자도 자기 문서만)."""
+        return user.id
+
+    signed_in = [Depends(current_user)]
+
+    # ------------------------------------------------------------ 로그인
+    @app.post(f"{API}/auth/login")
+    def login(
+        body: LoginRequest, request: Request, response: Response, svc: AuthService = Depends(auth)
+    ) -> dict[str, Any]:
+        client = Client(
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        result = svc.login(body.login_id, body.password, client)
+        response.set_cookie(
+            COOKIE, result.token, httponly=True, samesite="lax", secure=secure_cookie
+        )
+        return {
+            **session_dict(result.session, clock()),
+            "must_change_password": result.session.user.must_change_password,
+        }
+
+    @app.post(f"{API}/auth/logout", status_code=204)
+    def logout(request: Request, response: Response, svc: AuthService = Depends(auth)) -> None:
+        svc.logout(request.cookies.get(COOKIE))
+        response.delete_cookie(COOKIE)
+
+    @app.get(f"{API}/auth/me")
+    def me(row: UserSession = Depends(current_session)) -> dict[str, Any]:
+        return session_dict(row, clock())
+
+    @app.post(f"{API}/auth/extend")
+    def extend(request: Request, svc: AuthService = Depends(auth)) -> dict[str, Any]:
+        """연장 버튼 (AU_04): 지금부터 다시 30분."""
+        return session_dict(svc.extend(request.cookies.get(COOKIE)), clock())
+
+    @app.post(f"{API}/auth/grace")
+    def grace(request: Request, svc: AuthService = Depends(auth)) -> dict[str, Any]:
+        """입력 중 만료 (AU_04): 화면이 경고를 띄우기 전에 부른다. 5분, 한 번만."""
+        return session_dict(svc.grace(request.cookies.get(COOKIE)), clock())
+
+    @app.post(f"{API}/auth/password", status_code=204)
+    def change_password(
+        body: PasswordChange,
+        row: UserSession = Depends(current_session),
+        svc: AuthService = Depends(auth),
+    ) -> None:
+        svc.change_password(row.user, body.current, body.new)
+
+    # ------------------------------------------------------------ 계정 관리 (관리자)
+    @app.get(f"{API}/admin/users")
+    def list_users(
+        role: str | None = None,
+        status: str | None = None,
+        actor: User = Depends(admin_user),
+        svc: AuthService = Depends(auth),
+    ) -> list[dict[str, Any]]:
+        return [user_dict(u) for u in svc.list_users(actor, role=role, status=status)]
+
+    @app.post(f"{API}/admin/users", status_code=201)
+    def create_user(
+        body: NewUser, actor: User = Depends(admin_user), svc: AuthService = Depends(auth)
+    ) -> dict[str, Any]:
+        """계정 발급 (AD_18). 초기 비밀번호는 이 응답에서 한 번만 보인다."""
+        user, password = svc.create_user(
+            actor, body.login_id, body.name, role=body.role,
+            department=body.department, phone=body.phone, email=body.email,
+        )  # fmt: skip
+        return {"user": user_dict(user), "initial_password": password}
+
+    @app.get(f"{API}/admin/users/{{user_id}}")
+    def get_user(
+        user_id: int, _actor: User = Depends(admin_user), svc: AuthService = Depends(auth)
+    ) -> dict[str, Any]:
+        return user_dict(svc.get_user(user_id))
+
+    @app.patch(f"{API}/admin/users/{{user_id}}")
+    def update_user(
+        user_id: int,
+        body: UserUpdate,
+        actor: User = Depends(admin_user),
+        svc: AuthService = Depends(auth),
+    ) -> dict[str, Any]:
+        return user_dict(svc.update_user(actor, user_id, **body.model_dump(exclude_unset=True)))
+
+    @app.post(f"{API}/admin/users/{{user_id}}/reset-password")
+    def reset_password(
+        user_id: int, actor: User = Depends(admin_user), svc: AuthService = Depends(auth)
+    ) -> dict[str, Any]:
+        user, password = svc.reset_password(actor, user_id)
+        return {"user": user_dict(user), "initial_password": password}
+
+    @app.post(f"{API}/admin/users/{{user_id}}/unlock")
+    def unlock_user(
+        user_id: int, actor: User = Depends(admin_user), svc: AuthService = Depends(auth)
+    ) -> dict[str, Any]:
+        return user_dict(svc.unlock(actor, user_id))
+
+    @app.put(f"{API}/admin/users/{{user_id}}/status")
+    def set_user_status(
+        user_id: int,
+        body: StatusChange,
+        actor: User = Depends(admin_user),
+        svc: AuthService = Depends(auth),
+    ) -> dict[str, Any]:
+        return user_dict(svc.set_status(actor, user_id, body.status))
 
     # ------------------------------------------------------------ 서식
     @app.get(f"{API}/health")
     def health() -> dict[str, Any]:
         return {"ok": True, "converter": converter is not None}
 
-    @app.get(f"{API}/forms")
+    @app.get(f"{API}/forms", dependencies=signed_in)
     def list_forms(
         q: str | None = None,
         program: str | None = None,
@@ -170,11 +368,11 @@ def create_app(
         )  # fmt: skip
         return page([form_summary(f) for f in items], total, page_no, size)
 
-    @app.get(f"{API}/forms/facets")
+    @app.get(f"{API}/forms/facets", dependencies=signed_in)
     def form_facets(s: Session = Depends(session)) -> list[dict]:
         return catalog.facets(s)
 
-    @app.get(f"{API}/forms/{{form_id}}")
+    @app.get(f"{API}/forms/{{form_id}}", dependencies=signed_in)
     def form_detail(form_id: int, s: Session = Depends(session)) -> dict[str, Any]:
         form = catalog.get_form(s, form_id)
         schema = catalog.load_schema(form.latest)
@@ -188,14 +386,14 @@ def create_app(
             ],
         }
 
-    @app.get(f"{API}/forms/{{form_id}}/schema")
+    @app.get(f"{API}/forms/{{form_id}}/schema", dependencies=signed_in)
     def form_schema(
         form_id: int, version: int | None = None, s: Session = Depends(session)
     ) -> dict[str, Any]:
         form = catalog.get_form(s, form_id)
         return catalog.load_schema(catalog.get_version(form, version)).model_dump()
 
-    @app.get(f"{API}/forms/{{form_id}}/skeleton")
+    @app.get(f"{API}/forms/{{form_id}}/skeleton", dependencies=signed_in)
     def form_skeleton(
         form_id: int, variant: int | None = None, s: Session = Depends(session)
     ) -> dict[str, Any]:
@@ -330,3 +528,13 @@ def _errors(app: FastAPI) -> None:
         )
 
     app.add_exception_handler(ValidationFailed, failed)
+
+    def denied(_request: Request, exc: AuthError) -> JSONResponse:
+        response = JSONResponse(
+            {"detail": str(exc), "reason": exc.reason, **exc.extra}, status_code=exc.status
+        )
+        if isinstance(exc, SessionInvalid):
+            response.delete_cookie(COOKIE)
+        return response
+
+    app.add_exception_handler(AuthError, denied)

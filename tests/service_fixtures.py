@@ -6,6 +6,7 @@ from pathlib import Path
 
 from docflow.config import Settings
 from docflow.convert import SIGNATURES, ConversionJob, ConversionResult
+from docflow.service.auth import AuthService, hash_password
 from tests import hwpx_factory as hf
 from tests.test_schema_extract import tbl, 교통비
 
@@ -38,6 +39,27 @@ def write_templates(settings: Settings, *, meeting_title: str = "○○○ 회�
 
 def traffic_input(name: str = "김철수") -> dict:
     return {"cells": {"t0.r0.c1": "컴퓨터과"}, "rows": {"t0.r3-5": [{"성명": name}]}}
+
+
+#: 테스트 계정 비밀번호 (규칙을 지킨다)
+PASSWORD = "Test#pass1"
+
+
+def make_user(sessions, login_id: str = "writer", *, role: str = "user") -> int:
+    """비밀번호를 이미 바꾼 계정을 만든다 (CLI 로 발급한 것과 같다). 계정 ID 를 돌려준다."""
+    with sessions() as s:
+        user, _ = AuthService(s).create_user(None, login_id, login_id, role=role)
+        user.password_hash = hash_password(PASSWORD)
+        user.must_change_password = False
+        s.commit()
+        return user.id
+
+
+def login(client, login_id: str = "writer", password: str = PASSWORD):
+    """client 의 쿠키에 세션을 심는다."""
+    r = client.post("/api/auth/login", json={"login_id": login_id, "password": password})
+    assert r.status_code == 200, r.text
+    return r
 
 
 class FakeConverter:

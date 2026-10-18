@@ -24,8 +24,10 @@ def client(tmp_path):
         sync_templates(s, LocalFileStore(settings.data / "files"), settings)
     converter = fx.FakeConverter()
     app = create_app(settings, converter=converter)
+    fx.make_user(app.state.sessions)
     with TestClient(app) as c:
         c.converter = converter
+        fx.login(c)
         yield c
 
 

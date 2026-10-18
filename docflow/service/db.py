@@ -5,6 +5,7 @@
 * 문서(documents): 서식 버전 하나에 묶인다. 입력값은 JSON 그대로 둔다(임시저장).
 * 산출물(artifacts): 문서를 만들 때마다 판(revision)이 하나씩 올라가고 형식별 파일이 쌓인다.
 * 이력(document_events): 만들기·검증·복제 때의 입력값, 검증 결과, 적용 규칙, 서식 버전.
+* 계정(users)·세션(user_sessions)·로그인 이력(login_history): 관리자가 발급하는 계정(M7).
 """
 
 from __future__ import annotations
@@ -132,6 +133,72 @@ class DocumentEvent(Base):
     note: Mapped[str] = mapped_column(String(300), default="")
 
     document: Mapped[Document] = relationship(back_populates="events")
+
+
+class User(Base):
+    """관리자가 발급한 계정 (IAM 방식). 지워도 행은 남긴다(status=deleted, 문서 보존)."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    login_id: Mapped[str] = mapped_column(String(50), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(50))
+    department: Mapped[str] = mapped_column(String(100), default="")
+    phone: Mapped[str | None] = mapped_column(String(30), default=None)
+    email: Mapped[str | None] = mapped_column(String(255), default=None)
+    #: user / admin / root
+    role: Mapped[str] = mapped_column(String(10), default="user")
+    #: active / inactive / deleted
+    status: Mapped[str] = mapped_column(String(10), default="active", index=True)
+    #: 초기·초기화된 비밀번호. 바꾸기 전에는 다른 기능을 쓰지 못한다
+    must_change_password: Mapped[bool] = mapped_column(default=True)
+    failed_login_count: Mapped[int] = mapped_column(default=0)
+    #: 비어 있지 않으면 잠긴 계정. 관리자(관리자 계정은 루트)만 푼다
+    locked_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_login_at: Mapped[datetime | None] = mapped_column(default=None)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), default=None)
+    created_at: Mapped[datetime] = mapped_column(default=now)
+    updated_at: Mapped[datetime] = mapped_column(default=now)
+
+
+class UserSession(Base):
+    """로그인 상태. id 는 쿠키 토큰의 해시라 토큰 원문은 저장하지 않는다."""
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(default=now)
+    extended_at: Mapped[datetime | None] = mapped_column(default=None)
+    expires_at: Mapped[datetime]
+    #: 입력 중 만료로 5분 자동 연장을 썼다. 연장 버튼을 누르면 다시 쓸 수 있다
+    grace_used: Mapped[bool] = mapped_column(default=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(default=None)
+    #: logout / duplicate_login / password_reset / account_disabled
+    revoke_reason: Mapped[str | None] = mapped_column(String(20), default=None)
+    ip: Mapped[str | None] = mapped_column(String(45), default=None)
+    user_agent: Mapped[str | None] = mapped_column(String(300), default=None)
+
+    user: Mapped[User] = relationship()
+
+
+class LoginHistory(Base):
+    """로그인 시도 한 번 (성공·실패 모두)."""
+
+    __tablename__ = "login_history"
+    __table_args__ = (Index("ix_login_history_user_id_at", "user_id", "at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    #: 없는 아이디로 시도하면 비어 있다
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), default=None)
+    login_id: Mapped[str] = mapped_column(String(50))
+    success: Mapped[bool]
+    #: wrong_password / locked / inactive / unknown_id
+    fail_reason: Mapped[str | None] = mapped_column(String(30), default=None)
+    ip: Mapped[str | None] = mapped_column(String(45), default=None)
+    user_agent: Mapped[str | None] = mapped_column(String(300), default=None)
+    at: Mapped[datetime] = mapped_column(default=now)
 
 
 def connect(url: str) -> sessionmaker:

@@ -20,6 +20,7 @@ from docflow.service.catalog import sync_templates
 from docflow.service.db import connect
 from docflow.service.storage import LocalFileStore
 from docflow.web.app import create_app
+from tests import service_fixtures as fx
 
 pytestmark = pytest.mark.local
 
@@ -45,7 +46,10 @@ def client(tmp_path_factory):
         again = sync_templates(s, store, settings)
     assert (len(first.added), first.failed) == (EXPECTED_FORMS, [])
     assert (again.added, again.updated, again.unchanged) == ([], [], EXPECTED_FORMS)
-    with TestClient(create_app(settings, store=store)) as c:
+    app = create_app(settings, store=store)
+    fx.make_user(app.state.sessions)
+    with TestClient(app) as c:
+        fx.login(c)
         yield c
 
 
