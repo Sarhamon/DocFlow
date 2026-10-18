@@ -6,3 +6,5 @@ out/
 .venv/
 __pycache__/
 *.pyc
+
+*.xlsx
