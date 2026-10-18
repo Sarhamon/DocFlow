@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """HWPX 문서 읽기/쓰기 (순수 파이썬).
 
 HWPX는 zip + XML 이므로 한컴오피스 없이 다룰 수 있다.
+
 누름틀(CLICK_HERE 등)은 아래 형태로 저장된다::
 
     <hp:ctrl><hp:fieldBegin id="123" name="docnumber" .../></hp:ctrl>
@@ -9,18 +9,25 @@ HWPX는 zip + XML 이므로 한컴오피스 없이 다룰 수 있다.
     <hp:ctrl><hp:fieldEnd beginIDRef="123" .../></hp:ctrl>
 
 fieldBegin.id 와 fieldEnd.beginIDRef 로 짝을 짓고, 그 사이의 <hp:t> 가 값이다.
+
+표 셀은 ``tbl > tr > tc > subList > p > run > t`` 로 저장되고, 좌표는 ``cellAddr`` 에
+있다. **병합된 칸은 왼쪽 위 셀(앵커) 하나만 XML 에 존재**하고 가려진 칸은 아예 없다.
+빈 셀은 ``<run />`` 처럼 ``<t>`` 가 없다. 쓰기는 앵커에만 할 수 있다.
 """
+
 from __future__ import annotations
 
+import copy
 import re
-import shutil
 import zipfile
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from docflow.hwpx.formula import FormulaError, evaluate, format_result
+
 HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
-NS = {"hp": HP}
 T = f"{{{HP}}}t"
 FIELD_BEGIN = f"{{{HP}}}fieldBegin"
 FIELD_END = f"{{{HP}}}fieldEnd"
@@ -30,8 +37,46 @@ TC = f"{{{HP}}}tc"
 CELL_ADDR = f"{{{HP}}}cellAddr"
 CELL_SPAN = f"{{{HP}}}cellSpan"
 PARA = f"{{{HP}}}p"
+RUN = f"{{{HP}}}run"
+CTRL = f"{{{HP}}}ctrl"
+SUBLIST = f"{{{HP}}}subList"
+SZ = f"{{{HP}}}sz"
+CELL_SZ = f"{{{HP}}}cellSz"
+LINESEG_ARRAY = f"{{{HP}}}linesegarray"
+SEC_PR = f"{{{HP}}}secPr"
 
 _SECTION_RE = re.compile(r"^Contents/section\d+\.xml$")
+#: XML 1.0 에 쓸 수 없는 문자. 들어가면 문서가 깨지므로 값을 쓰기 전에 걸러낸다.
+_XML_ILLEGAL_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
+
+
+def _clean(text: str) -> str:
+    """XML 에 넣을 수 없는 제어문자를 지운다 (탭·줄바꿈은 둔다)."""
+    return _XML_ILLEGAL_RE.sub("", text)
+
+
+class HwpxError(Exception):
+    """HWPX 조작 오류의 기반."""
+
+
+class CellNotFound(HwpxError):
+    """표에 그 좌표의 칸이 없다."""
+
+
+class CoveredCell(HwpxError):
+    """병합으로 가려진 칸이다. 앵커(왼쪽 위 셀)에 써야 한다."""
+
+
+class CapacityError(HwpxError):
+    """쓰려는 행이 표가 가진 행보다 많다."""
+
+
+class FieldInCell(HwpxError):
+    """누름틀이 든 칸이다. 필드 구조가 깨지므로 fill() 로 써야 한다."""
+
+
+class RowSpanConflict(HwpxError):
+    """행을 복제할 수 없는 모양이다 (행 병합이 걸쳐 있거나 칸이 비는 행)."""
 
 
 @dataclass
@@ -55,6 +100,31 @@ class Cell:
     row_span: int
     col_span: int
     text: str
+    #: 누름틀·수식이 든 칸 (중첩 표 안 포함). set_cell 로 쓸 수 없고 fill() 로 채운다.
+    has_field: bool = False
+
+
+@dataclass
+class FormulaCell:
+    """표 칸 안의 수식(FORMULA 누름틀) 하나."""
+
+    table: int
+    row: int
+    col: int
+    formula: str
+    result_format: str
+    #: 칸에 지금 표시된 결과
+    text: str
+
+
+@dataclass
+class Recalc:
+    """recalculate_formulas() 의 결과."""
+
+    #: 값이 바뀐 수식 (text 는 새 결과)
+    updated: list[FormulaCell]
+    #: 계산하지 못해 그대로 둔 수식과 그 이유
+    skipped: list[tuple[FormulaCell, str]]
 
 
 @dataclass
@@ -80,15 +150,33 @@ class Table:
 
 
 @dataclass
+class Block:
+    """구역 바로 아래의 문단 하나. 본문은 이 문단들이 차례로 이어진 것이다."""
+
+    section: str
+    #: 구역 안에서의 순번
+    index: int
+    #: 이 문단에 든 표 번호 (중첩 표 포함, tables() 와 같은 번호)
+    tables: list[int]
+    #: 표 밖의 글자
+    text: str
+
+
+@dataclass
 class HwpxDocument:
     path: Path
     _entries: dict[str, bytes] = dc_field(default_factory=dict, repr=False)
     _order: list[str] = dc_field(default_factory=list, repr=False)
     _compress: dict[str, int] = dc_field(default_factory=dict, repr=False)
+    #: 구역(section) XML 을 한 번만 파싱해 두고, 쓰기는 이 트리에 한다.
+    _trees: dict[str, ET.Element] = dc_field(default_factory=dict, repr=False)
+    _dirty: set[str] = dc_field(default_factory=set, repr=False)
+    #: _table_elements() 결과. 트리를 통째로 바꿀 때(fill_rows 롤백)만 무효화한다.
+    _tables_cache: list[tuple[str, ET.Element, int]] | None = dc_field(default=None, repr=False)
 
     # ---------------------------------------------------------------- 로딩
     @classmethod
-    def open(cls, path: str | Path) -> "HwpxDocument":
+    def open(cls, path: str | Path) -> HwpxDocument:
         path = Path(path)
         doc = cls(path=path)
         with zipfile.ZipFile(path) as zf:
@@ -102,14 +190,18 @@ class HwpxDocument:
     def section_names(self) -> list[str]:
         return [n for n in self._order if _SECTION_RE.match(n)]
 
+    def _root(self, section: str) -> ET.Element:
+        if section not in self._trees:
+            self._trees[section] = ET.fromstring(self._entries[section].decode("utf-8"))
+        return self._trees[section]
+
     # ---------------------------------------------------------------- 읽기
     def fields(self) -> list[Field]:
         """문서 전체의 누름틀을 등장 순서대로 반환한다."""
         found: list[Field] = []
         seen: dict[str, int] = {}
         for section in self.section_names:
-            root = ET.fromstring(self._entries[section].decode("utf-8"))
-            for name, ftype, texts in _walk_fields(root):
+            for name, ftype, texts in _walk_fields(self._root(section)):
                 occurrence = seen.get(name, 0)
                 seen[name] = occurrence + 1
                 found.append(
@@ -123,30 +215,47 @@ class HwpxDocument:
                 )
         return found
 
-    def field_names(self) -> list[str]:
-        """중복 제거한 필드 이름 목록 (등장 순서 유지)."""
-        names: list[str] = []
-        for f in self.fields():
-            if f.name not in names:
-                names.append(f.name)
-        return names
+    def _table_elements(self) -> list[tuple[str, ET.Element, int]]:
+        """(구역, 표 엘리먼트, 깊이) 를 tables() 와 같은 순서로 돌려준다.
+
+        셀 쓰기와 행 복제는 표를 더하거나 빼지 않으므로(중첩 표가 든 행은 복제를 거부한다)
+        한 번 찾은 목록을 재사용한다.
+        """
+        if self._tables_cache is None:
+            self._tables_cache = [
+                (section, el, depth)
+                for section in self.section_names
+                for el, depth in _walk_tables(self._root(section))
+            ]
+        return self._tables_cache
 
     def tables(self) -> list[Table]:
         """문서 전체의 표를 등장 순서대로 반환한다 (중첩 표 포함)."""
-        found: list[Table] = []
+        return [
+            Table(
+                index=i,
+                section=section,
+                rows=int(el.get("rowCnt", 0)),
+                cols=int(el.get("colCnt", 0)),
+                depth=depth,
+                cells=[_read_cell(tc) for tr in el.findall(TR) for tc in tr.findall(TC)],
+            )
+            for i, (section, el, depth) in enumerate(self._table_elements())
+        ]
+
+    def outline(self) -> list[tuple[str, int | str]]:
+        """표와 누름틀을 문서 순서대로 늘어놓는다: ("table", 표 번호) / ("field", 누름틀 이름).
+
+        한 파일에 서식 변형이 여러 개 든 경우 그 경계를 찾는 데 쓴다. 수식 누름틀은 뺀다.
+        """
+        index = {id(el): i for i, (_s, el, _d) in enumerate(self._table_elements())}
+        found: list[tuple[str, int | str]] = []
         for section in self.section_names:
-            root = ET.fromstring(self._entries[section].decode("utf-8"))
-            for el, depth in _walk_tables(root):
-                found.append(
-                    Table(
-                        index=len(found),
-                        section=section,
-                        rows=int(el.get("rowCnt", 0)),
-                        cols=int(el.get("colCnt", 0)),
-                        depth=depth,
-                        cells=[_read_cell(tc) for tr in el.findall(TR) for tc in tr.findall(TC)],
-                    )
-                )
+            for el in self._root(section).iter():
+                if el.tag == TBL:
+                    found.append(("table", index[id(el)]))
+                elif el.tag == FIELD_BEGIN and el.get("type") != "FORMULA":
+                    found.append(("field", el.get("name", "")))
         return found
 
     # ---------------------------------------------------------------- 쓰기
@@ -154,56 +263,619 @@ class HwpxDocument:
         """이름이 일치하는 모든 누름틀에 값을 채운다. 채운 개수를 반환."""
         filled = 0
         for section in self.section_names:
-            root = ET.fromstring(self._entries[section].decode("utf-8"))
-            changed = False
-            for name, _ftype, texts in _walk_fields(root):
-                if name not in values or not texts:
+            root = self._root(section)
+            parents: dict[ET.Element, ET.Element] | None = None
+            for begin, texts in list(_walk_field_elements(root)):
+                name = begin.get("name", "")
+                if name not in values:
                     continue
-                texts[0].text = str(values[name])
-                for extra in texts[1:]:
-                    extra.text = ""
+                value = _clean(str(values[name]))
+                if texts:
+                    texts[0].text = value
+                    for extra in texts[1:]:
+                        extra.text = ""
+                elif value:
+                    # 빈 누름틀은 fieldBegin 과 fieldEnd 사이에 <hp:t> 가 없다. 새로 만든다.
+                    if parents is None:
+                        parents = {child: p for p in root.iter() for child in p}
+                    ctrl = parents[begin]
+                    run = parents[ctrl]
+                    t = ET.Element(T)
+                    t.text = value
+                    run.insert(list(run).index(ctrl) + 1, t)
                 filled += 1
-                changed = True
-            if changed:
-                self._entries[section] = _serialize(root)
+                self._dirty.add(section)
         return filled
+
+    def replace_text(self, replacements: dict[str, str], *, field: str | None = None) -> int:
+        """문단 안의 문구를 제자리에서 바꾼다. 바꾼 횟수를 반환한다.
+
+        서식에 박힌 자리표시자("20○○년", "0,000,000원" 등)만 바꾸므로 문단·문자 모양이 그대로
+        남는다. field 를 주면 그 이름의 누름틀 안만 바꾼다.
+
+        한 문단 안이면 문구가 여러 텍스트 노드에 걸쳐 있어도 찾는다. 서식은 강조한 글자만 다른
+        글자 모양으로 나눠 두므로(`사업담당자` / ` ` / `: ○ ○ ○`) 노드 하나만 보면 못 찾는다.
+        바꾼 글은 문구가 시작하는 노드에 들어가 그 노드의 글자 모양을 따른다. 문단은 넘지 않는다.
+        """
+        done = 0
+        for section in self.section_names:
+            root = self._root(section)
+            if field is None:
+                groups = [(p, _own_texts(p)) for p in root.iter(PARA)]
+            else:
+                parents = {child: p for p in root.iter() for child in p}
+                by_para: dict[int, tuple[ET.Element, list[ET.Element]]] = {}
+                for begin, texts in _walk_field_elements(root):
+                    if begin.get("name") != field:
+                        continue
+                    for t in texts:
+                        p = _paragraph_of(t, parents)
+                        by_para.setdefault(id(p), (p, []))[1].append(t)
+                groups = list(by_para.values())
+            for p, nodes in groups:
+                n = _replace_in_nodes(nodes, replacements)
+                if n:
+                    done += n
+                    _drop_linesegs(p)
+                    self._dirty.add(section)
+        return done
+
+    def fill_text(self, name: str, text: str) -> int:
+        """이름이 일치하는 누름틀에 여러 줄 글을 채운다. 줄마다 문단 하나가 된다. 채운 개수를 반환.
+
+        기안문 본문(content_body)처럼 누름틀이 여러 문단에 걸쳐 있으면 fill() 로는 한 줄로
+        뭉개진다. 첫 줄은 누름틀이 시작하는 문단에, 마지막 줄은 끝나는 문단에 쓰고 그 사이 줄은
+        사이 문단에 쓴다. 문단이 모자라면 사이 문단을 복제하고 남으면 지운다. 문단·문자 모양은
+        서식의 것을 따른다. 시작과 끝이 같은 문단이면 줄을 공백으로 이어 한 줄로 쓴다.
+        """
+        lines = _clean(str(text)).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        filled = 0
+        for section in self.section_names:
+            root = self._root(section)
+            parents = {child: p for p in root.iter() for child in p}
+            ends = {e.get("beginIDRef"): e for e in root.iter(FIELD_END)}
+            for begin, texts in list(_walk_field_elements(root)):
+                if begin.get("name") != name:
+                    continue
+                first = _paragraph_of(begin, parents)
+                last = _paragraph_of(ends[begin.get("id")], parents)
+                if first is last:
+                    _put_text(texts, " ".join(lines), begin, parents, after=True)
+                else:
+                    _fill_paragraphs(first, last, texts, lines, begin, ends, parents)
+                filled += 1
+                self._dirty.add(section)
+        return filled
+
+    def blocks(self) -> list[Block]:
+        """구역 바로 아래 문단들을 문서 순서대로 돌려준다 (구역이 여럿이면 이어서)."""
+        index = {id(el): i for i, (_s, el, _d) in enumerate(self._table_elements())}
+        return [
+            Block(
+                section=section,
+                index=i,
+                tables=[index[id(el)] for el in p.iter() if el.tag == TBL],
+                text=_block_text(p),
+            )
+            for section in self.section_names
+            for i, p in enumerate(self._root(section))
+            if p.tag == PARA
+        ]
+
+    def remove_blocks(self, blocks: list[Block]) -> int:
+        """문단들을 지운다. 지운 개수를 반환. 표 번호가 바뀌므로 표 쓰기를 마친 뒤에 부른다.
+
+        구역의 첫 문단에는 쪽 설정(secPr)이 들어 있다. 그 문단을 지우면 쪽 설정을 담은 run 을
+        남는 첫 문단 앞으로 옮긴다. 구역의 문단이 모두 지워지면 쪽 설정만 남긴 빈 문단 하나를 둔다.
+        """
+        by_section: dict[str, set[int]] = {}
+        for b in blocks:
+            by_section.setdefault(b.section, set()).add(b.index)
+        removed = 0
+        for section, targets in by_section.items():
+            root = self._root(section)
+            paras = [p for p in root if p.tag == PARA]
+            settings = [run for run in paras[0].findall(RUN) if run.find(SEC_PR) is not None]
+            gone = [p for i, p in enumerate(paras) if i in targets]
+            keep = [p for p in paras if p not in gone]
+            if paras[0] in gone and settings:
+                if not keep:
+                    keep = [_blank_paragraph(paras[0])]
+                    root.insert(list(root).index(paras[0]), keep[0])
+                for run in reversed(settings):
+                    paras[0].remove(run)
+                    keep[0].insert(0, run)
+                for seg in keep[0].findall(LINESEG_ARRAY):
+                    keep[0].remove(seg)
+            for p in gone:
+                root.remove(p)
+            removed += len(gone)
+            self._dirty.add(section)
+        self._tables_cache = None
+        return removed
+
+    def get_cell(self, table: int, row: int, col: int) -> str:
+        """앵커 셀의 텍스트."""
+        _section, tc = self._anchor(table, row, col)
+        return _cell_text(tc)
+
+    def set_cell(self, table: int, row: int, col: int, text: str) -> None:
+        """표 셀 하나의 내용을 text 로 바꾼다. 줄바꿈(\\n)은 문단으로 나뉜다.
+
+        병합 셀은 왼쪽 위 칸(앵커)으로만 쓸 수 있다. 서식의 문자 모양·문단 모양은 유지한다.
+        """
+        section, tc = self._anchor(table, row, col)
+        _write_cell(tc, str(text))
+        self._dirty.add(section)
+
+    def fill_rows(
+        self,
+        table: int,
+        first_row: int,
+        rows: list[list[str | None]],
+        col: int = 0,
+        *,
+        last_row: int | None = None,
+        extend: bool = False,
+    ) -> int:
+        """반복영역에 여러 행을 쓴다. rows[i][j] 는 (first_row+i, col+j) 칸의 값이다.
+
+        last_row 는 반복영역의 마지막 행(포함)이다. 합계 행처럼 영역 밖의 행을 덮어쓰지
+        않도록 호출하는 쪽이 알려준다. 없으면 표의 마지막 행까지로 본다.
+
+        행이 모자라면 기본은 **아무것도 쓰지 않고** CapacityError 를 낸다.
+        extend=True 면 행을 복제해 필요한 만큼 늘린다(그 아래 행은 밀려난다). 복제하는 행은
+        영역의 가운데 행이고 마지막 행 바로 위에 넣는다. 서식은 영역의 첫 행과 마지막 행에만
+        굵은 테두리를 두므로, 마지막 행을 복제하면 늘린 행 사이에 이중선이 생긴다.
+        가운데 행이 없거나(영역이 두 행 이하) 복제할 수 없으면 마지막 행을 복제한다.
+        어느 경우든 실패하면 문서는 호출 전 그대로다(늘린 행도, 이미 쓴 칸도 되돌린다).
+        쓴 칸 수를 반환한다.
+
+        None 은 건너뛴다(병합으로 가려진 칸, 미리 채워진 칸 등).
+        """
+        elements = self._table_elements()
+        if not 0 <= table < len(elements):
+            raise CellNotFound(f"표 {table} 이(가) 없다 (표 {len(elements)}개)")
+        section = elements[table][0]
+        total_rows = int(elements[table][1].get("rowCnt", 0))
+        region_end = total_rows - 1 if last_row is None else last_row
+        if not 0 <= first_row <= region_end < total_rows:
+            raise CellNotFound(
+                f"표 {table}: 반복영역 {first_row}~{region_end}행이 표 범위(0~{total_rows - 1})"
+                " 밖이다"
+            )
+        need = len(rows) - (region_end - first_row + 1)
+        if need > 0 and not extend:
+            raise CapacityError(
+                f"표 {table}: {first_row}행부터 {len(rows)}행을 쓰려면 "
+                f"{first_row + len(rows) - 1}행까지 필요한데 영역은 {region_end}행까지다"
+            )
+
+        snapshot = copy.deepcopy(self._root(section))
+        was_dirty = section in self._dirty
+        try:
+            if need > 0:
+                self._extend_region(table, first_row, region_end, need)
+            targets = [
+                (first_row + i, col + j, v)
+                for i, line in enumerate(rows)
+                for j, v in enumerate(line)
+                if v is not None
+            ]
+            # 쓰기 전에 좌표를 전부 확인한다 (일부만 쓰이는 것을 막는다).
+            for r, c, _v in targets:
+                self._anchor(table, r, c)
+            for r, c, v in targets:
+                self.set_cell(table, r, c, v)
+        except Exception:
+            self._trees[section] = snapshot  # 늘린 행과 이미 쓴 칸을 모두 되돌린다
+            self._tables_cache = None
+            if not was_dirty:
+                self._dirty.discard(section)
+            raise
+        return len(targets)
+
+    def _extend_region(self, table: int, first_row: int, last_row: int, need: int) -> None:
+        """반복영역 first_row..last_row 를 need 행 늘린다. 마지막 행은 영역 끝에 남긴다."""
+        middle = last_row - 1
+        if middle > first_row:
+            try:  # 가운데 행 복제가 막히면(누름틀·병합) 문서는 그대로이고 마지막 행으로 간다
+                self.insert_row(table, middle)
+            except HwpxError:
+                pass
+            else:
+                for k in range(1, need):
+                    self.insert_row(table, middle + k)
+                return
+        for k in range(need):
+            self.insert_row(table, last_row + k)
+
+    def insert_row(self, table: int, after: int, *, clear: bool = True) -> int:
+        """after 행을 복제해 그 바로 아래에 새 행을 넣는다. 새 행의 번호를 반환한다.
+
+        아래 행의 번호와 표의 행 수는 함께 밀린다. 복제할 행의 칸은 행 병합 없이 그 행에서
+        시작해야 한다(아니면 RowSpanConflict). 위에서 내려와 이 행을 덮는 병합 칸(명단 왼쪽의
+        `참석대상` 같은 묶음 이름)은 새 행까지 덮도록 한 행 늘린다.
+
+        clear=True 면 새 행의 글자를 비운다. 예시 값이나 연번이 그대로 복제돼 조용히 틀리는
+        것을 막기 위해서다. 행마다 있는 수식(`=PRODUCT(D?:E?)`)은 `?` 가 자기 행을 가리키므로
+        그대로 복제하고 결과만 비운다(recalculate_formulas 로 다시 채운다). 누름틀이 든 칸은
+        이름이 겹치므로 복제하지 않는다(FieldInCell).
+        """
+        elements = self._table_elements()
+        if not 0 <= table < len(elements):
+            raise CellNotFound(f"표 {table} 이(가) 없다 (표 {len(elements)}개)")
+        section, tbl, _depth = elements[table]
+        row_cnt = int(tbl.get("rowCnt", 0))
+        col_cnt = int(tbl.get("colCnt", 0))
+        trs = tbl.findall(TR)
+        if len(trs) != row_cnt:
+            raise HwpxError(f"표 {table}: tr {len(trs)}개와 rowCnt {row_cnt} 이(가) 다르다")
+        if not 0 <= after < row_cnt:
+            raise CellNotFound(f"표 {table} 에 {after}행이 없다")
+
+        source = trs[after]
+        cells = [_read_cell(tc, text=False) for tc in source.findall(TC)]
+        spanning = [  # 위 행에서 시작해 이 행을 덮는 병합 칸
+            tc
+            for tr in trs[:after]
+            for tc in tr.findall(TC)
+            if (c := _read_cell(tc, text=False)).row + c.row_span - 1 >= after
+        ]
+        width = sum(c.col_span for c in cells) + sum(
+            _read_cell(tc, text=False).col_span for tc in spanning
+        )
+        if any(c.row_span != 1 for c in cells) or width != col_cnt:
+            raise RowSpanConflict(
+                f"표 {table} {after}행은 복제할 수 없다 (이 행에서 아래로 병합된 칸이 있다)"
+            )
+
+        if any(el.tag == TBL for el in source.iter()):
+            raise RowSpanConflict(f"표 {table} {after}행에는 중첩 표가 있어 복제할 수 없다")
+
+        clone = copy.deepcopy(source)  # 여기서 실패해도 문서는 그대로다
+        for tc in clone.findall(TC):
+            tc.find(CELL_ADDR).set("rowAddr", str(after + 1))
+            fields = list(_walk_field_elements(tc))
+            if any(begin.get("type") != "FORMULA" for begin, _texts in fields):
+                raise FieldInCell(f"표 {table} {after}행에 누름틀이 있어 복제할 수 없다")
+            if not clear:
+                continue
+            if fields:
+                for begin, texts in fields:
+                    _set_formula_text(tc, begin, texts, "")
+            else:
+                _write_cell(tc, "")
+
+        tbl.insert(list(tbl).index(source) + 1, clone)
+        for tr in trs[after + 1 :]:
+            for tc in tr.findall(TC):
+                addr = tc.find(CELL_ADDR)
+                addr.set("rowAddr", str(int(addr.get("rowAddr", 0)) + 1))
+        tbl.set("rowCnt", str(row_cnt + 1))
+
+        size = tbl.find(SZ)
+        heights = [
+            int(sz.get("height", 0))
+            for tc in clone.findall(TC)
+            if (sz := tc.find(CELL_SZ)) is not None  # 자식 없는 엘리먼트는 거짓이다
+        ]
+        added = max(heights, default=0)
+        if size is not None:
+            size.set("height", str(int(size.get("height", 0)) + added))
+        for tc in spanning:
+            span = tc.find(CELL_SPAN)
+            span.set("rowSpan", str(int(span.get("rowSpan", 1)) + 1))
+            if (sz := tc.find(CELL_SZ)) is not None:
+                sz.set("height", str(int(sz.get("height", 0)) + added))
+        self._dirty.add(section)
+        return after + 1
+
+    def _anchor(self, table: int, row: int, col: int) -> tuple[str, ET.Element]:
+        elements = self._table_elements()
+        if not 0 <= table < len(elements):
+            raise CellNotFound(f"표 {table} 이(가) 없다 (표 {len(elements)}개)")
+        section, tbl, _depth = elements[table]
+        for tr in tbl.findall(TR):
+            for tc in tr.findall(TC):
+                cell = _read_cell(tc, text=False)
+                if (cell.row, cell.col) == (row, col):
+                    return section, tc
+                if (
+                    cell.row <= row < cell.row + cell.row_span
+                    and cell.col <= col < cell.col + cell.col_span
+                ):
+                    raise CoveredCell(
+                        f"표 {table} ({row},{col}) 은 병합으로 가려진 칸이다. "
+                        f"앵커는 ({cell.row},{cell.col})"
+                    )
+        raise CellNotFound(f"표 {table} 에 ({row},{col}) 칸이 없다")
+
+    # ---------------------------------------------------------------- 수식
+    def formula_cells(self) -> list[FormulaCell]:
+        """표 칸 안의 수식을 표·행·열 순서로 돌려준다."""
+        found: list[FormulaCell] = []
+        for ti, (_section, tbl, _depth) in enumerate(self._table_elements()):
+            for tr in tbl.findall(TR):
+                for tc in tr.findall(TC):
+                    cell = _read_cell(tc)
+                    for begin, texts in _walk_field_elements(tc):
+                        if begin.get("type") != "FORMULA":
+                            continue
+                        params = _params(begin)
+                        found.append(
+                            FormulaCell(
+                                table=ti,
+                                row=cell.row,
+                                col=cell.col,
+                                formula=params.get("Formula", ""),
+                                result_format=params.get("ResultFormat", ""),
+                                text="".join(t.text or "" for t in texts),
+                            )
+                        )
+        return sorted(found, key=lambda f: (f.table, f.row, f.col))
+
+    def set_formula_result(self, table: int, row: int, col: int, text: str) -> None:
+        """수식 칸에 표시되는 결과와 저장된 마지막 결과(LastResult)를 text 로 바꾼다.
+
+        한글은 열거나 변환할 때 수식을 다시 계산하지 않는다. 그래서 값을 채운 뒤에는
+        합계 칸이 예전 값으로 남으므로 이 메서드(또는 recalculate_formulas)로 갱신해야 한다.
+        """
+        section, tc = self._anchor(table, row, col)
+        formulas = [
+            (begin, texts)
+            for begin, texts in _walk_field_elements(tc)
+            if begin.get("type") == "FORMULA"
+        ]
+        if not formulas:
+            raise HwpxError(f"표 {table} ({row},{col}) 에 수식이 없다")
+        if len(formulas) > 1:
+            raise HwpxError(f"표 {table} ({row},{col}) 에 수식이 {len(formulas)}개 있다")
+        begin, texts = formulas[0]
+        if not texts:
+            raise HwpxError(f"표 {table} ({row},{col}) 수식에 결과를 쓸 자리가 없다")
+        _set_formula_text(tc, begin, texts, text)
+        self._dirty.add(section)
+
+    def recalculate_formulas(self, table: int | None = None) -> Recalc:
+        """수식을 다시 계산해 결과를 갱신한다 (table 이 없으면 문서 전체).
+
+        다른 수식의 결과를 참조하는 수식(곱셈 결과의 합계 등)이 있어서 결과가 더는 바뀌지
+        않을 때까지 반복한다. 계산하지 못하는 수식은 추측하지 않고 그대로 두고 skipped 에 담는다.
+        """
+        tables = self.tables()
+        grids = {t.index: t.grid() for t in tables}
+        updated: dict[tuple[int, int, int], FormulaCell] = {}
+        skipped: dict[tuple[int, int, int], tuple[FormulaCell, str]] = {}
+        cells = [f for f in self.formula_cells() if table is None or f.table == table]
+        for f in cells:  # 칸에 "90.0%" 처럼 글자가 더 붙어 있어도 수식 결과만 본다
+            grids[f.table][f.row][f.col] = f.text
+        for _ in range(len(cells) + 1):
+            changed = False
+            for f in cells:
+                key = (f.table, f.row, f.col)
+                grid = grids[f.table]
+                try:
+                    value = evaluate(f.formula, grid, f.row, f.col)
+                    text = format_result(value, f.result_format)
+                except FormulaError as e:
+                    skipped[key] = (f, str(e))
+                    continue
+                skipped.pop(key, None)
+                if grid[f.row][f.col] == text:
+                    continue
+                self.set_formula_result(f.table, f.row, f.col, text)
+                grid[f.row][f.col] = text
+                updated[key] = FormulaCell(**{**f.__dict__, "text": text})
+                changed = True
+            if not changed:
+                break
+        return Recalc(updated=list(updated.values()), skipped=list(skipped.values()))
 
     def save(self, path: str | Path) -> Path:
         """HWPX 로 저장한다. mimetype 은 규격대로 첫 항목·무압축을 유지한다."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        for section in self._dirty:
+            self._entries[section] = _serialize(self._trees[section])
+        self._dirty.clear()
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
             for name in self._order:
                 compress = self._compress.get(name, zipfile.ZIP_DEFLATED)
                 if name == "mimetype":
                     compress = zipfile.ZIP_STORED
-                zf.writestr(
-                    zipfile.ZipInfo(name), self._entries[name], compress_type=compress
-                )
+                zf.writestr(zipfile.ZipInfo(name), self._entries[name], compress_type=compress)
         return path
 
 
-def _walk_fields(root: ET.Element):
-    """(name, type, [텍스트 노드]) 를 문서 순서대로 yield 한다.
+def _walk_field_elements(root: ET.Element):
+    """(fieldBegin 엘리먼트, [텍스트 노드]) 를 문서 순서대로 yield 한다.
 
     fieldBegin.id ↔ fieldEnd.beginIDRef 로 짝을 지으며, 중첩된 경우
     가장 안쪽 필드가 텍스트를 가져간다.
     """
-    open_stack: list[tuple[str, str, str, list[ET.Element]]] = []
+    open_stack: list[tuple[ET.Element, list[ET.Element]]] = []
     for el in root.iter():
         if el.tag == FIELD_BEGIN:
-            open_stack.append(
-                (el.get("id", ""), el.get("name", ""), el.get("type", ""), [])
-            )
+            open_stack.append((el, []))
         elif el.tag == FIELD_END:
             ref = el.get("beginIDRef", "")
             for i in range(len(open_stack) - 1, -1, -1):
-                if open_stack[i][0] == ref:
-                    _fid, name, ftype, texts = open_stack.pop(i)
-                    yield name, ftype, texts
+                if open_stack[i][0].get("id", "") == ref:
+                    begin, texts = open_stack.pop(i)
+                    yield begin, texts
                     break
         elif el.tag == T and open_stack:
-            open_stack[-1][3].append(el)
+            open_stack[-1][1].append(el)
+
+
+def _own_texts(p: ET.Element) -> list[ET.Element]:
+    """문단에 바로 속한 텍스트 노드. 문단 안의 표 칸·글상자 문단은 따로 센다."""
+    found: list[ET.Element] = []
+
+    def walk(node: ET.Element) -> None:
+        for el in node:
+            if el.tag == PARA:
+                continue
+            if el.tag == T:
+                found.append(el)
+            else:
+                walk(el)
+
+    walk(p)
+    return found
+
+
+def _replace_in_nodes(nodes: list[ET.Element], replacements: dict[str, str]) -> int:
+    """이어 붙인 노드들의 글에서 문구를 바꾼다. 걸친 노드 중 첫 노드에 바꾼 글을 둔다."""
+    count = 0
+    for old, new in replacements.items():
+        if not old:
+            continue
+        new = _clean(new)
+        start = 0
+        while True:
+            texts = [t.text or "" for t in nodes]
+            i = "".join(texts).find(old, start)
+            if i < 0:
+                break
+            j = i + len(old)
+            pos, first, last = 0, None, None
+            for k, text in enumerate(texts):
+                if first is None and i < pos + len(text):
+                    first = (k, i - pos)
+                if j <= pos + len(text):
+                    last = (k, j - pos)
+                    break
+                pos += len(text)
+            (a, ia), (b, jb) = first, last
+            if a == b:
+                nodes[a].text = texts[a][:ia] + new + texts[a][jb:]
+            else:
+                nodes[a].text = texts[a][:ia] + new
+                for k in range(a + 1, b):
+                    nodes[k].text = ""
+                nodes[b].text = texts[b][jb:]
+            count += 1
+            start = i + len(new)
+    return count
+
+
+def _paragraph_of(el: ET.Element, parents: dict[ET.Element, ET.Element]) -> ET.Element:
+    """el 을 담은 가장 가까운 문단."""
+    while el.tag != PARA:
+        el = parents[el]
+    return el
+
+
+def _drop_linesegs(p: ET.Element) -> None:
+    for seg in p.findall(LINESEG_ARRAY):
+        p.remove(seg)
+
+
+def _put_text(
+    texts: list[ET.Element],
+    value: str,
+    marker: ET.Element,
+    parents: dict[ET.Element, ET.Element],
+    *,
+    after: bool,
+) -> None:
+    """누름틀 안의 텍스트 노드들을 value 하나로 바꾼다.
+
+    노드가 없으면(빈 누름틀) marker(fieldBegin/fieldEnd) 의 바로 뒤(after) 또는 앞에 새로 만든다.
+    """
+    if texts:
+        texts[0].text = value
+        for extra in texts[1:]:
+            extra.text = ""
+    elif value:
+        ctrl = parents[marker]
+        run = parents[ctrl]
+        t = ET.Element(T)
+        t.text = value
+        run.insert(list(run).index(ctrl) + (1 if after else 0), t)
+    _drop_linesegs(_paragraph_of(marker, parents))
+
+
+def _fill_paragraphs(
+    first: ET.Element,
+    last: ET.Element,
+    texts: list[ET.Element],
+    lines: list[str],
+    begin: ET.Element,
+    ends: dict[str | None, ET.Element],
+    parents: dict[ET.Element, ET.Element],
+) -> None:
+    """first 문단에서 시작해 last 문단에서 끝나는 누름틀에 lines 를 문단별로 쓴다."""
+    container = parents[first]
+    if parents.get(last) is not container:
+        raise HwpxError("누름틀의 시작 문단과 끝 문단이 같은 곳에 있지 않다")
+    siblings = list(container)
+    middle = siblings[siblings.index(first) + 1 : siblings.index(last)]
+    # 고치기 전에 전부 확인한다 (일부만 바뀌는 것을 막는다)
+    inner = [el.tag for p in middle for el in p.iter()]
+    if TBL in inner:
+        raise HwpxError("누름틀 사이 문단에 표가 있어 여러 줄로 채울 수 없다")
+    if FIELD_BEGIN in inner or FIELD_END in inner:
+        raise HwpxError("누름틀 사이 문단에 다른 누름틀이 있어 여러 줄로 채울 수 없다")
+
+    in_first = {id(el) for el in first.iter()}
+    in_last = {id(el) for el in last.iter()}
+    head, body = lines[0], lines[1:-1]
+    tail = lines[-1] if len(lines) > 1 else ""
+
+    model = next((p for p in middle if any(True for _ in p.iter(T))), None)
+    template = copy.deepcopy(model) if model is not None else _blank_paragraph(first)
+    for run in template.findall(RUN):
+        if run.find(CTRL) is not None:
+            template.remove(run)
+
+    for p in middle[len(body) :]:
+        container.remove(p)
+    kept = middle[: len(body)]
+    while len(kept) < len(body):
+        clone = copy.deepcopy(template)
+        container.insert(list(container).index(kept[-1] if kept else first) + 1, clone)
+        kept.append(clone)
+    for p, line in zip(kept, body, strict=True):
+        _set_paragraph_text(p, line)
+
+    _put_text([t for t in texts if id(t) in in_first], head, begin, parents, after=True)
+    end = ends[begin.get("id")]
+    _put_text([t for t in texts if id(t) in in_last], tail, end, parents, after=False)
+
+
+def _set_formula_text(
+    tc: ET.Element, begin: ET.Element, texts: list[ET.Element], text: str
+) -> None:
+    """수식의 표시 결과와 저장된 마지막 결과(LastResult)를 text 로 바꾼다."""
+    text = _clean(text)
+    if texts:
+        texts[0].text = text
+        for extra in texts[1:]:
+            extra.text = ""
+    for param in begin.iter():
+        name = param.get("name")
+        if name == "LastResult":
+            param.text = text
+        elif name == "Command" and ";;" in (param.text or ""):
+            param.text = param.text.rsplit(";;", 1)[0] + ";;" + text
+    for p in tc.iter(PARA):
+        if any(el is begin for el in p.iter()):
+            for seg in p.findall(LINESEG_ARRAY):
+                p.remove(seg)
+
+
+def _walk_fields(root: ET.Element):
+    """(name, type, [텍스트 노드]) 를 문서 순서대로 yield 한다."""
+    for begin, texts in _walk_field_elements(root):
+        yield begin.get("name", ""), begin.get("type", ""), texts
+
+
+def _params(begin: ET.Element) -> dict[str, str]:
+    """fieldBegin 아래 parameters 의 이름 -> 값."""
+    return {p.get("name", ""): (p.text or "") for p in begin.iter() if p.tag.endswith("Param")}
 
 
 def _walk_tables(parent: ET.Element, depth: int = 0):
@@ -218,7 +890,7 @@ def _walk_tables(parent: ET.Element, depth: int = 0):
             yield from _walk_tables(el, depth)
 
 
-def _read_cell(tc: ET.Element) -> Cell:
+def _read_cell(tc: ET.Element, *, text: bool = True) -> Cell:
     addr = tc.find(CELL_ADDR)
     span = tc.find(CELL_SPAN)
     return Cell(
@@ -226,7 +898,8 @@ def _read_cell(tc: ET.Element) -> Cell:
         col=int(addr.get("colAddr", 0)) if addr is not None else 0,
         row_span=int(span.get("rowSpan", 1)) if span is not None else 1,
         col_span=int(span.get("colSpan", 1)) if span is not None else 1,
-        text=_cell_text(tc),
+        text=_cell_text(tc) if text else "",
+        has_field=text and any(el.tag == FIELD_BEGIN for el in tc.iter()),
     )
 
 
@@ -249,6 +922,96 @@ def _cell_text(tc: ET.Element) -> str:
 
     walk(tc, [])
     return "\n".join(x for x in lines if x).strip()
+
+
+def _block_text(p: ET.Element) -> str:
+    """문단의 글자. 문단 안의 표는 빼고, 글상자 같은 개체 안의 글자는 넣는다."""
+    parts: list[str] = []
+
+    def walk(node: ET.Element) -> None:
+        for el in node:
+            if el.tag == TBL:
+                continue
+            if el.tag == T:
+                parts.append(el.text or "")
+            walk(el)
+
+    walk(p)
+    return "".join(parts).strip()
+
+
+# ------------------------------------------------------------------ 셀 쓰기
+def _write_cell(tc: ET.Element, text: str) -> None:
+    """셀 내용을 text 로 바꾼다. 첫 문단의 문단·문자 모양을 모든 줄에 이어 쓴다."""
+    sub = tc.find(SUBLIST)
+    if sub is None:
+        raise HwpxError("subList 가 없는 셀이다")
+    if any(el.tag == FIELD_BEGIN for el in sub.iter()):
+        raise FieldInCell("누름틀이 든 칸이다. fill() 로 써야 한다")
+
+    lines = _clean(text).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    paras = sub.findall(PARA)
+    if not paras:
+        raise HwpxError("문단이 없는 셀이다")
+
+    # 중첩 표가 든 문단은 지우지 않는다. 그 외 문단이 줄 수의 기준이 된다.
+    keep = [p for p in paras if any(el.tag == TBL for el in p.iter())]
+    plain = [p for p in paras if p not in keep]
+    if not plain:
+        plain = [_blank_paragraph(paras[0])]
+        sub.append(plain[0])
+
+    template = copy.deepcopy(plain[0])
+    for extra in plain[len(lines) :]:
+        sub.remove(extra)
+    plain = plain[: len(lines)]
+    while len(plain) < len(lines):
+        clone = copy.deepcopy(template)
+        # colPr 같은 제어 run 은 첫 문단에만 있어야 한다.
+        for run in clone.findall(RUN):
+            if run.find(CTRL) is not None:
+                clone.remove(run)
+        # 새 문단은 마지막 일반 문단 바로 뒤에 둔다.
+        sub.insert(list(sub).index(plain[-1]) + 1, clone)
+        plain.append(clone)
+
+    for p, line in zip(plain, lines, strict=True):
+        _set_paragraph_text(p, line)
+
+
+def _blank_paragraph(model: ET.Element) -> ET.Element:
+    """model 의 문단·문자 모양만 가져온 빈 문단. 표·제어문자·글자는 복사하지 않는다."""
+    p = copy.deepcopy(model)
+    first_char = (p.find(RUN).get("charPrIDRef") if p.find(RUN) is not None else None) or "0"
+    for run in p.findall(RUN):
+        p.remove(run)
+    for seg in p.findall(LINESEG_ARRAY):
+        p.remove(seg)
+    p.append(ET.Element(RUN, {"charPrIDRef": first_char}))
+    return p
+
+
+def _set_paragraph_text(p: ET.Element, line: str) -> None:
+    runs = p.findall(RUN)
+    # 글자를 받을 run: 원래 텍스트가 있던 run > 제어문자(ctrl)가 없는 run > 새 run
+    target = next((r for r in runs if r.find(T) is not None), None)
+    if target is None:
+        target = next((r for r in runs if r.find(CTRL) is None), None)
+    if target is None:
+        target = ET.Element(RUN, {"charPrIDRef": runs[0].get("charPrIDRef", "0")} if runs else {})
+        anchor = p.find(LINESEG_ARRAY)
+        if anchor is None:
+            p.append(target)
+        else:
+            p.insert(list(p).index(anchor), target)
+    for run in runs:
+        for t in run.findall(T):
+            run.remove(t)
+    if line:
+        ET.SubElement(target, T).text = line
+    # 줄 배치 캐시는 글자가 바뀌면 틀리므로 지운다. 한글이 열 때 다시 계산한다.
+    for seg in p.findall(LINESEG_ARRAY):
+        p.remove(seg)
 
 
 def _serialize(root: ET.Element) -> bytes:

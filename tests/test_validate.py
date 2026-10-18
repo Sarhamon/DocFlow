@@ -1,351 +1,429 @@
-# -*- coding: utf-8 -*-
-"""규칙 기반 검증 테스트.
+"""규칙 기반 검증 테스트 (스키마 v2).
 
-실제 서식은 내부 자료라 저장소에 없다. 그래서 스키마를 파일에서 읽지 않고
-코드로 만든다. 구조는 `교통비 지급 내역서`(AID 5-05)에서 그대로 가져왔다.
+실제 서식은 내부 자료라 저장소에 없다. 그래서 스키마를 코드로 만든다. 구조는
+`교통비 지급 내역서`(AID 5-05), `정산서`(앵커 3-01), `일반기안문`(AID 1-01~10)에서 가져왔다.
+옛 엔진의 오탐 사례 테스트는 이름을 유지해 그대로 옮겼다.
 """
+
 from __future__ import annotations
 
 from datetime import date
 
-from docflow.schema.form import FieldSpec, FormSchema, RepeatSpec, SlotSpec
+import pytest
+
+from docflow.schema.model import (
+    FieldSpec,
+    FormSchema,
+    RepeatColumn,
+    RepeatSpec,
+    SlotSpec,
+    TableSpec,
+    Variant,
+)
 from docflow.validate import (
-    cell_id,
+    AMOUNT_TOTAL_MISMATCH,
+    DATE_INVALID,
+    DATE_ORDER,
+    REQUIRED_EMPTY,
+    Exclusions,
+    FormInput,
+    RuleConfig,
+    ValidationConfig,
+    applicable_rules,
     check_amount_totals,
-    check_dates,
-    check_required,
-    fillable_fields,
+    check_cell,
+    check_field,
+    check_repeat_cell,
     find_dates,
     parse_amount,
     validate,
 )
 
-#: 교통비 지급 내역서의 입금액 열. 데이터는 7~16행, 합계는 17행이다.
-DATA_ROWS = range(7, 17)
-TOTAL_ROW = 17
-COL = 11
+
+def tables(n: int = 1) -> list[TableSpec]:
+    return [TableSpec(index=i, rows=20, cols=12) for i in range(n)]
 
 
-def 슬롯(row: int, label: str = "", kind: str = "placeholder", ph: str = "5,000") -> SlotSpec:
-    return SlotSpec(
-        id=cell_id(0, row, COL),
-        table=0,
-        row=row,
-        col=COL,
-        label=label or str(row),
-        kind=kind,
-        placeholder=ph,
-    )
+# ------------------------------------------------------------------ 서식
+def 교통비() -> FormSchema:
+    """헤더 5~6행, 데이터 7~16행(7행 예시), 합계 17행. 합계 칸은 작성자가 적는다."""
+    return FormSchema(
+        title="교통비 지급 내역서",
+        template="t/교통비.hwpx",
+        tables=tables(),
+        slots=[
+            SlotSpec(table=0, row=1, col=2, label="학과/부서명", placeholder="○○○○○과"),
+            SlotSpec(table=0, row=2, col=5, label="일시", input_type="date",
+                     placeholder="2024.5.2.(목) 13:00~17:00"),
+            SlotSpec(table=0, row=3, col=2, label="첨부", origin="empty", required=False),
+            SlotSpec(table=0, row=17, col=11, label="합계", input_type="amount",
+                     placeholder="50,000"),
+            SlotSpec(table=0, row=0, col=9, label="담당", role="approval", required=False,
+                     placeholder="00/00"),
+        ],
+        repeats=[
+            RepeatSpec(
+                table=0, header_rows=[5, 6], start_row=7, end_row=16, total_row=17,
+                has_example=True,
+                columns=[
+                    RepeatColumn(col=0, label="연번", input_type="number", prefilled="1"),
+                    RepeatColumn(col=1, label="성명"),
+                    RepeatColumn(col=4, label="활동일", input_type="date"),
+                    RepeatColumn(col=11, label="입금액(원)", input_type="amount",
+                                 prefilled="5,000"),
+                ],
+            )
+        ],
+    )  # fmt: skip
 
 
-def 내역서_스키마(total_rows=(TOTAL_ROW,), data_rows=DATA_ROWS) -> FormSchema:
-    slots = [슬롯(r) for r in data_rows]
-    slots += [슬롯(r, label="합계", ph="50,000") for r in total_rows]
-    return FormSchema(form_id="5-05", title="교통비 지급 내역서", slots=slots)
+def 명단(*amounts: str) -> list[dict[int, str]]:
+    return [{0: str(i + 1), 1: f"학생{i}", 11: a} for i, a in enumerate(amounts)]
 
 
-def 값(rows: dict[int, str]) -> dict[str, str]:
-    return {cell_id(0, r, COL): v for r, v in rows.items()}
+def 교통비_입력(total: str = "15,000", amounts=("5,000", "5,000", "5,000")) -> FormInput:
+    return FormInput(
+        cells={"t0.r1.c2": "전자공학과", "t0.r2.c5": "2026.10.12(월) 13:00~17:00",
+               "t0.r17.c11": total},
+        rows={"t0.r7-16": 명단(*amounts)},
+    )  # fmt: skip
 
 
-def 다_채운_값() -> dict[str, str]:
-    return 값({r: "5,000" for r in DATA_ROWS} | {TOTAL_ROW: "50,000"})
+def 정산서() -> FormSchema:
+    """항목이 행마다 고정된 표. 금액 열(2)에 소계(4행)와 합계(8행)가 있다."""
+    item = [SlotSpec(table=0, row=r, col=2, label=f"항목{r}", origin="empty", required=False)
+            for r in (1, 2, 3, 5, 6, 7)]  # fmt: skip
+    totals = [SlotSpec(table=0, row=r, col=2, label=lab, placeholder="0,000,000")
+              for r, lab in ((4, "소계"), (8, "합 계"))]  # fmt: skip
+    return FormSchema(title="정산서", tables=tables(), slots=item + totals)
 
 
-# ---------------------------------------------------------------- parse_amount
+def 기안문() -> FormSchema:
+    """누름틀 이름·자리표시자는 실제 서식(AID 1-01~10)에서 가져왔다."""
+    return FormSchema(
+        title="일반기안문",
+        tables=tables(),
+        fields=[
+            FieldSpec(name="docnumber", type="CLICK_HERE", placeholder="○○○○처-000000"),
+            FieldSpec(name="enforcedate", type="CLICK_HERE", input_type="date",
+                      placeholder="2000.00.00"),
+            FieldSpec(name="address", type="CLICK_HERE",
+                      placeholder="경기도 안양시 만안구 양화로 37번길 34"),
+            FieldSpec(name="publication", type="CLICK_HERE", placeholder="공개"),
+            FieldSpec(name="apb4_date", type="CLICK_HERE", role="approval",
+                      input_type="date", placeholder="00/00"),
+        ],
+    )  # fmt: skip
 
 
+def codes(issues) -> list[tuple[str, str]]:
+    return [(i.code, i.where) for i in issues]
+
+
+# ------------------------------------------------------------------ 값 읽기
 def test_금액_파싱():
     assert parse_amount("5,000") == 5000
     assert parse_amount("5,000원") == 5000
     assert parse_amount("₩ 1,234,567") == 1234567
-    assert parse_amount("0") == 0
 
 
-def test_금액이_아니면_None():
-    assert parse_amount("") is None
-    assert parse_amount("합계") is None
-    assert parse_amount("해당없음") is None
-
-
-# ---------------------------------------------------------------- 금액 합계
-
-
-def test_합계가_맞으면_통과():
-    assert check_amount_totals(내역서_스키마(), 다_채운_값()) == []
-
-
-def test_합계가_틀리면_잡는다():
-    values = 값({r: "5,000" for r in DATA_ROWS} | {TOTAL_ROW: "49,000"})
-    issues = check_amount_totals(내역서_스키마(), values)
-
-    assert len(issues) == 1
-    assert issues[0].code == "AMOUNT_TOTAL_MISMATCH"
-    assert issues[0].where == cell_id(0, TOTAL_ROW, COL)
-    assert "50,000" in issues[0].message
-    assert "49,000" in issues[0].message
-
-
-def test_예시_행도_합계에_포함한다():
-    """행 7은 예시 행(`홍길동`)이라 반복 영역 밖이지만 데이터 행이다.
-
-    반복 영역(8~16)만 더하면 45,000 이 나와 오탐이 난다.
-    """
-    빠뜨린 = 값({r: "5,000" for r in range(8, 17)} | {TOTAL_ROW: "50,000"})
-    issues = check_amount_totals(내역서_스키마(), 빠뜨린)
-
-    assert len(issues) == 1
-    assert "45,000" in issues[0].message
-
-
-def test_일부만_채워도_채운_것끼리_검사한다():
-    values = 값({7: "5,000", 8: "3,000", TOTAL_ROW: "8,000"})
-    assert check_amount_totals(내역서_스키마(), values) == []
-
-
-def test_합계가_비어_있으면_넘어간다():
-    """빈 합계는 '필수 누락' 규칙이 볼 몫이라 합계 규칙에서는 오류가 아니다."""
-    values = 값({r: "5,000" for r in DATA_ROWS})
-    assert check_amount_totals(내역서_스키마(), values) == []
-
-
-def test_데이터가_하나도_없으면_넘어간다():
-    assert check_amount_totals(내역서_스키마(), 값({TOTAL_ROW: "50,000"})) == []
-
-
-def test_소계와_합계는_구간을_나눠_센다():
-    """소계(행 10)가 있으면 그다음 행부터 다시 센다. 소계를 두 번 더하지 않는다."""
-    schema = 내역서_스키마(total_rows=(10, TOTAL_ROW), data_rows=range(7, 10))
-    schema.slots += [슬롯(r) for r in range(11, 17)]
-
-    values = 값(
-        {7: "1,000", 8: "1,000", 9: "1,000", 10: "3,000"}
-        | {r: "2,000" for r in range(11, 17)}
-        | {TOTAL_ROW: "12,000"}
-    )
-    assert check_amount_totals(schema, values) == []
-
-
-# ---------------------------------------------------------------- 필수 누락
-
-
-def test_자리표시자_칸이_비면_잡는다():
-    values = 값({r: "5,000" for r in DATA_ROWS})  # 합계만 비었다
-    issues = check_required(내역서_스키마(), values)
-
-    assert len(issues) == 1
-    assert issues[0].code == "REQUIRED_EMPTY"
-    assert issues[0].where == cell_id(0, TOTAL_ROW, COL)
-    assert "합계" in issues[0].message
-
-
-def test_다_채우면_통과():
-    assert check_required(내역서_스키마(), 다_채운_값()) == []
-
-
-def test_공백만_있으면_비어_있는_것으로_본다():
-    values = 다_채운_값()
-    values[cell_id(0, TOTAL_ROW, COL)] = "   "
-    assert len(check_required(내역서_스키마(), values)) == 1
-
-
-def test_항목명만_보고_잡은_빈_칸은_필수가_아니다():
-    """`kind="empty"` 는 인접 셀 추론이라 안 채우는 게 정상인 칸이 섞인다."""
-    schema = FormSchema(
-        form_id="5-05",
-        title="교통비 지급 내역서",
-        slots=[슬롯(3, label="입금통장 사본", kind="empty", ph="")],
-    )
-    assert check_required(schema, {}) == []
-
-
-def test_반복_영역_안의_칸은_필수가_아니다():
-    """명단은 수용 행을 다 채우지 않는 게 정상이다."""
-    schema = 내역서_스키마()
-    schema.repeats = [
-        RepeatSpec(id="t0.r8-16", table=0, start_row=8, end_row=16, header=["입금액"])
-    ]
-    issues = check_required(schema, 값({7: "5,000", TOTAL_ROW: "5,000"}))
-
-    assert issues == []
-
-
-def test_메시지에_서식_예시를_담는다():
-    issues = check_required(내역서_스키마(), {})
-    행7 = [i for i in issues if i.where == cell_id(0, 7, COL)][0]
-    assert "5,000" in 행7.message
-
-
-def test_메시지를_한_줄로_편다():
-    """항목명과 자리표시자에는 줄바꿈이 섞여 있다 (`[세부과제명]\\nActivity명`)."""
-    schema = FormSchema(
-        form_id="5-05",
-        title="교통비 지급 내역서",
-        slots=[슬롯(0, label="[세부과제명]\nActivity명", ph="[20○○ AID]\n○○○과")],
-    )
-    message = check_required(schema, {})[0].message
-
-    assert "\n" not in message
-    assert "[세부과제명] Activity명" in message
-
-
-# ---------------------------------------------------------------- 날짜
-
-#: 날짜 칸 하나짜리 스키마. 자리표시자가 날짜 칸인지 가르는 기준이 된다.
-def 날짜_스키마(ph: str = "2000.00.00", label: str = "일시") -> FormSchema:
-    return FormSchema(
-        form_id="5-05",
-        title="교통비 지급 내역서",
-        slots=[슬롯(2, label=label, ph=ph)],
-    )
-
-
-def 날짜_값(v: str) -> dict[str, str]:
-    return 값({2: v})
+@pytest.mark.parametrize("text", ["", "해당없음", "원"])
+def test_금액이_아니면_None(text):
+    assert parse_amount(text) is None
 
 
 def test_날짜_뽑기():
-    assert find_dates("2026.03.15") == [date(2026, 3, 15)]
-    assert find_dates("2026-03-15") == [date(2026, 3, 15)]
-    assert find_dates("2026년 3월 15일") == [date(2026, 3, 15)]
-    assert find_dates("2026.03.15 ~ 2026.03.20") == [date(2026, 3, 15), date(2026, 3, 20)]
+    assert find_dates("2026.10.12 ~ 2026-10-14") == [date(2026, 10, 12), date(2026, 10, 14)]
+    assert find_dates("2026년 3월 1일") == [date(2026, 3, 1)]
 
 
 def test_달력에_없는_날은_None():
     assert find_dates("2026.02.30") == [None]
-    assert find_dates("날짜 없음") == []
 
 
-def test_시각의_물결은_기간이_아니다():
-    """`13:00~17:00` 의 물결은 시각을 나눈다. 날짜는 하나뿐이다."""
-    assert find_dates("2026.5.2.(목) 13:00~17:00") == [date(2026, 5, 2)]
-    assert check_dates(날짜_스키마("2024.5.2.(목) 13:00~17:00"), 날짜_값("2026.5.2.(목) 13:00~17:00")) == []
+# ------------------------------------------------------------------ 문서 전체
+def test_다_맞으면_아무것도_안_나온다():
+    assert validate(교통비(), 교통비_입력()) == []
 
 
-def test_날짜가_맞으면_통과():
-    assert check_dates(날짜_스키마(), 날짜_값("2026.03.15")) == []
+def test_validate_는_세_규칙을_함께_돌린다():
+    data = 교통비_입력(total="99,000")
+    data.cells["t0.r1.c2"] = ""
+    data.cells["t0.r2.c5"] = "2026.02.30"
+    assert sorted(i.code for i in validate(교통비(), data)) == [
+        AMOUNT_TOTAL_MISMATCH, DATE_INVALID, REQUIRED_EMPTY,
+    ]  # fmt: skip
 
 
-def test_없는_날짜를_잡는다():
-    issues = check_dates(날짜_스키마(), 날짜_값("2026.02.30"))
-
-    assert len(issues) == 1
-    assert issues[0].code == "DATE_INVALID"
-    assert issues[0].where == cell_id(0, 2, COL)
-
-
-def test_날짜로_못_읽으면_잡는다():
-    issues = check_dates(날짜_스키마(), 날짜_값("다음 주 화요일"))
-
-    assert len(issues) == 1
-    assert issues[0].code == "DATE_INVALID"
-    assert "다음 주 화요일" in issues[0].message
+# ------------------------------------------------------------------ 필수 누락
+def test_자리표시자_칸이_비면_잡는다():
+    data = 교통비_입력()
+    del data.cells["t0.r1.c2"]
+    [issue] = validate(교통비(), data)
+    assert (issue.code, issue.severity, issue.where) == (REQUIRED_EMPTY, "error", "t0.r1.c2")
+    assert issue.location.label == "학과/부서명"
+    assert (issue.location.table, issue.location.row, issue.location.col) == (0, 1, 2)
+    assert issue.action
 
 
-def test_기간이_거꾸로면_잡는다():
-    issues = check_dates(날짜_스키마("0000.00.00 ~ 0000.00.00", "사업기간"), 날짜_값("2026.03.20 ~ 2026.03.15"))
-
-    assert len(issues) == 1
-    assert issues[0].code == "DATE_ORDER"
-    assert "2026.03.20" in issues[0].message
+def test_공백만_있으면_비어_있는_것으로_본다():
+    data = 교통비_입력()
+    data.cells["t0.r1.c2"] = "  \n "
+    assert codes(validate(교통비(), data)) == [(REQUIRED_EMPTY, "t0.r1.c2")]
 
 
-def test_같은_날짜_기간은_통과():
-    schema = 날짜_스키마("0000.00.00 ~ 0000.00.00", "사업기간")
-    assert check_dates(schema, 날짜_값("2026.03.15 ~ 2026.03.15")) == []
+def test_메시지에_서식_예시를_담는다():
+    data = 교통비_입력()
+    del data.cells["t0.r1.c2"]
+    assert "○○○○○과" in validate(교통비(), data)[0].message
 
 
-def test_날짜_칸이_아니면_안_본다():
-    """`○○○○처-000000 2000.00.00` 은 문서번호가 붙어 있어 날짜 칸이 아니다."""
-    schema = 날짜_스키마("○○○○처-000000 2000.00.00", "시행")
-    assert check_dates(schema, 날짜_값("아무 값")) == []
+def test_항목명만_보고_잡은_빈_칸은_필수가_아니다():
+    """첨부 확인란처럼 안 채우는 게 정상인 칸이 섞인다 (오탐 사례)."""
+    assert "t0.r3.c2" not in [i.where for i in validate(교통비(), 교통비_입력())]
 
 
-def test_빈_날짜_칸은_넘어간다():
-    """빈 칸은 '필수 누락' 규칙이 볼 몫이다."""
-    assert check_dates(날짜_스키마(), 날짜_값("  ")) == []
-
-
-# ---------------------------------------------------------------- 누름틀
-
-#: 기안문 누름틀. 이름과 자리표시자는 실제 서식(AID 1-01~10)에서 가져왔다.
-기안문_누름틀 = [
-    FieldSpec(name="docnumber", type="CLICK_HERE", placeholder="○○○○처-000000"),
-    FieldSpec(name="enforcedate", type="CLICK_HERE", placeholder="2000.00.00"),
-    FieldSpec(name="telephone", type="CLICK_HERE", placeholder="031-441-0000"),
-    FieldSpec(name="address", type="CLICK_HERE", placeholder="경기도 안양시 만안구 양화로 37번길 34"),
-    FieldSpec(name="publication", type="CLICK_HERE", placeholder="공개"),
-    FieldSpec(name="apb4_date", type="CLICK_HERE", placeholder="00/00"),
-    FieldSpec(name="apb4_sign", type="CLICK_HERE", placeholder="○○○"),
-    FieldSpec(name="", type="FORMULA", placeholder="3,080,000"),
-]
-
-
-def 기안문_스키마() -> FormSchema:
-    return FormSchema(form_id="1-01~10", title="일반기안문", fields=list(기안문_누름틀))
-
-
-def test_수식과_결재란은_채울_누름틀이_아니다():
-    """이름 없는 FORMULA 는 한글이 계산하고, apbN_* 는 결재선이 채운다."""
-    names = [name for name, _ in fillable_fields(기안문_스키마())]
-
-    assert "docnumber" in names
-    assert "" not in names
-    assert not [n for n in names if n.startswith("apb")]
-
-
-def test_누름틀이_비면_잡는다():
-    issues = check_required(기안문_스키마(), {}, {})
-    걸린 = {i.where for i in issues}
-
-    assert "docnumber" in 걸린
-    assert "enforcedate" in 걸린
-    assert "telephone" in 걸린
-
-
-def test_이미_값이_박힌_누름틀은_필수가_아니다():
-    """주소·공개여부는 자리표시자가 아니라 실제 값이라 채울 곳이 아니다."""
-    걸린 = {i.where for i in check_required(기안문_스키마(), {}, {})}
-
-    assert "address" not in 걸린
-    assert "publication" not in 걸린
+def test_반복_영역_안의_칸은_필수가_아니다():
+    """명단은 수용 행을 다 채우지 않는 게 정상이다 (오탐 사례)."""
+    data = 교통비_입력()
+    data.rows["t0.r7-16"] = [{0: "1", 11: "5,000"}]  # 성명을 비웠고 9행은 아예 없다
+    data.cells["t0.r17.c11"] = "5,000"
+    assert validate(교통비(), data) == []
 
 
 def test_결재란은_비어도_안_잡는다():
-    걸린 = {i.where for i in check_required(기안문_스키마(), {}, {})}
+    assert "t0.r0.c9" not in [i.where for i in validate(교통비(), FormInput())]
 
-    assert "apb4_date" not in 걸린
-    assert "apb4_sign" not in 걸린
+
+# ------------------------------------------------------------------ 누름틀
+def 기안문_입력(**over: str) -> FormInput:
+    return FormInput(fields={"docnumber": "교육처-123", "enforcedate": "2026.10.12", **over})
 
 
 def test_누름틀을_채우면_통과():
-    fields = {"docnumber": "교무처-001234", "enforcedate": "2026.03.15", "telephone": "031-441-1234"}
-    assert check_required(기안문_스키마(), {}, fields) == []
+    assert validate(기안문(), 기안문_입력()) == []
+
+
+def test_누름틀이_비면_잡는다():
+    assert codes(validate(기안문(), 기안문_입력(docnumber=""))) == [
+        (REQUIRED_EMPTY, "docnumber")
+    ]
+
+
+def test_이미_값이_박힌_누름틀은_필수가_아니다():
+    """주소·공개여부는 서식에 이미 실제 값이 들어 있다 (오탐 사례)."""
+    wheres = [i.where for i in validate(기안문(), FormInput())]
+    assert "address" not in wheres and "publication" not in wheres
+
+
+def test_결재선_누름틀은_비어도_날짜가_틀려도_안_잡는다():
+    data = 기안문_입력(apb4_date="13/45")
+    assert validate(기안문(), data) == []
 
 
 def test_누름틀도_날짜를_본다():
-    """`enforcedate` 는 자리표시자가 `2000.00.00` 이라 날짜 칸이다."""
-    issues = check_dates(기안문_스키마(), {}, {"enforcedate": "2026.02.30"})
-
-    assert len(issues) == 1
-    assert issues[0].code == "DATE_INVALID"
-    assert issues[0].where == "enforcedate"
+    assert codes(validate(기안문(), 기안문_입력(enforcedate="2026.13.01"))) == [
+        (DATE_INVALID, "enforcedate")
+    ]
 
 
-def test_누름틀_없이도_동작한다():
-    """표만 있는 서식이 절반 가까이다. fields 를 안 넘겨도 돌아야 한다."""
-    assert validate(내역서_스키마(), 다_채운_값()) == []
+# ------------------------------------------------------------------ 날짜
+def test_없는_날짜를_잡는다():
+    data = 교통비_입력()
+    data.cells["t0.r2.c5"] = "2026.02.30"
+    [issue] = validate(교통비(), data)
+    assert issue.code == DATE_INVALID and "2026.02.30" in issue.message
 
 
-# ---------------------------------------------------------------- 통합
+def test_날짜로_못_읽으면_잡는다():
+    data = 교통비_입력()
+    data.cells["t0.r2.c5"] = "다음 주 월요일"
+    assert codes(validate(교통비(), data)) == [(DATE_INVALID, "t0.r2.c5")]
 
 
-def test_validate_는_두_규칙을_함께_돌린다():
-    values = 값({r: "5,000" for r in range(7, 16)} | {TOTAL_ROW: "50,000"})  # 16행 누락
-    codes = {i.code for i in validate(내역서_스키마(), values)}
+def test_기간이_거꾸로면_잡는다():
+    data = 교통비_입력()
+    data.cells["t0.r2.c5"] = "2026.10.14 ~ 2026.10.12"
+    assert codes(validate(교통비(), data)) == [(DATE_ORDER, "t0.r2.c5")]
 
-    assert codes == {"REQUIRED_EMPTY", "AMOUNT_TOTAL_MISMATCH"}
+
+def test_같은_날짜_기간은_통과():
+    data = 교통비_입력()
+    data.cells["t0.r2.c5"] = "2026.10.12 ~ 2026.10.12"
+    assert validate(교통비(), data) == []
 
 
-def test_다_맞으면_아무것도_안_나온다():
-    assert validate(내역서_스키마(), 다_채운_값()) == []
+def test_시각의_물결은_기간이_아니다():
+    """`13:00~17:00` 은 시각이다. 날짜가 하나뿐이라 순서를 볼 게 없다 (오탐 사례)."""
+    data = 교통비_입력()
+    data.cells["t0.r2.c5"] = "2026.10.12(월) 17:00~13:00"
+    assert validate(교통비(), data) == []
+
+
+def test_날짜_칸이_아니면_안_본다():
+    data = 교통비_입력()
+    data.cells["t0.r1.c2"] = "2026.02.30 신설 학과"
+    assert validate(교통비(), data) == []
+
+
+def test_반복영역_칸도_날짜를_본다():
+    data = 교통비_입력()
+    data.rows["t0.r7-16"][1][4] = "2026.02.30"
+    [issue] = validate(교통비(), data)
+    assert (issue.code, issue.where) == (DATE_INVALID, "t0.r7-16[1].c4")
+    assert (issue.location.kind, issue.location.row, issue.location.index) == ("repeat", 8, 1)
+
+
+# ------------------------------------------------------------------ 금액 합계
+def test_합계가_틀리면_잡는다():
+    [issue] = validate(교통비(), 교통비_입력(total="20,000"))
+    assert (issue.code, issue.where) == (AMOUNT_TOTAL_MISMATCH, "t0.r17.c11")
+    assert "15,000원" in issue.message and "20,000원" in issue.message
+    assert "15,000원" in issue.action
+
+
+def test_예시_행도_합계에_포함한다():
+    """옛 엔진에서는 예시 행이 반복영역 밖이라 한 줄 모자라게 더해 오탐이 났다."""
+    data = 교통비_입력(total="10,000", amounts=("7,000", "3,000"))
+    assert validate(교통비(), data) == []
+
+
+def test_일부만_채워도_채운_것끼리_검사한다():
+    data = 교통비_입력(total="5,000", amounts=("5,000", "", "해당없음"))
+    assert validate(교통비(), data) == []
+
+
+def test_합계가_비어_있으면_넘어간다():
+    """빈 합계는 '필수 누락' 이 잡는다. 같은 칸에 두 번 경고하지 않는다."""
+    issues = validate(교통비(), 교통비_입력(total=""))
+    assert codes(issues) == [(REQUIRED_EMPTY, "t0.r17.c11")]
+
+
+def test_데이터가_하나도_없으면_넘어간다():
+    data = 교통비_입력()
+    data.rows = {}
+    assert check_amount_totals(교통비(), data) == []
+
+
+def test_소계와_합계는_구간을_나눠_센다():
+    """정산서처럼 항목이 고정된 표: 소계(4행) 다음 행부터 다시 센다. 소계를 두 번 더하지 않는다."""
+    cells = {f"t0.r{r}.c2": "1,000" for r in (1, 2, 3)} | {"t0.r4.c2": "3,000"}
+    cells |= {f"t0.r{r}.c2": "2,000" for r in (5, 6, 7)} | {"t0.r8.c2": "6,000"}
+    assert validate(정산서(), FormInput(cells=cells)) == []
+    cells["t0.r8.c2"] = "9,000"  # 소계까지 더한 값을 적으면 틀린 것이다
+    assert codes(validate(정산서(), FormInput(cells=cells))) == [
+        (AMOUNT_TOTAL_MISMATCH, "t0.r8.c2")
+    ]
+
+
+def test_연번_열의_합계_칸은_연번을_더하지_않는다():
+    """학생모니터링 활동비 지급 내역서: `합계 : 10,500원 × 00시간` 이 연번 열에 있다 (오탐 사례)."""
+    schema = 교통비()
+    schema.slots.append(SlotSpec(table=0, row=17, col=0, label="합계", placeholder="00시간"))
+    data = 교통비_입력()
+    data.cells["t0.r17.c0"] = "합계 : 10,500원 × 30시간 = 315,000원"
+    assert validate(schema, data) == []
+
+
+def test_합계_위의_날짜_칸은_더하지_않는다():
+    """연구수당 기여도 평가서: 같은 열에 날짜 칸이 있어 2026 이 금액으로 더해졌다 (오탐 사례)."""
+    schema = 정산서()
+    schema.slots.append(SlotSpec(table=0, row=0, col=2, label="작성일", input_type="date",
+                                 placeholder="2000.00.00"))  # fmt: skip
+    cells = {f"t0.r{r}.c2": "1,000" for r in (1, 2, 3)} | {"t0.r4.c2": "3,000"}
+    cells |= {"t0.r0.c2": "2026.10.12", "t0.r8.c2": "0"}
+    assert validate(schema, FormInput(cells=cells)) == []
+
+
+def test_금액이_아닌_글자는_더하지_않는다():
+    cells = {"t0.r1.c2": "1,000", "t0.r2.c2": "약 2,000원 예상", "t0.r3.c2": "1,000원"}
+    cells |= {"t0.r4.c2": "2,000", "t0.r8.c2": "0"}
+    assert validate(정산서(), FormInput(cells=cells)) == []
+
+
+def test_수식_합계는_우리가_계산하므로_보지_않는다():
+    schema = 교통비()
+    schema.slots = [s for s in schema.slots if s.label != "합계"]  # 합계 칸이 수식이면 슬롯이 없다
+    assert check_amount_totals(schema, 교통비_입력(total="1")) == []
+
+
+# ------------------------------------------------------------------ 변형
+def test_고른_변형의_칸만_본다():
+    schema = FormSchema(
+        title="기안문",
+        tables=tables(2),
+        variants=[Variant(index=0, label="1-01호", first_table=0, last_table=0),
+                  Variant(index=1, label="1-02호", first_table=1, last_table=1)],
+        slots=[SlotSpec(table=0, row=0, col=0, label="제목", placeholder="○○○"),
+               SlotSpec(table=1, row=0, col=0, label="제목", placeholder="○○○")],
+    )  # fmt: skip
+    assert codes(validate(schema, FormInput(variant=1))) == [(REQUIRED_EMPTY, "t1.r0.c0")]
+    assert len(validate(schema, FormInput())) == 2
+
+
+# ------------------------------------------------------------------ 설정
+def test_규칙을_끌_수_있다():
+    config = ValidationConfig(default=RuleConfig(disabled=frozenset({AMOUNT_TOTAL_MISMATCH})))
+    assert validate(교통비(), 교통비_입력(total="1"), config) == []
+
+
+def test_서식별로_예외를_줄_수_있다():
+    """다른 서식에는 영향이 없다."""
+    config = ValidationConfig(forms={"t/교통비.hwpx": RuleConfig(ignore=frozenset({"t0.r1.c2"}))})
+    data = 교통비_입력()
+    del data.cells["t0.r1.c2"]
+    assert validate(교통비(), data, config) == []
+    other = 교통비().model_copy(update={"template": "t/다른서식.hwpx"})
+    assert len(validate(other, data, config)) == 1
+
+
+def test_심각도를_바꿀_수_있다():
+    config = ValidationConfig(default=RuleConfig(severity={DATE_ORDER: "warning"}))
+    data = 교통비_입력()
+    data.cells["t0.r2.c5"] = "2026.10.14 ~ 2026.10.12"
+    assert [i.severity for i in validate(교통비(), data, config)] == ["warning"]
+
+
+def test_제외_규칙을_끄면_항목명만_있던_빈_칸도_필수다():
+    config = ValidationConfig(default=RuleConfig(exclusions=Exclusions(optional_empty=False)))
+    assert codes(validate(교통비(), 교통비_입력(), config)) == [(REQUIRED_EMPTY, "t0.r3.c2")]
+
+
+# ------------------------------------------------------------------ 칸 단위 호출
+def test_칸_하나를_바로_점검한다():
+    assert codes(check_cell(교통비(), "t0.r1.c2", "")) == [(REQUIRED_EMPTY, "t0.r1.c2")]
+    assert check_cell(교통비(), "t0.r1.c2", "전자공학과") == []
+    assert codes(check_cell(교통비(), "t0.r2.c5", "2026.13.01")) == [(DATE_INVALID, "t0.r2.c5")]
+
+
+def test_칸_단위와_문서_전체가_같은_판정을_낸다():
+    data = 교통비_입력()
+    data.cells["t0.r2.c5"] = "2026.10.14 ~ 2026.10.12"
+    assert check_cell(교통비(), "t0.r2.c5", data.cells["t0.r2.c5"]) == validate(교통비(), data)
+
+
+def test_누름틀과_반복영역_칸도_바로_점검한다():
+    assert codes(check_field(기안문(), "enforcedate", "2026.02.30")) == [
+        (DATE_INVALID, "enforcedate")
+    ]
+    assert check_field(기안문(), "apb4_date", "") == []
+    assert codes(check_repeat_cell(교통비(), "t0.r7-16", 2, 4, "2026.02.30")) == [
+        (DATE_INVALID, "t0.r7-16[2].c4")
+    ]
+
+
+def test_없는_자리를_가리키면_KeyError():
+    with pytest.raises(KeyError):
+        check_cell(교통비(), "t9.r9.c9", "")
+    with pytest.raises(KeyError):
+        check_field(기안문(), "nope", "")
+    with pytest.raises(KeyError):
+        check_repeat_cell(교통비(), "t0.r7-16", 0, 99, "")
+
+
+# ------------------------------------------------------------------ 적용 규칙
+def test_서식에_적용되는_규칙을_알려준다():
+    assert applicable_rules(교통비()) == {
+        REQUIRED_EMPTY, DATE_INVALID, DATE_ORDER, AMOUNT_TOTAL_MISMATCH,
+    }  # fmt: skip
+    assert applicable_rules(정산서()) == {REQUIRED_EMPTY, AMOUNT_TOTAL_MISMATCH}

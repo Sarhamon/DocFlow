@@ -3,8 +3,9 @@
 ysu_forms/
 
 out/
+# 서비스 데이터: DB 와 서식 버전별 템플릿·문서 산출물 (내부 서식 파생물)
+data/
 .venv/
 __pycache__/
 *.pyc
-
 *.xlsx
