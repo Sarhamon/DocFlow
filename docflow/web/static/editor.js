@@ -411,9 +411,72 @@
       // 서식 행 수 초과 경고 (IN_10)
       n > rep.capacity ? h("span", { class: "badge warning" }, `서식 행 수를 넘었습니다. 문서를 만들 때 ${n - rep.capacity}행을 늘립니다`) : null,
       rep.has_example ? h("span", {}, "서식의 예시 행(홍길동 등)은 첫 행 값으로 바뀝니다") : null,
-      h("span", {}, "엑셀에서 여러 칸을 복사해 붙여 넣을 수 있습니다"));
+      h("span", {}, "엑셀에서 여러 칸을 복사해 붙여 넣을 수 있습니다"),
+      // 사람 명단이면 입금계좌 확인서로 채운다 (F2-d)
+      !readonly() && rep.columns.some((c) => c.role === "input" && PERSON_RE.test(c.label))
+        ? h("button", { type: "button", class: "small", onclick: () => pickRoster(rep) }, "입금계좌 확인서로 채우기") : null);
     return h("div", {}, tools, sums(rep));
   }
+
+  // ---------------------------------------------------------------- 명단 가져오기 (F2-d)
+  const PERSON_RE = /성명|예금주|이름|계좌|학번/;
+  let rosterRep = null;
+  let rosterRows = [];
+
+  function pickRoster(rep) {
+    rosterRep = rep;
+    const input = $("roster-file");
+    input.value = "";
+    input.click();
+  }
+
+  $("roster-file").addEventListener("change", async (ev) => {
+    const files = [...ev.target.files];
+    if (!files.length || !rosterRep) return;
+    const body = new FormData();
+    for (const f of files) body.append("files", f);
+    DF.toast(`확인서 ${files.length}개를 읽는 중…`);
+    try {
+      const out = await DF.upload(`/api/documents/${docId}/roster?repeat=${encodeURIComponent(rosterRep.id)}`, body);
+      showRoster(out);
+    } catch (e) { DF.fail(e); }
+  });
+
+  function showRoster(out) {
+    rosterRows = out.rows;
+    const ok = out.files.filter((f) => !f.error).length;
+    $("roster-files").replaceChildren(
+      h("p", { class: "small" }, `파일 ${out.files.length}개 중 ${ok}개를 읽었고 ${out.rows.length}명을 찾았습니다.`,
+        out.duplicates ? ` 같은 사람(성명·계좌가 같음) ${out.duplicates}명은 한 번만 넣습니다.` : ""),
+      ...out.files.filter((f) => f.error).map((f) => h("div", { class: "msg error small" }, `${f.name}: ${f.error}`)),
+      ...out.files.filter((f) => !f.error && !f.people).map((f) => h("div", { class: "msg warn small" }, `${f.name}: 명단 표는 있지만 적힌 사람이 없습니다 (예시 줄만 있음).`)));
+    const cols = out.mapping.filter((m) => m.concept);
+    const missing = out.mapping.filter((m) => m.concept && !m.found).map((m) => m.label);
+    $("roster-map").replaceChildren("채울 열: ", cols.map((m) => m.label).join(", ") || "(없음)",
+      missing.length ? h("span", { class: "muted" }, ` — 확인서에 없어 비워 둘 열: ${missing.join(", ")}`) : "");
+    $("roster-rows").replaceChildren(
+      h("thead", {}, h("tr", {}, ...cols.map((m) => h("th", {}, m.label)))),
+      h("tbody", {}, ...out.rows.map((r) => h("tr", {}, ...cols.map((m) => h("td", {}, r[String(m.col)] || ""))))));
+    $("roster-append").disabled = $("roster-replace").disabled = !out.rows.length;
+    $("roster-dialog").showModal();
+  }
+
+  function applyRoster(replace) {
+    const rep = rosterRep;
+    let lines = raw.rows[rep.id] || [];
+    // 입력이 없는 행(미리 적힌 연번·금액만 있는 행)은 덮어쓴다
+    const filled = (line, i) => Object.entries(line).some(([k, v]) => String(v).trim() && newRow(rep, i)[k] !== v);
+    lines = replace ? [] : lines.filter(filled);
+    for (const row of rosterRows) lines.push({ ...newRow(rep, lines.length), ...row });
+    raw.rows[rep.id] = lines;
+    $("roster-dialog").close();
+    redraw(); changed(); scheduleCheck();
+    DF.toast(`${rosterRows.length}명을 넣었습니다. 학번 등 확인서에 없는 칸을 채우세요.`);
+  }
+  $("roster-append").addEventListener("click", () => applyRoster(false));
+  $("roster-replace").addEventListener("click", () => {
+    if (confirm("지금 명단을 지우고 확인서의 명단으로 바꿀까요?")) applyRoster(true);
+  });
 
   function addRow(rep) {
     const lines = raw.rows[rep.id];
@@ -604,6 +667,29 @@
     }
   }
 
+  // ---------------------------------------------------------------- 연결 문서 (VA_11)
+  async function loadLinks() {
+    const links = await api("GET", `/api/documents/${docId}/links`);
+    $("links-card").classList.toggle("hidden", !links.length);
+    $("links").replaceChildren(...links.map((l) => {
+      const other = `${l.other_form.form_no} ${l.other_form.title}`;
+      const sel = h("select", { "aria-label": `${l.name} 연결 문서`, disabled: readonly(), onchange: async (ev) => {
+        try {
+          const id = ev.target.value ? Number(ev.target.value) : null;
+          await api("PUT", `/api/documents/${docId}/links/${l.rule_id}`, { document_id: id });
+          DF.toast(id ? "문서를 이었습니다." : "연결을 끊었습니다.");
+          scheduleCheck();
+        } catch (e) { DF.fail(e); loadLinks().catch(DF.fail); }
+      } },
+      h("option", { value: "" }, "(잇지 않음)"),
+      ...l.candidates.map((d) => h("option", { value: d.id, selected: l.linked && l.linked.id === d.id },
+        `${d.title} · ${DF.STATUS[d.status] || d.status} · ${DF.fmtTime(d.updated_at)}`)));
+      return h("div", { style: "margin-bottom:10px" },
+        h("div", { class: "small" }, h("b", {}, l.name), ` — ${other}`),
+        l.candidates.length ? sel : h("div", { class: "muted small" }, `내 문서함에 ${other} 문서가 없습니다.`));
+    }));
+  }
+
   // ---------------------------------------------------------------- 시작
   async function load() {
     const [d, f] = await Promise.all([api("GET", `/api/documents/${docId}`), api("GET", `/api/documents/${docId}/form`)]);
@@ -623,6 +709,7 @@
     redraw();
     setSaveState(`저장됨 ${DF.fmtTime(doc.updated_at).slice(11)}`);
     if (!readonly()) check();
+    loadLinks().catch(DF.fail);
   }
 
   $("title").addEventListener("change", async (ev) => {

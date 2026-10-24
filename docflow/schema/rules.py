@@ -104,6 +104,29 @@ def infer_input_type(text: str, label: str = "") -> str:
 
 # ---------------------------------------------------------------- 결재란
 
+#: 열의 뜻 -> 머리줄에서 찾는 말. **위에서부터** 본다: `교통비 입금계좌 입금액(원)` 은 계좌보다
+#: 입금액이 먼저, `교통비 입금계좌 은행명` 은 은행이 먼저 걸려야 한다.
+COLUMN_CONCEPTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("rrn", ("주민등록번호", "주민번호")),
+    ("student_id", ("학번",)),
+    ("bank", ("은행",)),
+    ("amount", ("입금액", "지급액", "금액")),
+    ("account", ("계좌번호", "계좌")),
+    ("name", ("성명", "예금주", "이름", "강사명", "전문가명")),
+    ("dept", ("학과", "소속")),
+    ("grade", ("학년",)),
+    ("address", ("주소",)),
+    ("phone", ("연락처", "전화", "휴대폰")),
+)
+def column_concept(label: str) -> str | None:
+    """열(항목) 이름의 뜻. 모르면 None (연번·서명·비고 등). 명단 가져오기와 형식 점검이 쓴다."""
+    text = "".join(label.split())
+    for name, words in COLUMN_CONCEPTS:
+        if any(w in text for w in words):
+            return name
+    return None
+
+
 #: 결재란 칸의 직위. `혁신지원사업담당2`, `PM 과장`, `산학협력단계장` 처럼 앞에 소속이 붙는다.
 _APPROVAL_TITLE_RE = re.compile(
     r"^.{0,15}(?:총장|처장|단장|과장|계장|팀장|실장|원장|부장|센터장|담당\d*)$|^(?:결재|전결|대결|협조)$"

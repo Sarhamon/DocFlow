@@ -16,14 +16,16 @@ import pytest
 
 from docflow.config import get_settings
 from docflow.schema.model import FormSchema
-from docflow.schema.rules import is_total_text
+from docflow.schema.rules import column_concept, is_total_text
 from docflow.validate import (
+    ACCOUNT_INVALID,
     AMOUNT_INVALID,
     AMOUNT_TOTAL_MISMATCH,
     DATE_INVALID,
     DATE_ORDER,
     REQUIRED_EMPTY,
     ROW_DUPLICATE,
+    RRN_INVALID,
     FormInput,
     applicable_rules,
     validate,
@@ -43,6 +45,10 @@ EXPECTED_APPLICABLE = {
     DATE_ORDER: 107,
     AMOUNT_INVALID: 102,
     ROW_DUPLICATE: 54,
+    # 2026-10-24: 외국인등록번호·국적도 받는 칸 3개는 주민등록번호 규칙에서 뺀다.
+    # 예금주 열이 성명과 따로 있는 서식은 없어 HOLDER_MISMATCH 는 0 이다
+    ACCOUNT_INVALID: 23,
+    RRN_INVALID: 12,
 }
 
 #: 입력 유형별 올바른 값
@@ -64,6 +70,12 @@ def schemas() -> dict[str, FormSchema]:
     return {str(f.relative_to(settings.templates)): extract_file(f, settings) for f in files}
 
 
+def identity_value(label: str, input_type: str) -> str:
+    """계좌번호·주민등록번호 칸에는 그 모양의 값을, 나머지는 유형대로."""
+    kind = column_concept(label) if input_type == "text" else None
+    return {"account": "123-456-789012", "rrn": "900101-1234567"}.get(kind, VALID[input_type])
+
+
 def valid_input(schema: FormSchema) -> FormInput:
     """모든 입력칸을 올바르게 채운 입력.
 
@@ -78,7 +90,7 @@ def valid_input(schema: FormSchema) -> FormInput:
     inputs = [s for s in schema.slots if s.role == "input"]
     totals = [s for s in inputs if is_total_text(s.label)]
     for s in inputs:
-        data.cells[s.id] = VALID[s.input_type]
+        data.cells[s.id] = identity_value(s.label, s.input_type)
     total_rows = {(r.table, r.total_row): r for r in schema.repeats if r.total_row is not None}
     summed_cols = {
         (r.id, s.col) for s in totals if (r := total_rows.get((s.table, s.row))) is not None
@@ -90,7 +102,7 @@ def valid_input(schema: FormSchema) -> FormInput:
                 if (rep.id, c.col) in summed_cols and c.input_type not in NOT_AMOUNT
                 else f"20260{i:02d}"  # 명단의 학번은 사람마다 다르다
                 if "학번" in c.label
-                else VALID[c.input_type]
+                else identity_value(c.label, c.input_type)
                 for c in rep.columns
                 if c.role == "input"
             }

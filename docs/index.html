@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="서식 기반 문서 자동 생성·검증 시스템 DocFlow 의 마일스톤별 개발 진행 현황.">
 <meta property="og:title" content="DocFlow 개발 진행 현황">
-<meta property="og:description" content="마일스톤 9/13 완료 (진행도 67%). 발급한 계정으로 로그인해 브라우저에서 문서를 만든다. 다음은 프롬프트로 서식을 채우는 M10.">
+<meta property="og:description" content="마일스톤 11/13 완료 (진행도 83%). 관리자 페이지·운영 현황, 개인정보 암호화, 입금계좌 확인서 명단 가져오기까지. 남은 것은 LLM 과 클라우드 이전.">
 <meta property="og:type" content="article">
 <title>DocFlow 개발 진행 현황</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -545,28 +545,30 @@
 
   <header class="masthead">
     <p class="eyebrow">DocFlow · 캡스톤 디자인 · 개발 진행 현황</p>
-    <h1>로그인하고, 브라우저에서 문서를 만든다</h1>
+    <h1>관리자 페이지와 운영 현황, 개인정보 암호화까지</h1>
     <p class="standfirst">
       서식 기반 문서 자동 생성·검증 시스템을 기능명세 기준으로 다시 짜고 있습니다.
       <strong>문서 엔진(M0~M4)</strong> 위에서 서식 3종이 입력 → 검증 → 생성 → HWP·PDF 까지
       한 번에 통과했고(M5), 같은 흐름을 <strong>웹 API</strong> 로 감싸(M6) 발급한 계정으로만 쓰게 했습니다(M7).
-      사용자 화면(M8)으로 브라우저에서 문서를 끝까지 만듭니다. 입력의 기본 방식을 <strong>프롬프트 → LLM 이 칸을 채움 → 확인</strong>으로
-      바꿔서, 다음은 관리자 페이지(M9)보다 LLM·입력 자동화(M10)를 먼저 합니다.
+      사용자 화면(M8)으로 브라우저에서 문서를 끝까지 만듭니다. 이어서 <strong>관리자 페이지(M9)</strong>와
+      <strong>운영 현황·문서 간 대조(M11)</strong>를 만들었고, LLM 을 쓰지 않는 M10 의 일 —
+      입금계좌 확인서로 명단 채우기, 주민등록번호 암호화, 계좌·주민번호 형식 경고 — 까지 마쳤습니다.
+      남은 것은 GPU 장비에서 할 <strong>LLM 부분</strong>과 클라우드 이전입니다.
     </p>
 
     <dl class="docstrip">
       <div><dt>문서번호</dt><dd>DocFlow-2026-1024</dd></div>
       <div><dt>기준일</dt><dd>2026.10.24</dd></div>
-      <div><dt>마일스톤</dt><dd>9 / 13 완료</dd></div>
-      <div><dt>다음</dt><dd>M10 LLM·입력 자동화</dd></div>
+      <div><dt>마일스톤</dt><dd>11 / 13 완료</dd></div>
+      <div><dt>다음</dt><dd>M10 LLM (GPU 장비)</dd></div>
     </dl>
   </header>
 
   <!-- 전체 진행도 -->
-  <div class="progress" role="img" aria-label="전체 진행도 67퍼센트. M0부터 M8까지 완료, 다음은 M10, M9와 M11, M12는 미착수">
+  <div class="progress" role="img" aria-label="전체 진행도 83퍼센트. M0부터 M9, M11 완료, M10은 LLM 부분 남음, M12 미착수">
     <div class="head">
-      <b>67%</b>
-      <span>마일스톤 규모(S=1, M=2, L=3)로 가중한 진행도 · 30점 중 20점</span>
+      <b>83%</b>
+      <span>마일스톤 규모(S=1, M=2, L=3)로 가중한 진행도 · 30점 중 25점</span>
     </div>
     <div class="segs">
       <i class="done" style="flex:1">M0</i>
@@ -578,12 +580,12 @@
       <i class="done" style="flex:3">M6</i>
       <i class="done" style="flex:2">M7</i>
       <i class="done" style="flex:3">M8</i>
+      <i class="done" style="flex:3">M9</i>
+      <i class="done" style="flex:2">M11</i>
       <i class="next" style="flex:3">M10</i>
-      <i style="flex:3">M9</i>
-      <i style="flex:2">M11</i>
       <i style="flex:2">M12</i>
     </div>
-    <p class="legend"><span class="l-done">완료</span><span class="l-next">다음</span><span>미착수 (M10 을 M9 보다 먼저)</span></p>
+    <p class="legend"><span class="l-done">완료</span><span class="l-next">진행 중</span><span>미착수</span></p>
   </div>
 
   <div class="figures" style="margin-top:28px">
@@ -591,7 +593,7 @@
     <div class="fig"><b>4,953</b><span>채울 표 칸 (슬롯)</span></div>
     <div class="fig"><b>280</b><span>명단·내역 반복영역</span></div>
     <div class="fig is-ok"><b>0</b><span>올바른 입력에서 나온 오탐</span></div>
-    <div class="fig"><b>516</b><span>자동 테스트 (기본 493 + 로컬 23)</span></div>
+    <div class="fig"><b>596</b><span>자동 테스트 (기본 573 + 로컬 23)</span></div>
   </div>
   <p class="figure-note">
     원본 <span class="num">.hwp</span> 193개 중 서식 목차·신구대조표 10건을 뺀 183개가 대상입니다.
@@ -671,20 +673,28 @@
           묶음 파일은 서식 번호마다 따로 목록에 올린다.
         </p>
       </li>
-      <li class="todo">
-        <span class="id">M9</span><span class="name">관리자 페이지<small>L</small></span><span class="pill open">미착수</span>
-        <p class="proof">새 서식을 올려 승인하면 사용자 화면에 나타난다. 입력폼·규칙·계정 관리.</p>
-      </li>
-      <li class="next">
-        <span class="id">M10</span><span class="name">LLM·입력 자동화 (EXAONE 3.5)<small>L</small></span><span class="pill next">다음 · M9 보다 먼저</span>
+      <li class="done">
+        <span class="id">M9</span><span class="name">관리자 페이지<small>L</small></span><span class="pill done">완료</span>
         <p class="proof">
-          프롬프트 하나로 서식 칸을 채우고(프롬프트에 없는 숫자는 경고), 학생이 낸 입금계좌 확인서 HWP 로 명단을 채운다.
-          명단·계좌·주민등록번호는 LLM 에 넘기지 않는다. 본문 초안과 체크리스트 기반 정성 판정.
+          HWP·HWPX 를 올리면 변환·추출해 <strong>비공개</strong>로 등록하고, 미리보기·점검용 문서로 확인한 뒤 공개한다.
+          개정(새 버전), 입력폼(항목 사용·이름·형식·필수·순서), 카테고리, 검증 규칙 켜기·끄기·서식별 예외,
+          계정 관리, 변환기·LLM 서버 상태. 관리자가 고친 값은 개정해도 유지된다.
         </p>
       </li>
-      <li class="todo">
-        <span class="id">M11</span><span class="name">문서 간 검증·운영 현황<small>M</small></span><span class="pill open">미착수</span>
-        <p class="proof">계획서–정산서 금액 대조, 통계·로그인 이력·감사 로그.</p>
+      <li class="next">
+        <span class="id">M10</span><span class="name">LLM·입력 자동화 (EXAONE 3.5)<small>L</small></span><span class="pill next">LLM 부분 남음</span>
+        <p class="proof">
+          LLM 을 쓰지 않는 일은 마쳤다: 학생이 낸 입금계좌 확인서 HWP 로 명단 채우기(머리줄 이름으로 열을 찾는다),
+          주민등록번호 암호화(입력값·이력·만든 파일), 계좌번호·주민등록번호·예금주 형식 경고.
+          남은 것은 GPU 장비에서 할 프롬프트 일괄 입력·본문 초안·정성 판정.
+        </p>
+      </li>
+      <li class="done">
+        <span class="id">M11</span><span class="name">문서 간 검증·운영 현황<small>M</small></span><span class="pill done">완료</span>
+        <p class="proof">
+          문서 현황(내용은 사유를 적고 열람), 오류 통계, 로그인 이력, 감사 로그. 관리자가 서식 쌍과 견줄 항목을 정하고
+          사용자가 문서를 이으면 계획서–정산서 금액을 대조해 경고한다(대상 서식 쌍은 아직 미정).
+        </p>
       </li>
       <li class="todo">
         <span class="id">M12</span><span class="name">클라우드 이전<small>M</small></span><span class="pill open">미착수</span>
@@ -704,14 +714,16 @@
     <div class="layers">
       <div><b>docflow/hwpx</b><span>HWPX 읽기·쓰기, 수식 계산</span><span class="pill done">M1</span></div>
       <div><b>docflow/schema</b><span>판정 규칙, 스키마 모델, 추출기</span><span class="pill done">M2</span></div>
-      <div><b>docflow/validate</b><span>규칙 4종, 칸 단위·문서 단위 호출, 규칙 설정</span><span class="pill done">M3</span></div>
+      <div><b>docflow/validate</b><span>규칙 9종(오류 4 + 경고 5), 칸 단위·문서 단위 호출, 규칙 설정</span><span class="pill done">M3</span></div>
       <div><b>docflow/convert</b><span>변환 작업 요청/결과 · 한컴 어댑터(자식 프로세스·시간 초과·재시도·정리)</span><span class="pill done">M4</span></div>
       <div><b>docflow/generate · pipeline</b><span>입력값 → HWPX 생성(결재란 비우기·반복 행 정리·변형 선택) · 검증 → 생성 → 변환 흐름</span><span class="pill done">M5</span></div>
       <div><b>docflow/service · web</b><span>서식 목록·버전, 문서·이력, 파일 저장소 · FastAPI</span><span class="pill done">M6</span></div>
       <div><b>docflow/service/auth</b><span>계정 발급, 로그인·세션, 잠금, 역할 분기</span><span class="pill done">M7</span></div>
       <div><b>docflow/web (화면)</b><span>서식 선택·미리보기, 입력·실시간 점검, 오류 이동, 내 문서함</span><span class="pill done">M8</span></div>
-      <div><b>LLM · 입력 자동화</b><span>프롬프트 일괄 입력, 명단 가져오기, 초안 생성, 정성 판정</span><span class="pill next">M10</span></div>
-      <div><b>관리자 화면</b><span>서식 등록·공개, 입력폼·규칙·계정 관리</span><span class="pill open">M9</span></div>
+      <div><b>docflow/web/admin_api</b><span>서식 등록·개정·공개, 입력폼, 카테고리, 검증 규칙, 시스템</span><span class="pill done">M9</span></div>
+      <div><b>docflow/web/admin_ops</b><span>문서 현황·열람(사유), 오류 통계, 로그인 이력, 감사 로그, 문서 간 대조</span><span class="pill done">M11</span></div>
+      <div><b>service/roster · crypto</b><span>입금계좌 확인서로 명단 채우기 · 입력값·파일 암호화(AES-256-GCM)</span><span class="pill done">M10</span></div>
+      <div><b>LLM</b><span>프롬프트 일괄 입력, 본문 초안, 정성 판정 (GPU 장비)</span><span class="pill open">M10</span></div>
     </div>
 
     <div class="flow" style="margin-top:18px"><b>forms/</b>       원본 .hwp 193        <em>[한컴 COM]</em>
@@ -766,6 +778,8 @@
       <dt>금액 합계</dt>  <dd class="track"><i style="width:26.8%"></i></dd> <dd>49 / 183</dd>
       <dt>금액 형식 (경고)</dt> <dd class="track"><i style="width:55.7%"></i></dd> <dd>102 / 183</dd>
       <dt>학번 중복 (경고)</dt> <dd class="track"><i style="width:29.5%"></i></dd> <dd>54 / 183</dd>
+      <dt>계좌번호 형식 (경고)</dt> <dd class="track"><i style="width:12.6%"></i></dd> <dd>23 / 183</dd>
+      <dt>주민등록번호 형식 (경고)</dt> <dd class="track"><i style="width:6.6%"></i></dd> <dd>12 / 183</dd>
     </dl>
     <p class="figure-note">
       금액 합계는 <strong>작성자가 적는 합계 칸</strong>만 셉니다. 수식 합계 305개는 우리가 다시 계산해 쓰므로 틀릴 수 없어
@@ -828,6 +842,15 @@
         <p>서로 다른 서식 5개를 묶은 <code>인건비 입금계좌 확인서 등</code>(누름틀 없음)이 <strong>한 서식으로 잡혔다</strong>. 누름틀 반복 대신 서식 머리의 번호 표시로 나눈다.
           지난 학년도 <code>[혁신 서식 7-01호]</code> 안에 잘못 적힌 <code>7-02호</code> 는 파일 이름 번호와 대조해 거른다.</p>
       </li>
+      <li>
+        <span class="file">M8 화면</span>
+        <p>화면의 시각이 모두 <strong>9시간 이르게</strong> 보였다. 서버는 UTC 로 저장하는데 화면이 그 값을 한국 시각으로 읽었다.</p>
+      </li>
+      <li>
+        <span class="file">M10 형식</span>
+        <p>계좌번호를 10~14자리로 잡자 실제 입력 예시의 9자리 계좌가 걸렸고, <code>주민등록번호 (외국인의 경우 … 국적)</code> 칸의
+          국적 글자도 걸렸다. 범위를 9~16자리로 넓히고 외국인 칸은 빼서 <strong>올바른 입력의 오탐 0</strong>을 지켰다.</p>
+      </li>
     </ul>
   </section>
 
@@ -879,21 +902,21 @@
         <p><code>[ AID 서식 1-03호 ] &lt;… 기안문 - 부서용&gt;</code> 같은 안내 줄이 산출물에 그대로 남습니다. 지울지 정합니다.</p>
       </div>
       <div class="gap">
-        <h4>주민등록번호 암호화 <span class="pill next">M10</span></h4>
+        <h4>암호 키 백업 <span class="pill next">운영</span></h4>
         <p>
-          입금계좌 확인서에는 주민등록번호가 있는데, 지금은 입력값이 DB 에 그대로 저장됩니다. 개인정보보호법상 암호화해야 하므로
-          명단 가져오기를 만들 때 같이 넣습니다(늦어도 클라우드 이전 전).
+          입력값·이력·만든 파일을 암호화했습니다(AES-256-GCM). 키(<code>secrets/data.key</code> 또는 환경변수)를 잃으면
+          문서를 되살릴 수 없으니 DB 와 따로 백업해야 합니다. 클라우드로 옮길 때는 KMS 로 바꿉니다.
         </p>
       </div>
       <div class="gap">
-        <h4>AID·혁신 인건비 서식 묶음 <span class="pill open">M10</span></h4>
-        <p>AID·혁신 4-01호는 입금계좌 확인서와 강의시간·전문가 활용시간 배당표가 한 파일에 있지만 서식 머리 번호가 없어 한 서식으로 둡니다. 명단 가져오기 때 다시 봅니다.</p>
+        <h4>문서 간 대조 서식 쌍 <span class="pill open">팀 결정</span></h4>
+        <p>대조하는 틀은 만들었지만 어느 서식의 어느 금액끼리 맞출지는 아직 정하지 않았습니다. 정해지면 관리자 화면에서 규칙으로 등록합니다.</p>
       </div>
       <div class="gap">
         <h4>스키마에 안 잡히는 예시 값 <span class="pill open">M9</span></h4>
         <p>
           자리표시자가 아닌 예시 값(<code>장소: 강남 코엑스</code>, <code>20OO.OO.OO</code>)은 입력칸으로 잡히지 않습니다.
-          지금은 칸 좌표로 덮어쓸 수 있고, 관리자 입력폼 관리에서 항목으로 승인하게 할 계획입니다.
+          지금은 칸 좌표로 덮어쓸 수 있습니다. 관리자 입력폼은 추출한 항목을 조정만 하므로, 새 항목으로 더하는 일은 남았습니다.
         </p>
       </div>
       <div class="gap">
@@ -907,8 +930,9 @@
         <h4>결정된 것 <span class="pill done">결정</span></h4>
         <p>
           입력은 프롬프트 → LLM 이 칸을 채움 → 확인. 명단·계좌는 입금계좌 확인서 HWP 를 올리거나 직접 입력하고 LLM 에 넘기지 않으며,
-          종이 명단은 OCR 하지 않습니다. 금액 형식(<code>AMOUNT_INVALID</code>)·학번 중복(<code>ROW_DUPLICATE</code>)은 경고로 넣었습니다.
-          로그인은 IAM 방식으로 도입했습니다(M7).
+          종이 명단은 OCR 하지 않습니다. 형식·중복·대조 규칙은 모두 경고로 넣었습니다(입력을 막지 않음).
+          로그인은 IAM 방식으로 도입했습니다(M7). 관리자는 남의 문서를 목록으로만 보고 내용은 사유를 적어 열람합니다.
+          GPU 장비가 없어 M9·M11 을 M10 의 LLM 부분보다 먼저 했습니다.
         </p>
       </div>
     </div>

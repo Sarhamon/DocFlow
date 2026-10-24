@@ -86,9 +86,10 @@ DF.fail = function (err) {
   console.error(err);
 };
 
+/** 서버 시각(UTC, 시간대 표시 없음)을 이 PC 의 시각으로. 시간대가 없으면 UTC 로 읽는다. */
 DF.fmtTime = function (iso) {
   if (!iso) return "";
-  const d = new Date(iso);
+  const d = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`);
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };

@@ -14,6 +14,9 @@
 | DATE_ORDER | 칸 안의 기간이 거꾸로가 아닌가 |
 | AMOUNT_INVALID | 금액 칸의 값이 금액으로 읽히는가 (경고) |
 | ROW_DUPLICATE | 명단의 학번이 겹치지 않는가 (경고) |
+| ACCOUNT_INVALID | 계좌번호가 숫자·하이픈 10~14자리인가 (경고) |
+| RRN_INVALID | 주민등록번호가 생년월일-성별자리-6자리 모양인가 (경고) |
+| HOLDER_MISMATCH | 명단의 예금주와 성명이 같은가 (경고) |
 
 호출 방식은 두 가지이고 같은 규칙을 쓴다.
 
@@ -30,7 +33,7 @@ from datetime import date
 from typing import Literal
 
 from docflow.schema.model import FieldSpec, FormSchema, RepeatColumn, RepeatSpec, SlotSpec
-from docflow.schema.rules import is_placeholder, is_total_text
+from docflow.schema.rules import column_concept, is_placeholder, is_total_text
 
 REQUIRED_EMPTY = "REQUIRED_EMPTY"
 AMOUNT_TOTAL_MISMATCH = "AMOUNT_TOTAL_MISMATCH"
@@ -38,8 +41,12 @@ DATE_INVALID = "DATE_INVALID"
 DATE_ORDER = "DATE_ORDER"
 AMOUNT_INVALID = "AMOUNT_INVALID"
 ROW_DUPLICATE = "ROW_DUPLICATE"
+ACCOUNT_INVALID = "ACCOUNT_INVALID"
+RRN_INVALID = "RRN_INVALID"
+HOLDER_MISMATCH = "HOLDER_MISMATCH"
 RULES = (
     REQUIRED_EMPTY, AMOUNT_TOTAL_MISMATCH, DATE_INVALID, DATE_ORDER, AMOUNT_INVALID, ROW_DUPLICATE,
+    ACCOUNT_INVALID, RRN_INVALID, HOLDER_MISMATCH,
 )  # fmt: skip
 #: 관리자 화면의 규칙 이름과 설명 (AD_15)
 RULE_INFO: dict[str, tuple[str, str]] = {
@@ -49,9 +56,15 @@ RULE_INFO: dict[str, tuple[str, str]] = {
     DATE_ORDER: ("날짜 순서", "칸 안의 기간이 거꾸로가 아닌가"),
     AMOUNT_INVALID: ("금액 형식", "금액 칸의 값이 금액으로 읽히는가 (경고)"),
     ROW_DUPLICATE: ("학번 중복", "명단에 같은 학번이 두 번 나오는가 (경고)"),
+    ACCOUNT_INVALID: ("계좌번호 형식", "계좌번호가 숫자·하이픈 10~14자리인가 (경고)"),
+    RRN_INVALID: ("주민등록번호 형식", "생년월일 6자리-성별 자리-6자리 모양인가 (경고)"),
+    HOLDER_MISMATCH: ("예금주·성명", "명단에서 예금주와 성명이 같은가 (경고)"),
 }
 #: 설정이 따로 주지 않을 때의 심각도. 형식·중복은 입력을 막지 않는 경고다 (명세 F3)
-DEFAULT_SEVERITY: dict[str, Severity] = {AMOUNT_INVALID: "warning", ROW_DUPLICATE: "warning"}
+DEFAULT_SEVERITY: dict[str, Severity] = {
+    code: "warning"
+    for code in (AMOUNT_INVALID, ROW_DUPLICATE, ACCOUNT_INVALID, RRN_INVALID, HOLDER_MISMATCH)
+}
 #: 중복을 보는 명단 열 (학번). 같은 이름은 동명이인이 있어 보지 않는다
 _DUPLICATE_COLUMN_RE = re.compile(r"학번")
 
@@ -353,7 +366,54 @@ def _amount(t: _Target, value: str) -> list[tuple[str, str, str]]:
     ]
 
 
-_CELL_RULES = (_required, _date, _amount)
+#: 계좌번호: 숫자와 하이픈(띄어 쓴 것 포함)만. 숫자는 9~16자리로 넉넉히 본다. 은행별 자릿수는
+#: 보지 않는다 (은행마다 계좌 종류가 여러 개라 표를 두면 오탐이 난다). 짧게 끊긴 번호·글자를 잡는다
+_ACCOUNT_RE = re.compile(r"^[\d\s-]+$")
+_ACCOUNT_DIGITS = range(9, 17)
+#: 주민등록번호: 생년월일 6자리 - 성별 자리(1~8) 6자리. 뒷자리를 가린 것(`1******`)도 받는다.
+#: 검증 숫자는 보지 않는다 (2020년 10월부터 새 번호는 그 규칙을 따르지 않는다)
+_RRN_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})\s*-?\s*[1-8][\d*]{6}$")
+
+
+def _identity(t: _Target, value: str) -> list[tuple[str, str, str]]:
+    """계좌번호·주민등록번호 칸의 모양. 송금 사고를 막으려고 본다 (경고)."""
+    raw = _one_line(value)
+    kind = _identity_kind(t)
+    if not raw or kind is None:
+        return []
+    if kind == "account":
+        digits = re.sub(r"\D", "", raw)
+        if _ACCOUNT_RE.match(raw) and len(digits) in _ACCOUNT_DIGITS:
+            return []
+        return [(ACCOUNT_INVALID, f"'{t.name}' 이(가) 계좌번호 모양이 아닙니다: {raw}",
+                 "숫자와 하이픈만으로 적었는지 통장 사본과 대조하세요.")]  # fmt: skip
+    m = _RRN_RE.match(raw)
+    if m and _real_birthday(*m.groups()):
+        return []
+    return [(RRN_INVALID, f"'{t.name}' 이(가) 주민등록번호 모양이 아닙니다.",
+             "생년월일 6자리-뒤 7자리(예: 900101-1234567)로 적었는지 확인하세요.")]  # fmt: skip
+
+
+def _identity_kind(t: _Target) -> str | None:
+    """계좌번호(account)·주민등록번호(rrn) 칸인가. 외국인등록번호·국적도 받는 칸은 보지 않는다."""
+    kind = column_concept(t.name)
+    if t.input_type != "text" or kind not in ("account", "rrn"):
+        return None
+    if kind == "rrn" and "외국인" in t.name:
+        return None
+    return kind
+
+
+def _real_birthday(yy: str, mm: str, dd: str) -> bool:
+    """달력에 있는 날인가. 세기를 몰라 윤년은 2000년대로 본다 (2월 29일을 받는다)."""
+    try:
+        date(2000 + int(yy), int(mm), int(dd))
+    except ValueError:
+        return False
+    return True
+
+
+_CELL_RULES = (_required, _date, _amount, _identity)
 
 
 def _severity(config: RuleConfig, code: str) -> Severity:
@@ -497,7 +557,12 @@ def validate(
     issues: list[Issue] = []
     for target, value in _targets(schema, data, rules.exclusions):
         issues += _issues(target, value, rules)
-    return issues + check_amount_totals(schema, data, rules) + check_duplicates(schema, data, rules)
+    return (
+        issues
+        + check_amount_totals(schema, data, rules)
+        + check_duplicates(schema, data, rules)
+        + check_holders(schema, data, rules)
+    )
 
 
 def _duplicate_columns(rep: RepeatSpec) -> list[RepeatColumn]:
@@ -541,6 +606,49 @@ def check_duplicates(
     return issues
 
 
+def _holder_columns(rep: RepeatSpec) -> tuple[RepeatColumn, RepeatColumn] | None:
+    """(성명 열, 예금주 열). 둘이 따로 있을 때만. `성명 (예금주)` 한 열이면 볼 것이 없다."""
+    inputs = [c for c in rep.columns if c.role == "input"]
+    holder = next((c for c in inputs if "예금주" in c.label and "성명" not in c.label), None)
+    name = next((c for c in inputs if column_concept(c.label) == "name" and c is not holder
+                 and "예금주" not in c.label), None)  # fmt: skip
+    return (name, holder) if name and holder else None
+
+
+def check_holders(
+    schema: FormSchema, data: FormInput, config: RuleConfig | None = None
+) -> list[Issue]:
+    """명단에서 예금주가 성명과 다른가. 본인 명의 계좌가 아니면 지급이 늦어진다 (경고)."""
+    config = config or RuleConfig()
+    if HOLDER_MISMATCH in config.disabled:
+        return []
+    issues: list[Issue] = []
+    for rep in schema.repeats:
+        cols = _holder_columns(rep)
+        if cols is None or not _in_variant(schema, rep.table, data.variant):
+            continue
+        name_col, holder_col = cols
+        for i, row in enumerate(data.rows.get(rep.id, [])):
+            name = "".join(str(row.get(name_col.col, "")).split())
+            holder = "".join(str(row.get(holder_col.col, "")).split())
+            if not name or not holder or name == holder:
+                continue
+            where = Location("repeat", rep.id, rep.table, rep.start_row + i, holder_col.col, i,
+                             holder_col.label)  # fmt: skip
+            if where.key in config.ignore:
+                continue
+            issues.append(
+                Issue(
+                    HOLDER_MISMATCH,
+                    _severity(config, HOLDER_MISMATCH),
+                    where,
+                    f"{i + 1}번째 행의 예금주 '{holder}' 이(가) 성명 '{name}' 과(와) 다릅니다.",
+                    "본인 명의 계좌인지 확인하세요. 다른 사람 계좌면 지급이 늦어질 수 있습니다.",
+                )
+            )
+    return issues
+
+
 def applicable_rules(schema: FormSchema, config: ValidationConfig = DEFAULT_CONFIG) -> set[str]:
     """이 서식에 적용되는 규칙 (관리자 페이지의 '규칙·적용 서식 조회', 회귀 기준)."""
     rules = config.for_form(schema)
@@ -554,8 +662,12 @@ def applicable_rules(schema: FormSchema, config: ValidationConfig = DEFAULT_CONF
             found |= {DATE_INVALID, DATE_ORDER}
         if t.input_type == "amount":
             found.add(AMOUNT_INVALID)
+        if kind := _identity_kind(t):
+            found.add(ACCOUNT_INVALID if kind == "account" else RRN_INVALID)
     if any(s.role == "input" and is_total_text(s.label) for s in schema.slots):
         found.add(AMOUNT_TOTAL_MISMATCH)
     if any(_duplicate_columns(r) for r in schema.repeats):
         found.add(ROW_DUPLICATE)
+    if any(_holder_columns(r) for r in schema.repeats):
+        found.add(HOLDER_MISMATCH)
     return found - rules.disabled

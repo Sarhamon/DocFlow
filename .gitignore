@@ -5,6 +5,8 @@ ysu_forms/
 out/
 # 서비스 데이터: DB 와 서식 버전별 템플릿·문서 산출물 (내부 서식 파생물)
 data/
+# 개인정보 암호 키 (docflow/service/crypto.py). 잃으면 암호화한 문서를 되살릴 수 없으니 따로 백업한다
+secrets/
 .venv/
 __pycache__/
 *.pyc

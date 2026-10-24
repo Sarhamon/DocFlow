@@ -87,7 +87,8 @@ def test_관리자_메뉴는_관리자에게만_보인다(app, client):
 
 ADMIN_PAGES = (
     "/admin/users", "/admin/forms", "/admin/forms/1", "/admin/categories", "/admin/rules",
-    "/admin/system",
+    "/admin/system", "/admin/documents", "/admin/stats", "/admin/logins", "/admin/audit",
+    "/admin/cross",
 )  # fmt: skip
 
 
@@ -103,6 +104,9 @@ def test_관리자_쪽은_관리자만_연다(app, client):
     for path in ADMIN_PAGES:
         page = admin.get(path)
         assert page.status_code == 200 and "관리자" in page.text, path
+    # 로그인 이력과 감사 로그는 한 틀을 탭으로 나눈다
+    assert "const audit = true" in admin.get("/admin/audit").text
+    assert "const audit = false" in admin.get("/admin/logins").text
 
 
 def test_정적_파일(client):

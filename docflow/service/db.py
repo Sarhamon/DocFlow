@@ -9,6 +9,9 @@
 * 입력폼 설정(form_items): 관리자가 추출 항목을 빼거나 필수·형식·이름·순서를 고친 것(M9).
 * 규칙 설정(rule_settings): 검증 규칙의 전체 on/off 와 서식별 예외(M9).
 * 시스템 설정(system_settings): LLM 서버 주소·모델 같은 운영 설정 (키-값, M9).
+* 감사 로그(audit_logs): 관리자의 변경과 문서 열람 (M11). 지우지 않는다.
+* 문서 간 대조(cross_rules·document_links): 관리자가 정한 서식 쌍의 금액 대조와, 사용자가
+  이어 둔 문서 쌍 (M11, VA_11·VA_12).
   서식 단위로 두어 개정해도 유지된다. 있는 표에 칸을 더하지 않으려고 따로 둔다.
 """
 
@@ -20,6 +23,9 @@ from pathlib import Path
 from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint, create_engine, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.types import TypeDecorator
+
+from docflow.service import crypto
 
 
 def now() -> datetime:
@@ -28,6 +34,19 @@ def now() -> datetime:
 
 class Base(DeclarativeBase):
     pass
+
+
+class Encrypted(TypeDecorator):
+    """개인정보가 든 글 (문서 입력값). 저장할 때 암호화하고 읽을 때 푼다. 예전 평문도 읽는다."""
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value: str | None, dialect) -> str | None:
+        return None if value is None else crypto.current().encrypt_text(value)
+
+    def process_result_value(self, value: str | None, dialect) -> str | None:
+        return None if value is None else crypto.current().decrypt_text(value)
 
 
 class Form(Base):
@@ -104,6 +123,59 @@ class SystemSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
 
 
+class AuditLog(Base):
+    """관리자 행위 한 건 (AD_26). 계정을 지워도 남도록 아이디를 같이 적는다."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(default=now, index=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), default=None)
+    actor_login: Mapped[str] = mapped_column(String(50), default="")
+    #: user.create, form.publish, document.view … (audit.ACTIONS)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    #: 대상 (계정 아이디, 서식 번호·이름, 문서 이름)
+    target: Mapped[str] = mapped_column(String(300), default="")
+    #: 바꾼 내용이나 열람 사유
+    detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class CrossRule(Base):
+    """문서 간 금액 대조 규칙 (VA_12). 기준 서식(계획서)과 대상 서식(정산서)의 금액을 견준다.
+
+    키는 입력폼 항목 키다: 누름틀 이름, 표 칸(t0.r1.c2), 명단 열(t0.r3-9:4 — 행을 모두 더한다).
+    여러 키를 주면 더한 값을 쓴다.
+    """
+
+    __tablename__ = "cross_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    source_form_id: Mapped[int] = mapped_column(ForeignKey("forms.id"))
+    source_keys: Mapped[str] = mapped_column(Text)
+    target_form_id: Mapped[int] = mapped_column(ForeignKey("forms.id"))
+    target_keys: Mapped[str] = mapped_column(Text)
+    #: eq 같아야 한다 / le 대상이 기준보다 크지 않아야 한다 (정산 ≤ 계획)
+    op: Mapped[str] = mapped_column(String(5), default="eq")
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(default=now)
+
+    source_form: Mapped[Form] = relationship(foreign_keys=[source_form_id])
+    target_form: Mapped[Form] = relationship(foreign_keys=[target_form_id])
+
+
+class DocumentLink(Base):
+    """사용자가 대조 규칙에 이어 둔 문서 쌍 (정산서 ↔ 계획서). 어느 쪽에서 이어도 양쪽에서 본다."""
+
+    __tablename__ = "document_links"
+    __table_args__ = (UniqueConstraint("document_id", "rule_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
+    rule_id: Mapped[int] = mapped_column(ForeignKey("cross_rules.id"))
+    linked_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
+
+
 class FormVersion(Base):
     __tablename__ = "form_versions"
     __table_args__ = (UniqueConstraint("form_id", "version"),)
@@ -130,8 +202,8 @@ class Document(Base):
     title: Mapped[str] = mapped_column(String(300))
     #: draft 작성 중 / completed 산출물을 만들었다
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
-    #: 입력값 JSON (pipeline.parse_input 형식)
-    input_json: Mapped[str] = mapped_column(Text, default="{}")
+    #: 입력값 JSON (pipeline.parse_input 형식). 주민등록번호가 들 수 있어 암호화해 둔다
+    input_json: Mapped[str] = mapped_column(Encrypted, default="{}")
     #: 마지막으로 만든 판. 0 이면 아직 만들지 않았다
     revision: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(default=now)
@@ -174,8 +246,8 @@ class DocumentEvent(Base):
     kind: Mapped[str] = mapped_column(String(20))
     at: Mapped[datetime] = mapped_column(default=now)
     form_version_id: Mapped[int] = mapped_column(ForeignKey("form_versions.id"))
-    #: 그때의 입력값 JSON
-    input_json: Mapped[str | None] = mapped_column(Text, default=None)
+    #: 그때의 입력값 JSON (암호화)
+    input_json: Mapped[str | None] = mapped_column(Encrypted, default=None)
     #: 검증 결과 (Issue 목록 JSON)
     issues_json: Mapped[str | None] = mapped_column(Text, default=None)
     #: 이 서식에 적용된 규칙 코드 JSON (감사: 어떤 규칙으로 통과했나)

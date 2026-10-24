@@ -90,7 +90,15 @@ def mount(app: FastAPI, auth: Callable[..., AuthService]) -> None:
         "/admin/categories": ("admin_categories.html", True),
         "/admin/rules": ("admin_rules.html", True),
         "/admin/system": ("admin_system.html", True),
+        "/admin/documents": ("admin_documents.html", True),
+        "/admin/stats": ("admin_stats.html", True),
+        "/admin/cross": ("admin_cross.html", True),
     }
     for path, (name, admin) in routes.items():
         app.add_api_route(path, page(name, admin=admin), methods=["GET"],
                           include_in_schema=False, response_model=None)  # fmt: skip
+    # 로그인 이력과 감사 로그는 한 틀을 쓴다
+    for path, tab in (("/admin/logins", "logins"), ("/admin/audit", "audit")):
+        handler = page("admin_logs.html", admin=True, admin_tab=tab)
+        app.add_api_route(path, handler, methods=["GET"], include_in_schema=False,
+                          response_model=None)  # fmt: skip

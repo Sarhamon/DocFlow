@@ -30,6 +30,7 @@ from docflow.convert import ConversionJob, ConversionResult, Converter
 from docflow.generate import Leftover
 from docflow.pipeline import ParsedInput, make_document, parse_input
 from docflow.schema.model import FormSchema
+from docflow.service import crosscheck, crypto
 from docflow.service.catalog import NotFound, get_form, load_schema
 from docflow.service.db import Artifact, Document, DocumentEvent, now
 from docflow.service.rules import config_for
@@ -207,6 +208,7 @@ class DocumentService:
     def delete(self, doc_id: int, owner_id: int | None = None) -> None:
         """작성 중 문서 삭제 (MY_03). 완료 문서는 이력이라 지우지 않는다."""
         doc = self._draft(doc_id, owner_id)
+        crosscheck.unlink_all(self.session, doc)
         self.store.delete_prefix(f"documents/{doc.id}")
         self.session.delete(doc)
         self.session.commit()
@@ -216,7 +218,10 @@ class DocumentService:
         """입력 완료 검증 (VA_01). 결과를 이력에 남긴다 (MY_07)."""
         doc = self.get(doc_id, owner_id)
         schema = self.schema_of(doc)
-        issues = validate(schema, parse_input(schema, self.raw_input(doc)).data, self.rules_of(doc))
+        data = parse_input(schema, self.raw_input(doc)).data
+        issues = validate(schema, data, self.rules_of(doc)) + crosscheck.check(
+            self.session, doc, schema, data
+        )
         self._event(doc, "validated", input_json=doc.input_json, issues=issues)
         self.session.commit()
         return issues
@@ -225,7 +230,10 @@ class DocumentService:
         """입력 중 실시간 점검 (IN_13~15). 저장하지 않고 이력도 남기지 않는다."""
         doc = self.get(doc_id, owner_id)
         schema = self.schema_of(doc)
-        return validate(schema, parse_input(schema, raw).data, self.rules_of(doc))
+        data = parse_input(schema, raw).data
+        return validate(schema, data, self.rules_of(doc)) + crosscheck.check(
+            self.session, doc, schema, data
+        )
 
     def generate(
         self,
@@ -249,6 +257,8 @@ class DocumentService:
                 schema, parsed, template, Path(tmp), name,
                 converter=self.converter, formats=formats, force=force, config=config,
             )  # fmt: skip
+            # 문서 간 대조는 경고라 만들기를 막지 않는다. 결과와 이력에만 더한다
+            result.issues += crosscheck.check(self.session, doc, schema, parsed.data)
             if result.generated is None:
                 self._event(doc, "validated", input_json=doc.input_json, issues=result.issues)
                 self.session.commit()
@@ -264,6 +274,7 @@ class DocumentService:
                 errors = {fmt: "변환기가 없다 (한컴오피스가 없는 환경)" for fmt in formats}
             for fmt, path in outputs.items():
                 key = f"documents/{doc.id}/r{doc.revision}/{Path(path).name}"
+                crypto.current().encrypt_file(Path(path))  # 주민등록번호가 든 파일일 수 있다
                 size = self.store.put(key, Path(path))
                 doc.artifacts.append(
                     Artifact(revision=doc.revision, format=fmt, file_key=key, size=size)
@@ -293,14 +304,15 @@ class DocumentService:
 
     def artifact(
         self, doc_id: int, fmt: str, owner_id: int | None = None, *, revision: int | None = None
-    ) -> tuple[Path, str]:
-        """내려받을 파일과 파일 이름 (SV_03·SV_04). 판을 주지 않으면 마지막 판."""
+    ) -> tuple[bytes, str]:
+        """내려받을 파일 내용(복호화한 것)과 파일 이름 (SV_03·SV_04). 판을 주지 않으면 마지막 판."""
         doc = self.get(doc_id, owner_id)
         fmt = fmt.upper()
         revision = doc.revision if revision is None else revision
         for a in doc.artifacts:
             if a.revision == revision and a.format == fmt:
-                return self.store.local_path(a.file_key), Path(a.file_key).name
+                data = crypto.current().read_file(self.store.local_path(a.file_key))
+                return data, Path(a.file_key).name
         raise NotFound(f"문서 {doc_id} 의 {revision}판 {fmt} 파일이 없다")
 
     # ------------------------------------------------------------ 내부

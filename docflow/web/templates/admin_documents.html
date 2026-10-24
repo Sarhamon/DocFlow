@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% set admin_tab = "documents" %}
+{% block title %}문서 현황{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+<div class="summary-grid" id="counts" style="margin-bottom:12px"></div>
+<form class="search row" id="search" style="margin-bottom:12px">
+  <input type="search" name="q" placeholder="문서 이름, 서식, 작성자로 찾기" aria-label="검색어" style="flex:1">
+  <select name="status" aria-label="상태"><option value="">모든 상태</option><option value="draft">작성 중</option><option value="completed">완료</option></select>
+  <button type="submit">찾기</button>
+</form>
+<p class="muted small">문서 내용(입력값·파일)은 사유를 적어야 열 수 있고, 열람 기록은 감사 로그에 남습니다.</p>
+<div class="card" style="padding:0">
+  <div class="list-wrap">
+    <table class="list">
+      <thead><tr><th>문서</th><th>작성자</th><th>서식</th><th>상태</th><th>마지막 검증</th><th>고친 때</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="empty" class="empty hidden">문서가 없습니다.</div>
+</div>
+<div class="pager" id="pager"></div>
+
+<dialog id="reason-box">
+  <form id="reason-form">
+    <h2>문서 열람</h2>
+    <p id="reason-target" class="small"></p>
+    <label class="field"><span>열람 사유 (5자 이상, 감사 로그에 남습니다)</span><input name="reason" required minlength="5" maxlength="300" placeholder="예: 작성자 문의로 입력값 확인"></label>
+    <div class="row"><span class="spacer"></span>
+      <button type="button" onclick="this.closest('dialog').close()">취소</button>
+      <button class="primary" type="submit">열기</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="view" style="max-width:min(960px, calc(100vw - 32px)); width:100%">
+  <div class="row"><h2 id="view-title" style="margin:0">문서</h2><span class="spacer"></span><button class="small" onclick="this.closest('dialog').close()">닫기</button></div>
+  <p class="muted small" id="view-meta"></p>
+  <div id="view-files"></div>
+  <h3>입력값</h3>
+  <div id="view-input"></div>
+  <h3>이력</h3>
+  <div class="list-wrap"><table class="list"><thead><tr><th>때</th><th>일</th><th>내용</th></tr></thead><tbody id="view-history"></tbody></table></div>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  const state = { q: "", status: "", page: 1, size: 50 };
+  const KINDS = { created: "만듦", copied: "복제", validated: "검증", generated: "문서 생성" };
+  let opening = null;
+
+  function checked(d) {
+    if (d.errors === null) return h("span", { class: "muted small" }, "검증 전");
+    if (!d.errors && !d.warnings) return h("span", { class: "badge completed" }, "통과");
+    return h("span", {}, d.errors ? h("span", { class: "badge error" }, `오류 ${d.errors}`) : null, " ",
+      d.warnings ? h("span", { class: "badge warning" }, `경고 ${d.warnings}`) : null);
+  }
+
+  async function load() {
+    const params = new URLSearchParams({ q: state.q, status: state.status, page: state.page, size: state.size });
+    const data = await api("GET", `/api/admin/documents?${params}`);
+    const c = data.counts;
+    document.getElementById("counts").replaceChildren(...[["전체 문서", c.total], ["작성 중", c.draft], ["완료", c.completed]]
+      .map(([k, v]) => h("div", { class: "stat" }, h("b", {}, v), h("span", { class: "muted small" }, k))));
+    document.getElementById("rows").replaceChildren(...data.items.map((d) => h("tr", {},
+      h("td", {}, d.title, h("div", { class: "muted small" }, `#${d.id}${d.revision ? ` · ${d.revision}판` : ""}`)),
+      h("td", { class: "small" }, d.owner ? `${d.owner.name} (${d.owner.login_id})` : "-"),
+      h("td", { class: "small" }, `${d.form.program} ${d.form.form_no} ${d.form.title}`, h("div", { class: "muted" }, `v${d.form.version}`)),
+      h("td", {}, h("span", { class: `badge ${d.status}` }, DF.STATUS[d.status] || d.status)),
+      h("td", {}, checked(d)), h("td", { class: "small" }, DF.fmtTime(d.updated_at)),
+      h("td", {}, h("button", { class: "small", onclick: () => askReason(d) }, "열람")))));
+    document.getElementById("empty").classList.toggle("hidden", data.total > 0);
+    const pages = Math.max(1, Math.ceil(data.total / state.size));
+    const pager = document.getElementById("pager");
+    pager.replaceChildren();
+    if (pages > 1) {
+      const go = (p) => () => { state.page = p; load().catch(DF.fail); };
+      pager.append(h("button", { class: "small", disabled: state.page <= 1, onclick: go(state.page - 1) }, "이전"),
+        h("span", { class: "muted small", style: "padding:4px 8px" }, `${state.page} / ${pages}`),
+        h("button", { class: "small", disabled: state.page >= pages, onclick: go(state.page + 1) }, "다음"));
+    }
+  }
+
+  function askReason(d) {
+    opening = d;
+    document.getElementById("reason-form").reset();
+    document.getElementById("reason-target").textContent = `${d.title} — 작성자 ${d.owner ? d.owner.login_id : "-"}`;
+    document.getElementById("reason-box").showModal();
+  }
+
+  function kv(obj) {
+    const entries = Object.entries(obj || {}).filter(([k]) => !k.startsWith("_"));
+    if (!entries.length) return null;
+    return h("table", { class: "list" }, h("tbody", {}, ...entries.map(([k, v]) => h("tr", {}, h("td", { class: "small muted" }, k), h("td", {}, String(v))))));
+  }
+
+  function rows(obj) {
+    return Object.entries(obj || {}).map(([id, lines]) => {
+      const cols = [...new Set(lines.flatMap((l) => Object.keys(l)))];
+      return h("div", {}, h("div", { class: "small muted" }, `명단 ${id}`),
+        h("table", { class: "list" }, h("thead", {}, h("tr", {}, ...cols.map((c) => h("th", {}, c)))),
+          h("tbody", {}, ...lines.map((l) => h("tr", {}, ...cols.map((c) => h("td", {}, l[c] ?? "")))))));
+    });
+  }
+
+  function show(doc, reason) {
+    document.getElementById("view-title").textContent = doc.title;
+    document.getElementById("view-meta").textContent = `${doc.owner ? `${doc.owner.name} (${doc.owner.login_id})` : "-"} · ${doc.form.program} ${doc.form.form_no} ${doc.form.title} v${doc.form.version} · ${DF.STATUS[doc.status] || doc.status}`;
+    const q = (r) => `?revision=${r}&reason=${encodeURIComponent(reason)}`;
+    document.getElementById("view-files").replaceChildren(...doc.files.map((f) => h("div", { class: "row small" }, `${f.revision}판:`,
+      ...f.formats.map((fmt) => h("a", { class: "btn small", href: `/api/admin/documents/${doc.id}/files/${fmt}${q(f.revision)}` }, `${fmt} 받기`)))));
+    const input = doc.input || {};
+    const parts = [input.variant ? h("p", { class: "small" }, `변형: ${input.variant}`) : null, kv(input.fields), kv(input.cells), ...rows(input.rows)].filter(Boolean);
+    document.getElementById("view-input").replaceChildren(...(parts.length ? parts : [h("p", { class: "muted" }, "입력값 없음")]));
+    document.getElementById("view-history").replaceChildren(...doc.history.slice().reverse().map((e) => {
+      const errors = (e.issues || []).filter((i) => i.severity === "error").length;
+      const what = [e.note, e.issues ? `오류 ${errors} · 경고 ${e.issues.length - errors}` : ""].filter(Boolean).join(" / ");
+      return h("tr", {}, h("td", { class: "small" }, DF.fmtTime(e.at)), h("td", {}, KINDS[e.kind] || e.kind), h("td", { class: "small" }, what));
+    }));
+    document.getElementById("view").showModal();
+  }
+
+  document.getElementById("reason-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const reason = ev.target.reason.value.trim();
+    try {
+      const doc = await api("POST", `/api/admin/documents/${opening.id}/open`, { reason });
+      document.getElementById("reason-box").close();
+      show(doc, reason);
+    } catch (e) { DF.fail(e); }
+  });
+  document.getElementById("search").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    Object.assign(state, { q: ev.target.q.value.trim(), status: ev.target.status.value, page: 1 });
+    load().catch(DF.fail);
+  });
+  load().catch(DF.fail);
+})();
+</script>
+{% endblock %}

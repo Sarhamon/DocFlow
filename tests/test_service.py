@@ -223,8 +223,12 @@ def test_만들면_산출물을_저장하고_완료된다(env, session):
     assert (out.revision, out.document.status, out.conversion_errors) == (1, "completed", {})
     assert sorted(a.format for a in out.document.artifacts) == ["HWP", "HWPX", "PDF"]
 
-    path, name = svc.artifact(doc.id, "pdf")
-    assert path.read_bytes().startswith(b"%PDF-")
+    data, name = svc.artifact(doc.id, "pdf")
+    assert data.startswith(b"%PDF-")
+    # 저장소에는 암호화해 둔다 (주민등록번호가 든 문서일 수 있다)
+    [pdf] = [a for a in out.document.artifacts if a.format == "PDF"]
+    stored = env[2].local_path(pdf.file_key).read_bytes()
+    assert stored.startswith(b"DFENC1") and b"%PDF-" not in stored
     assert name.startswith("AID 5-05_10월 교통비_") and name.endswith(".pdf")
 
     event = svc.history(doc.id)[-1]
@@ -256,7 +260,7 @@ def test_변환이_일부_실패하면_HWPX를_보존하고_작성_중으로_둔
     out = svc.generate(doc.id)
     assert out.document.status == "draft"
     assert out.conversion_errors == {"PDF": "가짜 실패"}
-    assert svc.artifact(doc.id, "hwpx")[0].exists()
+    assert svc.artifact(doc.id, "hwpx")[0].startswith(b"PK")
     with pytest.raises(NotFound):
         svc.artifact(doc.id, "pdf")
     # 다시 만들면 다음 판
@@ -278,9 +282,9 @@ def test_작성_중_문서를_지우면_파일도_지운다(env, session):
     doc = svc.create(form_id(session, "교통비 지급 내역서"))
     svc.save_input(doc.id, fx.traffic_input())
     svc.generate(doc.id)
-    path, _ = svc.artifact(doc.id, "hwpx")
+    [hwpx] = [a for a in svc.get(doc.id).artifacts if a.format == "HWPX"]
     svc.delete(doc.id)
-    assert not path.exists()
+    assert not env[2].exists(hwpx.file_key)
     with pytest.raises(NotFound):
         svc.get(doc.id)
 

@@ -17,18 +17,17 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from docflow.convert import SIGNATURES, ConversionJob, Converter
+from docflow.convert import Converter
 from docflow.schema.labels import field_label
 from docflow.schema.rules import FormLocation
-from docflow.service import catalog, rules, system
+from docflow.service import audit, catalog, rules, system
 from docflow.service.db import Form, User
 from docflow.service.documents import Serialized
 from docflow.service.storage import FileStore
 from docflow.validate import DEFAULT_SEVERITY, RULE_INFO, RULES, applicable_rules, field_required
+from docflow.web.files import hwpx_upload
 
 API = "/api/admin"
-#: 올릴 수 있는 서식 파일 크기
-MAX_UPLOAD = 20 * 1024 * 1024
 
 
 class FormUpdate(BaseModel):
@@ -151,27 +150,7 @@ def mount(
     admins = [Depends(admin_user)]
 
     def to_hwpx(upload: UploadFile, work: Path) -> tuple[Path, str]:
-        """올린 파일을 HWPX 로. (HWPX 경로, 원래 파일 이름)"""
-        name = Path(upload.filename or "").name
-        suffix = Path(name).suffix.lower()
-        if suffix not in (".hwp", ".hwpx"):
-            raise ValueError("서식은 .hwp 나 .hwpx 파일로 올린다")
-        data = upload.file.read(MAX_UPLOAD + 1)
-        if len(data) > MAX_UPLOAD:
-            raise ValueError(f"서식 파일은 {MAX_UPLOAD // 1024 // 1024}MB 까지 올린다")
-        fmt = suffix[1:].upper()
-        if not data.startswith(SIGNATURES[fmt]):
-            raise ValueError(f"{fmt} 파일이 아니다")
-        src = work / f"upload{suffix}"
-        src.write_bytes(data)
-        if fmt == "HWPX":
-            return src, name
-        if convert is None:
-            raise catalog.Unavailable("한컴오피스가 없어 HWP 를 바꿀 수 없다. HWPX 로 올린다")
-        result = convert.convert(ConversionJob(source=src, formats=("HWPX",), out_dir=work))
-        if not result.ok:
-            raise ValueError(f"HWPX 로 바꾸지 못했다: {result.errors.get('HWPX', '')}")
-        return result.outputs["HWPX"], name
+        return hwpx_upload(upload, work, convert)
 
     def outcome(forms: list[Form], report: catalog.SyncReport) -> dict[str, Any]:
         return {"forms": [admin_form(f) for f in forms], "report": report_dict(report)}
@@ -222,8 +201,13 @@ def mount(
             "siblings": [admin_form(f) for f in siblings if "#" in f.key],
         }
 
-    @app.patch(f"{API}/forms/{{form_id}}", dependencies=admins)
-    def update_form(form_id: int, body: FormUpdate, s: Session = Depends(session)):
+    @app.patch(f"{API}/forms/{{form_id}}")
+    def update_form(
+        form_id: int,
+        body: FormUpdate,
+        s: Session = Depends(session),
+        actor: User = Depends(admin_user),
+    ):
         form = catalog.get_form(s, form_id, public_only=False)
         changes = body.model_dump(exclude_unset=True)
         if "title" in changes and not (changes["title"] or "").strip():
@@ -231,9 +215,10 @@ def mount(
         for name, value in changes.items():
             setattr(form, name, value.strip() if isinstance(value, str) else value)
         s.commit()
+        audit.record(s, actor, "form.update", audit.form_name(form), changes)
         return admin_form(form)
 
-    @app.post(f"{API}/forms", status_code=201, dependencies=admins)
+    @app.post(f"{API}/forms", status_code=201)
     def upload_form(
         file: UploadFile = File(...),
         program: str = Field(...),
@@ -241,6 +226,7 @@ def mount(
         category: str = Field(""),
         archived: bool = Field(False),
         s: Session = Depends(session),
+        actor: User = Depends(admin_user),
     ) -> dict[str, Any]:
         """서식 등록 (AD_01~04): 올리기 → HWPX 변환 → 스키마 추출 → 비공개로 등록."""
         if not program.strip():
@@ -248,7 +234,9 @@ def mount(
         location = FormLocation(program.strip(), category_no, category.strip(), archived)
         with tempfile.TemporaryDirectory(prefix="docflow-") as tmp:
             path, name = to_hwpx(file, Path(tmp))
-            return outcome(*catalog.register_upload(s, store, path, name, location))
+            forms, report = catalog.register_upload(s, store, path, name, location)
+        audit.record(s, actor, "form.upload", name, report_dict(report))
+        return outcome(forms, report)
 
     @app.get(f"{API}/forms/{{form_id}}/items", dependencies=admins)
     def form_items(form_id: int, s: Session = Depends(session)) -> dict[str, Any]:
@@ -256,13 +244,17 @@ def mount(
         form = catalog.get_form(s, form_id, public_only=False)
         return {"items": items_view(form), "input_types": list(catalog.INPUT_TYPES)}
 
-    @app.put(f"{API}/forms/{{form_id}}/items", dependencies=admins)
+    @app.put(f"{API}/forms/{{form_id}}/items")
     def save_form_items(
-        form_id: int, body: list[ItemSetting], s: Session = Depends(session)
+        form_id: int,
+        body: list[ItemSetting],
+        s: Session = Depends(session),
+        actor: User = Depends(admin_user),
     ) -> dict[str, Any]:
         """입력폼 설정을 통째로 바꾼다. 개정해도 유지되고, 작성 중인 문서에도 바로 적용된다."""
         form = catalog.get_form(s, form_id, public_only=False)
-        catalog.save_items(s, form, [b.model_dump() for b in body])
+        saved = catalog.save_items(s, form, [b.model_dump() for b in body])
+        audit.record(s, actor, "form.items", audit.form_name(form), f"설정한 항목 {len(saved)}개")
         return {"items": items_view(form), "input_types": list(catalog.INPUT_TYPES)}
 
     # ------------------------------------------------------------ 카테고리 (AD_13)
@@ -277,8 +269,10 @@ def mount(
         ).all()  # fmt: skip
         return [{"program": p, "category_no": n, "category": c, "forms": k} for p, n, c, k in rows]
 
-    @app.put(f"{API}/categories", dependencies=admins)
-    def rename_category(body: CategoryRename, s: Session = Depends(session)) -> dict[str, Any]:
+    @app.put(f"{API}/categories")
+    def rename_category(
+        body: CategoryRename, s: Session = Depends(session), actor: User = Depends(admin_user)
+    ) -> dict[str, Any]:
         """사업 안에서 카테고리 이름을 한꺼번에 바꾼다 (사업마다 다른 표기를 맞출 때)."""
         new = body.new.strip()
         if not new:
@@ -293,6 +287,8 @@ def mount(
             if body.category_no is not None:
                 form.category_no = body.category_no
         s.commit()
+        change = {"new": new, "category_no": body.category_no, "forms": len(forms)}
+        audit.record(s, actor, "category.rename", f"{body.program} {body.category}", change)
         return {"program": body.program, "category": new, "forms": len(forms)}
 
     # ------------------------------------------------------------ 검증 규칙 (AD_15~17)
@@ -319,17 +315,28 @@ def mount(
             for code in RULES
         ]
 
-    @app.put(f"{API}/rules/{{code}}", dependencies=admins)
-    def rule_toggle(code: str, body: RuleToggle, s: Session = Depends(session)) -> dict:
+    @app.put(f"{API}/rules/{{code}}")
+    def rule_toggle(
+        code: str,
+        body: RuleToggle,
+        s: Session = Depends(session),
+        actor: User = Depends(admin_user),
+    ) -> dict:
         rules.set_enabled(s, code, body.enabled)
+        audit.record(s, actor, "rule.toggle", code, "켬" if body.enabled else "끔")
         return {"code": code, "enabled": body.enabled}
 
-    @app.put(f"{API}/rules/{{code}}/exceptions", dependencies=admins)
+    @app.put(f"{API}/rules/{{code}}/exceptions")
     def rule_exceptions(
-        code: str, body: RuleExceptions, s: Session = Depends(session)
+        code: str,
+        body: RuleExceptions,
+        s: Session = Depends(session),
+        actor: User = Depends(admin_user),
     ) -> list[dict[str, Any]]:
         """이 규칙을 끌 서식을 통째로 정한다 (AD_17)."""
-        return [admin_form(f) for f in rules.set_exceptions(s, code, body.form_ids)]
+        forms = rules.set_exceptions(s, code, body.form_ids)
+        audit.record(s, actor, "rule.exceptions", code, [audit.form_name(f) for f in forms])
+        return [admin_form(f) for f in forms]
 
     # ------------------------------------------------------------ 시스템 (AD_27·AD_28)
     @app.get(f"{API}/system", dependencies=admins)
@@ -344,16 +351,26 @@ def mount(
             "llm": {**llm, "status": system.llm_status(llm["llm_url"], llm["llm_model"])},
         }
 
-    @app.put(f"{API}/system", dependencies=admins)
-    def system_save(body: dict[str, str], s: Session = Depends(session)) -> dict[str, Any]:
-        return system.save_settings(s, body)
+    @app.put(f"{API}/system")
+    def system_save(
+        body: dict[str, str], s: Session = Depends(session), actor: User = Depends(admin_user)
+    ) -> dict[str, Any]:
+        saved = system.save_settings(s, body)
+        audit.record(s, actor, "system.save", ", ".join(body), body)
+        return saved
 
-    @app.post(f"{API}/forms/{{form_id}}/versions", status_code=201, dependencies=admins)
+    @app.post(f"{API}/forms/{{form_id}}/versions", status_code=201)
     def revise_form(
-        form_id: int, file: UploadFile = File(...), s: Session = Depends(session)
+        form_id: int,
+        file: UploadFile = File(...),
+        s: Session = Depends(session),
+        actor: User = Depends(admin_user),
     ) -> dict[str, Any]:
         """서식 개정 (AD_07): 새 템플릿을 다음 버전으로. 기존 문서는 작성 당시 버전을 쓴다."""
         form = catalog.get_form(s, form_id, public_only=False)
         with tempfile.TemporaryDirectory(prefix="docflow-") as tmp:
-            path, _name = to_hwpx(file, Path(tmp))
-            return outcome(*catalog.revise(s, store, form, path))
+            path, name = to_hwpx(file, Path(tmp))
+            forms, report = catalog.revise(s, store, form, path)
+        audit.record(s, actor, "form.revise", audit.form_name(form),
+                     {"file": name, **report_dict(report)})  # fmt: skip
+        return outcome(forms, report)

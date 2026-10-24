@@ -17,22 +17,25 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from collections.abc import Callable, Iterator
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Body, Depends, FastAPI, Query, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Body, Depends, FastAPI, File, Query, Request, Response, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
 from docflow.config import Settings, get_settings
 from docflow.convert import Converter
 from docflow.generate import GenerateError
+from docflow.hwpx.document import HwpxDocument
 from docflow.pipeline import InputError, skeleton
 from docflow.schema.labels import field_label
 from docflow.schema.model import FormSchema
-from docflow.service import catalog
+from docflow.service import audit, catalog, crosscheck, crypto, roster
 from docflow.service.auth import AuthError, AuthService, Client, Forbidden, SessionInvalid
 from docflow.service.catalog import NotFound, Unavailable
 from docflow.service.db import Document, DocumentEvent, Form, User, UserSession, connect, now
@@ -45,9 +48,12 @@ from docflow.service.documents import (
 )
 from docflow.service.storage import FileStore, LocalFileStore
 from docflow.validate import field_required
-from docflow.web import admin_api, pages
+from docflow.web import admin_api, admin_ops, pages
+from docflow.web.files import download_response, hwpx_upload
 
 API = "/api"
+#: 명단 가져오기에 한 번에 올리는 파일 수
+MAX_ROSTER_FILES = 100
 COOKIE = "docflow_session"
 
 
@@ -91,6 +97,11 @@ class StatusChange(BaseModel):
     status: Literal["active", "inactive", "deleted"]
 
 
+class LinkRequest(BaseModel):
+    #: 이을 문서. null 이면 끊는다
+    document_id: int | None = None
+
+
 class GenerateRequest(BaseModel):
     #: 변환할 형식. 비우면 HWPX 만 만든다
     formats: list[str] = Field(default_factory=lambda: ["HWP", "PDF"])
@@ -126,6 +137,11 @@ def document_summary(doc: Document) -> dict[str, Any]:
         "completed_at": doc.completed_at.isoformat() if doc.completed_at else None,
         "files": sorted({a.format for a in doc.artifacts if a.revision == doc.revision}),
     }
+
+
+def link_dict(doc: Document) -> dict[str, Any]:
+    return {"id": doc.id, "title": doc.title, "status": doc.status,
+            "updated_at": doc.updated_at.isoformat()}  # fmt: skip
 
 
 def event_dict(e: DocumentEvent) -> dict[str, Any]:
@@ -214,6 +230,7 @@ def create_app(
     """
     settings = settings or get_settings()
     settings.data.mkdir(parents=True, exist_ok=True)
+    crypto.use(crypto.Cipher(crypto.load_key(settings)))
     sessions: sessionmaker = connect(database_url or settings.database_url)
     store = store or LocalFileStore(settings.data / "files")
     if converter == "auto":
@@ -329,6 +346,7 @@ def create_app(
             actor, body.login_id, body.name, role=body.role,
             department=body.department, phone=body.phone, email=body.email,
         )  # fmt: skip
+        audit.record(svc.session, actor, "user.create", user.login_id, {"role": user.role})
         return {"user": user_dict(user), "initial_password": password}
 
     @app.get(f"{API}/admin/users/{{user_id}}")
@@ -344,20 +362,26 @@ def create_app(
         actor: User = Depends(admin_user),
         svc: AuthService = Depends(auth),
     ) -> dict[str, Any]:
-        return user_dict(svc.update_user(actor, user_id, **body.model_dump(exclude_unset=True)))
+        changes = body.model_dump(exclude_unset=True)
+        user = svc.update_user(actor, user_id, **changes)
+        audit.record(svc.session, actor, "user.update", user.login_id, changes)
+        return user_dict(user)
 
     @app.post(f"{API}/admin/users/{{user_id}}/reset-password")
     def reset_password(
         user_id: int, actor: User = Depends(admin_user), svc: AuthService = Depends(auth)
     ) -> dict[str, Any]:
         user, password = svc.reset_password(actor, user_id)
+        audit.record(svc.session, actor, "user.reset_password", user.login_id)
         return {"user": user_dict(user), "initial_password": password}
 
     @app.post(f"{API}/admin/users/{{user_id}}/unlock")
     def unlock_user(
         user_id: int, actor: User = Depends(admin_user), svc: AuthService = Depends(auth)
     ) -> dict[str, Any]:
-        return user_dict(svc.unlock(actor, user_id))
+        user = svc.unlock(actor, user_id)
+        audit.record(svc.session, actor, "user.unlock", user.login_id)
+        return user_dict(user)
 
     @app.put(f"{API}/admin/users/{{user_id}}/status")
     def set_user_status(
@@ -366,7 +390,9 @@ def create_app(
         actor: User = Depends(admin_user),
         svc: AuthService = Depends(auth),
     ) -> dict[str, Any]:
-        return user_dict(svc.set_status(actor, user_id, body.status))
+        user = svc.set_status(actor, user_id, body.status)
+        audit.record(svc.session, actor, "user.status", user.login_id, body.status)
+        return user_dict(user)
 
     # ------------------------------------------------------------ 서식
     @app.get(f"{API}/health")
@@ -544,9 +570,9 @@ def create_app(
         revision: int | None = None,
         svc: DocumentService = Depends(service),
         me=Depends(owner),
-    ) -> FileResponse:
-        path, name = svc.artifact(doc_id, fmt, me, revision=revision)
-        return FileResponse(path, filename=name)
+    ) -> Response:
+        data, name = svc.artifact(doc_id, fmt, me, revision=revision)
+        return download_response(data, name)
 
     @app.post(f"{API}/documents/{{doc_id}}/copy", status_code=201)
     def copy_document(
@@ -560,6 +586,89 @@ def create_app(
     ) -> None:
         svc.delete(doc_id, me)
 
+    @app.post(f"{API}/documents/{{doc_id}}/roster")
+    def import_roster(
+        doc_id: int,
+        repeat: str,
+        files: list[UploadFile] = File(...),
+        svc: DocumentService = Depends(service),
+        me=Depends(owner),
+    ) -> dict[str, Any]:
+        """명단 가져오기: 학생이 낸 입금계좌 확인서들에서 명단을 읽는다 (저장하지 않는다).
+
+        화면이 결과를 미리 보여 주고, 사용자가 넣으면 임시저장으로 저장된다(입력값은 암호화).
+        LLM 을 거치지 않는다. 파일은 읽고 바로 지운다.
+        """
+        doc = svc.get(doc_id, me)
+        schema = svc.schema_of(doc)
+        rep = next((r for r in schema.repeats if r.id == repeat), None)
+        if rep is None:
+            raise NotFound(f"이 서식에 명단 {repeat} 이(가) 없다")
+        if len(files) > MAX_ROSTER_FILES:
+            raise ValueError(f"한 번에 {MAX_ROSTER_FILES}개 파일까지 올린다")
+        records: list[dict[str, str]] = []
+        report = []
+        with tempfile.TemporaryDirectory(prefix="docflow-roster-") as tmp:
+            for i, upload in enumerate(files):
+                entry: dict[str, Any] = {"name": upload.filename, "people": 0, "error": None}
+                try:
+                    path, _ = hwpx_upload(upload, Path(tmp), svc.converter, stem=f"f{i}")
+                    found = roster.read_rosters(HwpxDocument.open(path))
+                    if not found:
+                        raise ValueError("성명·계좌 같은 머리줄이 있는 명단 표를 찾지 못했다")
+                    people = [r for t in found for r in t.records]
+                    entry["people"] = len(people)
+                    records += people
+                except (ValueError, Unavailable, OSError) as exc:
+                    entry["error"] = str(exc)
+                report.append(entry)
+        rows = roster.to_rows(rep, records)
+        mapping = roster.target_mapping(rep)
+        have = {k for r in records for k, v in r.items() if v}
+        return {
+            "repeat": rep.id,
+            "rows": rows,
+            "files": report,
+            "duplicates": len([r for r in records if any(r.values())]) - len(rows),
+            "mapping": [
+                {"col": m.col, "label": m.label, "concept": m.concept,
+                 "found": m.concept in have}
+                for m in mapping
+            ],  # fmt: skip
+        }
+
+    @app.get(f"{API}/documents/{{doc_id}}/links")
+    def document_links(
+        doc_id: int, svc: DocumentService = Depends(service), me=Depends(owner)
+    ) -> list[dict[str, Any]]:
+        """문서 간 대조 (VA_11): 이 서식에 걸린 규칙, 이어 둔 문서, 이을 수 있는 내 문서."""
+        doc = svc.get(doc_id, me)
+        s = svc.session
+        out = []
+        for side in crosscheck.sides_of(s, doc):
+            rule = side.rule
+            other_form = rule.source_form if side.role == "target" else rule.target_form
+            other = crosscheck.linked(s, doc, rule)
+            out.append({
+                "rule_id": rule.id, "name": rule.name, "op": rule.op, "role": side.role,
+                "other_form": form_summary(other_form),
+                "linked": link_dict(other) if other else None,
+                "candidates": [link_dict(d) for d in crosscheck.candidates(s, doc, side)],
+            })  # fmt: skip
+        return out
+
+    @app.put(f"{API}/documents/{{doc_id}}/links/{{rule_id}}")
+    def set_document_link(
+        doc_id: int,
+        rule_id: int,
+        body: LinkRequest,
+        svc: DocumentService = Depends(service),
+        me=Depends(owner),
+    ) -> dict[str, Any]:
+        """문서를 잇거나(document_id) 끊는다(null). 내가 쓴 상대 서식 문서만 잇는다."""
+        crosscheck.link(svc.session, svc.get(doc_id, me), rule_id, body.document_id)
+        return {"rule_id": rule_id, "document_id": body.document_id}
+
     @app.get(f"{API}/documents/{{doc_id}}/history")
     def document_history(
         doc_id: int, svc: DocumentService = Depends(service), me=Depends(owner)
@@ -567,6 +676,8 @@ def create_app(
         return [event_dict(e) for e in svc.history(doc_id, me)]
 
     admin_api.mount(app, session=session, admin_user=admin_user, store=store, converter=converter)
+    admin_ops.mount(app, session=session, admin_user=admin_user, store=store)
+    admin_ops.mount_cross(app, session=session, admin_user=admin_user)
     pages.mount(app, auth)
     return app
 

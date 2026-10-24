@@ -51,12 +51,31 @@
       </div>
       <ul class="issues" id="issues"><li class="muted small" style="cursor:default;border:0">입력하면 칸마다 바로 점검합니다. 다 채웠으면 [검증]을 누르세요.</li></ul>
     </div>
+    <div class="card hidden" id="links-card">
+      <h2>연결 문서</h2>
+      <p class="hint" style="margin-top:0">이어 두면 두 문서의 금액을 견줘 다르면 경고합니다 (문서 만들기는 막지 않습니다).</p>
+      <div id="links"></div>
+    </div>
     <div class="card hidden" id="result-card">
       <h2>만든 문서</h2>
       <div id="result"></div>
     </div>
   </aside>
 </div>
+
+<dialog id="roster-dialog" style="max-width:min(960px, calc(100vw - 32px)); width:100%">
+  <h2>입금계좌 확인서로 명단 채우기</h2>
+  <p class="hint">학생이 낸 확인서의 글자를 그대로 옮깁니다 (LLM 을 거치지 않습니다). 넣기 전에 확인하세요.</p>
+  <div id="roster-files"></div>
+  <div id="roster-map" class="small" style="margin:8px 0"></div>
+  <div class="list-wrap" style="max-height:340px; overflow:auto"><table class="list" id="roster-rows"></table></div>
+  <div class="row" style="margin-top:12px"><span class="spacer"></span>
+    <button type="button" onclick="this.closest('dialog').close()">취소</button>
+    <button type="button" id="roster-replace">명단을 이것으로 바꾸기</button>
+    <button type="button" class="primary" id="roster-append">뒤에 더하기</button>
+  </div>
+</dialog>
+<input type="file" id="roster-file" accept=".hwp,.hwpx" multiple hidden>
 
 <dialog id="gen-dialog">
   <h2>문서 만들기</h2>

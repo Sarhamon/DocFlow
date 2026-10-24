@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% set admin_tab = "cross" %}
+{% block title %}문서 간 대조{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+<div class="row" style="margin-bottom:12px">
+  <p class="muted small" style="margin:0; flex:1">
+    계획서와 정산서처럼 두 서식의 금액을 견주는 규칙입니다. 사용자가 문서 작성 화면의 <b>연결 문서</b>에서 상대 문서를 이어 두면,
+    검증할 때 고른 항목들의 합을 비교해 다르면 경고합니다. 정산은 계획보다 적을 수 있어 "넘지 않아야"도 고를 수 있습니다.
+  </p>
+  <button class="primary" id="btn-new" type="button">규칙 추가</button>
+</div>
+<div id="rules"></div>
+<p id="empty" class="muted hidden">아직 규칙이 없습니다. 대상 서식 쌍이 정해지면 추가하세요.</p>
+
+<dialog id="edit" style="max-width:min(880px, calc(100vw - 32px)); width:100%">
+  <form id="edit-form">
+    <h2 id="edit-title">대조 규칙</h2>
+    <label class="field"><span>규칙 이름</span><input name="name" required maxlength="200" placeholder="예: 계획 대비 정산 금액"></label>
+    <div class="row" style="align-items:flex-start; gap:16px; flex-wrap:wrap">
+      <div style="flex:1; min-width:280px" id="side-source"></div>
+      <div style="flex:1; min-width:280px" id="side-target"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="row small">비교
+        <select name="op"><option value="le">대상 합이 기준 합을 넘지 않아야 (정산 ≤ 계획)</option><option value="eq">두 합이 같아야</option></select>
+      </label>
+      <label class="row small"><input type="checkbox" name="enabled" checked> 켜기</label>
+      <span class="spacer"></span>
+      <button type="button" onclick="this.closest('dialog').close()">취소</button>
+      <button class="primary" type="submit">저장</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  const TITLE = { source: "기준 서식 (예: 계획서)", target: "대상 서식 (예: 정산서)" };
+  let editing = null;
+  const picked = { source: { form: null, keys: new Set() }, target: { form: null, keys: new Set() } };
+
+  function card(r) {
+    const side = (s) => h("div", { style: "flex:1" }, h("div", { class: "small muted" }, s === "source" ? "기준" : "대상"),
+      h("b", {}, `${r[s].form.program} ${r[s].form.form_no} ${r[s].form.title}`),
+      h("div", { class: "small" }, r[s].keys.map((k) => k.label).join(" + ")));
+    return h("div", { class: "card" },
+      h("div", { class: "row" }, h("h2", { style: "margin:0" }, r.name), h("span", { class: `badge ${r.enabled ? "completed" : ""}` }, r.enabled ? "켜짐" : "꺼짐"),
+        h("span", { class: "spacer" }), h("button", { class: "small", onclick: () => openEdit(r) }, "수정"),
+        h("button", { class: "small danger", onclick: async () => {
+          if (!confirm(`'${r.name}' 규칙을 지울까요? 사용자가 이어 둔 연결도 함께 지워집니다.`)) return;
+          try { await api("DELETE", `/api/admin/cross-rules/${r.id}`); await load(); } catch (e) { DF.fail(e); }
+        } }, "삭제")),
+      h("div", { class: "row", style: "align-items:flex-start; margin-top:8px" }, side("source"), h("div", { style: "padding:16px 8px" }, r.op === "eq" ? "=" : "≥"), side("target")),
+      h("p", { class: "muted small" }, r.op_name));
+  }
+
+  async function load() {
+    const rules = await api("GET", "/api/admin/cross-rules");
+    document.getElementById("rules").replaceChildren(...rules.map(card));
+    document.getElementById("empty").classList.toggle("hidden", rules.length > 0);
+  }
+
+  async function drawSide(side) {
+    const box = document.getElementById(`side-${side}`);
+    const state = picked[side];
+    const search = h("input", { type: "search", placeholder: "서식 이름·번호로 찾기", "aria-label": `${TITLE[side]} 찾기` });
+    const results = h("div", { class: "small" });
+    const keysBox = h("div", {});
+    box.replaceChildren(h("b", {}, TITLE[side]), h("div", { class: "row" }, search,
+      h("button", { type: "button", class: "small", onclick: () => find().catch(DF.fail) }, "찾기")), results,
+      state.form ? h("p", { class: "small" }, "고른 서식: ", h("b", {}, `${state.form.program} ${state.form.form_no} ${state.form.title}`)) : h("p", { class: "muted small" }, "서식을 찾아 고르세요."),
+      keysBox);
+    search.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); find().catch(DF.fail); } });
+
+    async function find() {
+      const data = await api("GET", `/api/admin/forms?${new URLSearchParams({ q: search.value.trim(), size: 20 })}`);
+      results.replaceChildren(...data.items.map((f) => h("div", {}, h("button", { type: "button", class: "small link", onclick: () => {
+        state.form = f; state.keys = new Set(); drawSide(side).catch(DF.fail);
+      } }, `${f.program} ${f.form_no} ${f.title}`))));
+    }
+
+    if (state.form) {
+      const keys = await api("GET", `/api/admin/cross-rules/keys?form_id=${state.form.id}`);
+      keysBox.replaceChildren(h("div", { class: "small muted" }, "더할 금액 항목 (여럿 고르면 합)"),
+        h("div", { style: "max-height:220px; overflow:auto" }, ...keys.map((k) => h("label", { class: "row small" },
+          h("input", { type: "checkbox", checked: state.keys.has(k.key), onchange: (ev) => { if (ev.target.checked) state.keys.add(k.key); else state.keys.delete(k.key); } }),
+          k.label, h("span", { class: "muted" }, ` ${k.key}`)))));
+    }
+  }
+
+  function openEdit(r) {
+    editing = r;
+    const f = document.getElementById("edit-form");
+    f.reset();
+    document.getElementById("edit-title").textContent = r ? `대조 규칙 — ${r.name}` : "대조 규칙 추가";
+    for (const side of ["source", "target"]) {
+      picked[side] = r ? { form: r[side].form, keys: new Set(r[side].keys.map((k) => k.key)) } : { form: null, keys: new Set() };
+    }
+    if (r) { f.name.value = r.name; f.op.value = r.op; f.enabled.checked = r.enabled; }
+    Promise.all([drawSide("source"), drawSide("target")]).catch(DF.fail);
+    document.getElementById("edit").showModal();
+  }
+
+  document.getElementById("edit-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    if (!picked.source.form || !picked.target.form) { DF.toast("기준·대상 서식을 모두 고르세요.", "error"); return; }
+    const body = { name: f.name.value, op: f.op.value, enabled: f.enabled.checked,
+      source_form_id: picked.source.form.id, source_keys: [...picked.source.keys],
+      target_form_id: picked.target.form.id, target_keys: [...picked.target.keys] };
+    try {
+      await api(editing ? "PUT" : "POST", editing ? `/api/admin/cross-rules/${editing.id}` : "/api/admin/cross-rules", body);
+      document.getElementById("edit").close();
+      DF.toast("저장했습니다.");
+      await load();
+    } catch (e) { DF.fail(e); }
+  });
+  document.getElementById("btn-new").addEventListener("click", () => openEdit(null));
+  load().catch(DF.fail);
+})();
+</script>
+{% endblock %}

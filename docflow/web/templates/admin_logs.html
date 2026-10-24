@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% block title %}{{ "감사 로그" if admin_tab == "audit" else "로그인 이력" }}{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+{# 로그인 이력(AD_25)과 감사 로그(AD_26)는 모양이 같아 한 틀을 쓴다 #}
+<form class="search row" id="search" style="margin-bottom:12px; flex-wrap:wrap">
+  {% if admin_tab == "audit" %}
+  <select name="action" id="actions" aria-label="행위"><option value="">모든 행위</option></select>
+  <input name="actor" placeholder="관리자 아이디" aria-label="관리자 아이디" style="width:140px">
+  <input type="search" name="q" placeholder="대상·내용에서 찾기" aria-label="검색어" style="flex:1">
+  {% else %}
+  <input name="login_id" placeholder="아이디" aria-label="아이디" style="width:140px">
+  <select name="success" aria-label="결과"><option value="">성공·실패</option><option value="false">실패만</option><option value="true">성공만</option></select>
+  {% endif %}
+  <label class="small row">부터 <input type="date" name="since"></label>
+  <label class="small row">까지 <input type="date" name="until"></label>
+  <button type="submit">찾기</button>
+</form>
+<div class="card" style="padding:0">
+  <div class="list-wrap">
+    <table class="list">
+      <thead id="head"></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="empty" class="empty hidden">기록이 없습니다.</div>
+</div>
+<div class="pager" id="pager"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  const audit = {{ (admin_tab == "audit") | tojson }};
+  const FAIL = { wrong_password: "비밀번호 틀림", locked: "잠긴 계정", inactive: "비활성 계정", unknown_id: "없는 아이디" };
+  const state = { page: 1, size: 50, filters: {} };
+
+  /** 날짜 입력(이 PC 기준)을 그날 0시의 시각(시간대 포함)으로. */
+  function dayStart(value, plusDays = 0) {
+    const d = new Date(`${value}T00:00:00`);
+    d.setDate(d.getDate() + plusDays);
+    return d.toISOString();
+  }
+
+  const head = audit ? ["때", "관리자", "행위", "대상", "내용"] : ["때", "아이디", "결과", "IP", "브라우저"];
+  document.getElementById("head").replaceChildren(h("tr", {}, ...head.map((x) => h("th", {}, x))));
+
+  function row(r) {
+    if (audit) {
+      return h("tr", {}, h("td", { class: "small" }, DF.fmtTime(r.at)), h("td", {}, r.actor), h("td", {}, r.action_name),
+        h("td", { class: "small" }, r.target), h("td", { class: "small", style: "max-width:360px; word-break:break-all" }, r.detail));
+    }
+    return h("tr", {}, h("td", { class: "small" }, DF.fmtTime(r.at)), h("td", {}, r.login_id),
+      h("td", {}, r.success ? h("span", { class: "badge completed" }, "성공") : h("span", { class: "badge error" }, FAIL[r.fail_reason] || r.fail_reason || "실패")),
+      h("td", { class: "small" }, r.ip || "-"), h("td", { class: "small muted", style: "max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" }, r.user_agent || "-"));
+  }
+
+  async function load() {
+    const params = new URLSearchParams({ page: state.page, size: state.size });
+    for (const [k, v] of Object.entries(state.filters)) if (v) params.set(k, v);
+    const data = await api("GET", `/api/admin/${audit ? "audit" : "logins"}?${params}`);
+    if (audit && data.actions) {
+      const sel = document.getElementById("actions");
+      if (sel.options.length === 1) sel.append(...Object.entries(data.actions).map(([k, v]) => h("option", { value: k }, v)));
+    }
+    document.getElementById("rows").replaceChildren(...data.items.map(row));
+    document.getElementById("empty").classList.toggle("hidden", data.total > 0);
+    const pages = Math.max(1, Math.ceil(data.total / state.size));
+    const pager = document.getElementById("pager");
+    pager.replaceChildren();
+    if (pages > 1) {
+      const go = (p) => () => { state.page = p; load().catch(DF.fail); };
+      pager.append(h("button", { class: "small", disabled: state.page <= 1, onclick: go(state.page - 1) }, "이전"),
+        h("span", { class: "muted small", style: "padding:4px 8px" }, `${state.page} / ${pages} · ${data.total}건`),
+        h("button", { class: "small", disabled: state.page >= pages, onclick: go(state.page + 1) }, "다음"));
+    }
+  }
+
+  document.getElementById("search").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const f = new FormData(ev.target);
+    const filters = Object.fromEntries([...f.entries()].map(([k, v]) => [k, String(v).trim()]));
+    if (filters.since) filters.since = dayStart(filters.since);
+    if (filters.until) filters.until = dayStart(filters.until, 1);
+    state.filters = filters; state.page = 1;
+    load().catch(DF.fail);
+  });
+  load().catch(DF.fail);
+})();
+</script>
+{% endblock %}

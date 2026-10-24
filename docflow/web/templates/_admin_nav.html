@@ -2,10 +2,16 @@
 <div class="row" style="margin-bottom:12px">
   <h1>관리자</h1>
 </div>
-<div class="tabs" role="tablist">
+<div class="tabs" role="tablist" style="flex-wrap:wrap">
   <a class="tab {{ 'on' if admin_tab == 'forms' }}" href="/admin/forms">서식 관리</a>
   <a class="tab {{ 'on' if admin_tab == 'categories' }}" href="/admin/categories">카테고리</a>
   <a class="tab {{ 'on' if admin_tab == 'rules' }}" href="/admin/rules">검증 규칙</a>
+  <a class="tab {{ 'on' if admin_tab == 'cross' }}" href="/admin/cross">문서 간 대조</a>
   <a class="tab {{ 'on' if admin_tab == 'users' }}" href="/admin/users">계정 관리</a>
   <a class="tab {{ 'on' if admin_tab == 'system' }}" href="/admin/system">시스템</a>
+  <span class="muted small" style="padding:6px 4px">|</span>
+  <a class="tab {{ 'on' if admin_tab == 'documents' }}" href="/admin/documents">문서 현황</a>
+  <a class="tab {{ 'on' if admin_tab == 'stats' }}" href="/admin/stats">오류 통계</a>
+  <a class="tab {{ 'on' if admin_tab == 'logins' }}" href="/admin/logins">로그인 이력</a>
+  <a class="tab {{ 'on' if admin_tab == 'audit' }}" href="/admin/audit">감사 로그</a>
 </div>

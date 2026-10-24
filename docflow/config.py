@@ -38,6 +38,12 @@ class Settings:
         )
 
     @property
+    def key_file(self) -> Path:
+        """개인정보 암호 키 파일. DB(data/)와 따로 둔다. 환경변수 DOCFLOW_KEY_FILE 이 우선한다."""
+        override = os.environ.get("DOCFLOW_KEY_FILE")
+        return Path(override) if override else self.root / "secrets" / "data.key"
+
+    @property
     def database_url(self) -> str:
         return f"sqlite:///{(self.data / 'docflow.db').as_posix()}"
 
