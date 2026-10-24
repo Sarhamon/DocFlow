@@ -14,6 +14,7 @@ from docflow.service.db import Form, connect
 from docflow.service.documents import Conflict, DocumentService, ValidationFailed, safe_name
 from docflow.service.storage import LocalFileStore
 from docflow.validate import REQUIRED_EMPTY
+from tests import hwpx_factory as hf
 from tests import service_fixtures as fx
 
 
@@ -70,6 +71,53 @@ def test_템플릿이_바뀌면_새_버전을_쌓고_옛_버전을_보존한다(
     assert old.slots[0].placeholder == "○○○ 회의"
     assert new.slots[0].placeholder == "○○○ 정기회의"
     assert store.exists(form.versions[0].template_key)
+
+
+BUNDLE = "test/2026_AID/4. 인건비/[AID 서식 4-01~02호] 인건비 확인서 등.hwpx"
+
+
+def _write_bundle(settings: Settings, *, numbered: bool = True) -> None:
+    def mark(no: str) -> str:
+        return f"[ AID 서식 {no}호 ]" if numbered else "머리"
+
+    table = hf.para_runs(f'<hp:run charPrIDRef="0">{fx.meeting_form()}</hp:run>')
+    xml = hf.body(hf.para(mark("4-01")), hf.para("입금계좌 확인서"), table,
+                  hf.para(mark("4-02")), hf.para("강의시간 배당표"), table)  # fmt: skip
+    path = settings.templates / BUNDLE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    hf.build(path, xml)
+
+
+def test_묶음_파일은_서식_번호마다_따로_등록하고_통째_항목은_숨긴다(env, session):
+    settings, _sessions, store = env
+    _write_bundle(settings, numbered=False)
+    sync_templates(session, store, settings)
+    whole = session.query(Form).filter(Form.key == BUNDLE).one()
+    assert whole.public
+
+    _write_bundle(settings)
+    report = sync_templates(session, store, settings)
+    assert report.added == [f"{BUNDLE}#4-01호", f"{BUNDLE}#4-02호"]
+    assert report.hidden == [BUNDLE] and not whole.public
+    parts = session.query(Form).filter(Form.key.startswith(f"{BUNDLE}#")).order_by(Form.key).all()
+    assert [(f.form_no, f.title) for f in parts] == [("4-01", "입금계좌 확인서"),
+                                                     ("4-02", "강의시간 배당표")]  # fmt: skip
+    assert catalog.load_schema(parts[1].latest).variant == 1
+    summary = catalog.summarize(catalog.load_schema(parts[1].latest))
+    assert (summary["variants"], summary["tables"], summary["cells"]) == (0, 1, 2)
+
+    again = sync_templates(session, store, settings)
+    assert (again.added, again.updated, again.hidden) == ([], [], [])
+
+
+def test_스키마_형식이_바뀌면_템플릿이_같아도_다시_뽑는다(env, session):
+    settings, _sessions, store = env
+    form = session.get(Form, form_id(session, "회의계획서"))
+    data = json.loads(form.latest.schema_json)
+    form.latest.schema_json = json.dumps({**data, "schema_version": 2})
+    session.commit()
+    report = sync_templates(session, store, settings)
+    assert report.updated == [fx.MEETING]
 
 
 # ------------------------------------------------------------ 서식 찾기
@@ -181,7 +229,8 @@ def test_만들면_산출물을_저장하고_완료된다(env, session):
 
     event = svc.history(doc.id)[-1]
     assert (event.kind, event.note) == ("generated", "1판")
-    assert json.loads(event.rules_json) == ["REQUIRED_EMPTY"]  # 줄인 교통비 서식에는 날짜 칸이 없다
+    # 줄인 교통비 서식에는 날짜 칸이 없다. 입금액 열이 금액이라 금액 형식 규칙이 붙는다
+    assert json.loads(event.rules_json) == ["AMOUNT_INVALID", "REQUIRED_EMPTY"]
     assert json.loads(event.input_json) == fx.traffic_input()
 
 

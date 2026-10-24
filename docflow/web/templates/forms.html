@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% set nav = "forms" %}
+{% block title %}서식 선택{% endblock %}
+{% block content %}
+<div class="forms-layout">
+  <aside class="card facets">
+    <h3>사업·카테고리</h3>
+    <ul id="facets"><li class="muted small">불러오는 중…</li></ul>
+  </aside>
+  <section>
+    <form class="search" id="search">
+      <input type="search" name="q" placeholder="서식 이름, 번호, 카테고리로 찾기" aria-label="검색어">
+      <select name="sort" aria-label="정렬">
+        <option value="form">서식 번호순</option>
+        <option value="title">이름순</option>
+        <option value="recent">최근 개정순</option>
+      </select>
+      <label class="row small"><input type="checkbox" name="archived"> 지난 학년도 서식 포함</label>
+      <button class="primary">찾기</button>
+    </form>
+    <div class="card" style="padding:0">
+      <div class="list-wrap">
+        <table class="list">
+          <thead><tr><th>서식 번호</th><th>서식 이름</th><th>사업</th><th>카테고리</th><th>버전</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div id="empty" class="empty hidden"></div>
+    </div>
+    <div class="pager" id="pager"></div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  const state = { q: "", program: "", category: "", sort: "form", archived: "exclude", page: 1, size: 20 };
+  const form = document.getElementById("search");
+
+  async function loadFacets() {
+    const data = await api("GET", "/api/forms/facets");
+    const ul = document.getElementById("facets");
+    ul.replaceChildren();
+    const item = (label, count, program, category, sub) => {
+      const on = state.program === program && state.category === category;
+      return h("li", { class: sub ? "sub" : "" },
+        h("button", { type: "button", class: on ? "on" : "", onclick: () => {
+          Object.assign(state, { program, category, page: 1 }); loadFacets(); loadForms();
+        } }, h("span", {}, label), h("span", { class: "muted small" }, count)));
+    };
+    const total = data.reduce((n, p) => n + p.count, 0);
+    ul.append(item("전체", total, "", "", false));
+    for (const p of data) {
+      ul.append(item(p.program || "(사업 없음)", p.count, p.program, "", false));
+      if (state.program === p.program) {
+        for (const c of p.categories) ul.append(item(`${c.no ?? ""} ${c.name || "(기타)"}`.trim(), c.count, p.program, c.name, true));
+      }
+    }
+  }
+
+  async function loadForms() {
+    const params = new URLSearchParams({ sort: state.sort, archived: state.archived, page: state.page, size: state.size });
+    for (const k of ["q", "program", "category"]) if (state[k]) params.set(k, state[k]);
+    const data = await api("GET", `/api/forms?${params}`);
+    const rows = document.getElementById("rows");
+    rows.replaceChildren(...data.items.map((f) => h("tr", { class: "click", onclick: () => { location.href = `/forms/${f.id}`; } },
+      h("td", {}, f.form_no || "-"),
+      h("td", {}, h("a", { href: `/forms/${f.id}` }, f.title), f.archived ? h("span", { class: "badge", style: "margin-left:6px" }, "지난 학년도") : null),
+      h("td", {}, f.program), h("td", {}, f.category), h("td", {}, `v${f.version}`))));
+    const empty = document.getElementById("empty");
+    empty.classList.toggle("hidden", data.total > 0);
+    // 결과 없음 안내 (FM_06)
+    empty.textContent = state.q ? `'${state.q}' 에 맞는 서식이 없습니다. 다른 낱말로 찾거나 사업·카테고리 필터를 풀어 보세요.` : "등록된 서식이 없습니다. 관리자에게 서식 등록을 요청하세요.";
+    const pages = Math.max(1, Math.ceil(data.total / state.size));
+    const pager = document.getElementById("pager");
+    pager.replaceChildren();
+    if (pages > 1) {
+      const go = (p) => () => { state.page = p; loadForms(); window.scrollTo(0, 0); };
+      pager.append(h("button", { class: "small", disabled: state.page <= 1, onclick: go(state.page - 1) }, "이전"));
+      pager.append(h("span", { class: "muted small", style: "padding:4px 8px" }, `${state.page} / ${pages} (${data.total}건)`));
+      pager.append(h("button", { class: "small", disabled: state.page >= pages, onclick: go(state.page + 1) }, "다음"));
+    }
+  }
+
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    state.q = form.q.value.trim();
+    state.sort = form.sort.value;
+    state.archived = form.archived.checked ? "include" : "exclude";
+    state.page = 1;
+    loadForms().catch(DF.fail);
+  });
+  form.sort.addEventListener("change", () => form.requestSubmit());
+  form.archived.addEventListener("change", () => form.requestSubmit());
+
+  loadFacets().catch(DF.fail);
+  loadForms().catch(DF.fail);
+})();
+</script>
+{% endblock %}

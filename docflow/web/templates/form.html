@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% set nav = "forms" %}
+{% block title %}서식 보기{% endblock %}
+{% block content %}
+<p><a href="/forms">← 서식 목록</a></p>
+<div class="card">
+  <div class="row">
+    <div>
+      <div class="muted small" id="meta"></div>
+      <h1 id="title">불러오는 중…</h1>
+    </div>
+    <span class="spacer"></span>
+    <form class="row" id="create">
+      <input name="title" placeholder="문서 이름 (비우면 서식 이름)" aria-label="문서 이름" style="min-width:220px">
+      <button class="primary">새 문서 만들기</button>
+    </form>
+  </div>
+  <div class="summary-grid" id="summary"></div>
+  <div class="muted small" id="versions"></div>
+</div>
+<div class="card">
+  <div class="row">
+    <h2>서식 구조</h2>
+    <span class="spacer"></span>
+    <label class="row small hidden" id="variant-box">변형 <select id="variant"></select></label>
+  </div>
+  <div class="legend">
+    <span><i style="background:var(--primary-soft)"></i>입력 칸</span>
+    <span><i style="background:var(--ok-soft)"></i>명단·내역 (행 추가)</span>
+    <span><i style="background:var(--warn-soft)"></i>자동 계산</span>
+  </div>
+  <div id="sheets"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/sheet.js"></script>
+<script>
+(() => {
+  const { h, api } = DF;
+  const id = DF.params.form_id;
+  let data;
+
+  function draw() {
+    const variant = DF.choices(data.schema).length ? Number(document.getElementById("variant").value) : (data.schema.variant ?? null);
+    const idx = DF.indexSchema(data.schema);
+    const box = document.getElementById("sheets");
+    box.replaceChildren();
+    for (const t of data.layout) {
+      if (!DF.inVariant(data.schema, t.index, variant)) continue;
+      const own = idx.has(t.index) ? idx.get(t.index) : null;
+      const inRepeat = (r) => own && own.repeats.some((rep) => rep.start_row <= r && r <= rep.end_row);
+      const table = DF.renderTable(t, {
+        cell: (c) => {
+          const key = `${c.row},${c.col}`;
+          if (own && own.slots.has(key)) {
+            const s = own.slots.get(key);
+            if (s.role === "approval") return { node: c.text, cls: "approval" };
+            return { node: c.text || "(입력)", cls: "preview-slot" };
+          }
+          if (own && own.formulas.has(key)) return { node: c.text || "(계산)", cls: "preview-formula" };
+          if (inRepeat(c.row)) return { node: c.text, cls: "preview-repeat" };
+          return null;
+        },
+      });
+      box.append(h("div", { class: "sheet" }, h("div", { class: "muted small" }, `표 ${t.index + 1}${t.depth ? " (안쪽 표)" : ""}`), table));
+    }
+  }
+
+  async function load() {
+    const [detail, layout] = await Promise.all([api("GET", `/api/forms/${id}`), api("GET", `/api/forms/${id}/layout`)]);
+    data = layout;
+    document.title = `${detail.title} · DocFlow`;
+    document.getElementById("title").textContent = detail.title;
+    document.getElementById("meta").textContent = [detail.program, detail.form_no && `서식 ${detail.form_no}`, detail.category].filter(Boolean).join(" · ");
+    const s = detail.summary;
+    // 채울 항목 수 요약 (FM_08)
+    const stats = [["누름틀", s.fields], ["표 입력 칸", s.cells], ["필수 칸", s.required], ["명단·내역", s.repeats], ["변형", s.variants || "없음"]];
+    document.getElementById("summary").replaceChildren(...stats.map(([k, v]) => h("div", { class: "stat" }, h("b", {}, v), h("span", { class: "muted small" }, k))));
+    document.getElementById("versions").textContent = "버전: " + detail.versions.map((v) => `v${v.version} (${DF.fmtTime(v.created_at)})`).join(", ");
+    if (detail.variants.length) {
+      const sel = document.getElementById("variant");
+      sel.replaceChildren(...detail.variants.map((v) => h("option", { value: v.index }, v.label)));
+      sel.addEventListener("change", draw);
+      document.getElementById("variant-box").classList.remove("hidden");
+    }
+    draw();
+  }
+
+  document.getElementById("create").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      const title = ev.target.title.value.trim() || null;
+      const doc = await api("POST", "/api/documents", { form_id: Number(id), title });
+      const variant = document.getElementById("variant");
+      if (DF.choices(data.schema).length) {
+        // 미리보기에서 고른 변형으로 시작한다
+        const label = data.schema.variants.find((v) => v.index === Number(variant.value)).label;
+        await api("PUT", `/api/documents/${doc.id}/input`, { variant: label });
+      }
+      location.href = `/documents/${doc.id}`;
+    } catch (e) { DF.fail(e); }
+  });
+
+  load().catch((e) => {
+    // 로딩 실패 처리 (FM_12)
+    document.getElementById("title").textContent = "서식을 열 수 없습니다";
+    document.getElementById("sheets").replaceChildren(h("div", { class: "msg error" }, `서식 준비 중입니다. 잠시 뒤 다시 시도하거나 관리자에게 알려 주세요. (${e.message})`));
+  });
+})();
+</script>
+{% endblock %}

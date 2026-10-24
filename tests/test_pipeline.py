@@ -77,6 +77,12 @@ def test_변형은_이름이나_번호로_고른다():
         variants=[Variant(index=0, label="1-01호", first_table=0, last_table=0),
                   Variant(index=1, label="1-02호", first_table=1, last_table=1)],
     )  # fmt: skip
+    fixed = schema.model_copy(update={"variant": 1})
+    assert parse_input(fixed, {}).data.variant == 1
+    assert parse_input(fixed, {"variant": "1-02호"}).data.variant == 1
+    with pytest.raises(InputError):
+        parse_input(fixed, {"variant": "1-01호"})
+    assert "variant" not in skeleton(fixed)
     assert parse_input(schema, {"variant": "1-02호"}).data.variant == 1
     assert parse_input(schema, {"variant": 1}).data.variant == 1
     assert parse_input(schema, {"variant": "0"}).data.variant == 0
@@ -137,3 +143,41 @@ def test_force면_검증_오류가_있어도_만든다(traffic, tmp_path):
     schema, template = traffic
     result = make_document(schema, parse_input(schema, {}), template, tmp_path, "문서", force=True)
     assert result.errors and result.generated is not None
+
+
+def test_열_이름이_겹치면_입력_틀은_열_번호를_쓴다():
+    """`사업추진일정 0월` 처럼 같은 이름의 열이 여럿이면 이름으로는 읽을 수 없다."""
+    from docflow.schema.model import RepeatColumn, RepeatSpec, TableSpec
+
+    schema = FormSchema(
+        title="계획서",
+        tables=[TableSpec(index=0, rows=5, cols=4)],
+        repeats=[
+            RepeatSpec(table=0, header_rows=[0], start_row=1, end_row=3, columns=[
+                RepeatColumn(col=0, label="세부내용"),
+                RepeatColumn(col=1, label="일정 0월"),
+                RepeatColumn(col=2, label="일정 0월"),
+            ]),
+        ],
+    )  # fmt: skip
+    rows = skeleton(schema)["rows"]["t0.r1-3"]
+    assert list(rows[0]) == ["세부내용", "1", "2"]
+    parse_input(schema, {"rows": {"t0.r1-3": rows}})  # 틀을 그대로 읽을 수 있다
+
+
+def test_입력_틀은_반복영역의_날짜_자리표시자를_값으로_넣지_않는다():
+    """`2000.00.00(금)` 이 미리 적힌 열을 틀에 그대로 두면 빈 틀이 날짜 오류로 걸린다."""
+    from docflow.schema.model import RepeatColumn, RepeatSpec
+
+    schema = FormSchema(
+        title="지급 내역서",
+        tables=[TableSpec(index=0, rows=4, cols=3)],
+        repeats=[
+            RepeatSpec(table=0, header_rows=[0], start_row=1, end_row=3, columns=[
+                RepeatColumn(col=0, label="연번", input_type="number", prefilled="1"),
+                RepeatColumn(col=1, label="일자", input_type="date", prefilled="2000.00.00(금)"),
+                RepeatColumn(col=2, label="금액", input_type="amount", prefilled="5,000"),
+            ]),
+        ],
+    )  # fmt: skip
+    assert skeleton(schema)["rows"]["t0.r1-3"] == [{"연번": "1", "일자": "", "금액": "5,000"}]

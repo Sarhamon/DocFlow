@@ -32,8 +32,9 @@ from docflow.pipeline import ParsedInput, make_document, parse_input
 from docflow.schema.model import FormSchema
 from docflow.service.catalog import NotFound, get_form, load_schema
 from docflow.service.db import Artifact, Document, DocumentEvent, now
+from docflow.service.rules import config_for
 from docflow.service.storage import FileStore
-from docflow.validate import Issue, applicable_rules, validate
+from docflow.validate import Issue, ValidationConfig, applicable_rules, validate
 
 STATUSES = ("draft", "completed")
 #: 파일 이름에 쓸 수 없는 글자
@@ -69,8 +70,8 @@ class GenerateOutcome:
     skipped_formulas: list[tuple[str, str]] = field(default_factory=list)
 
 
-class _Serialized:
-    """변환을 한 번에 하나만 하도록 감싼다."""
+class Serialized:
+    """변환을 한 번에 하나만 하도록 감싼다. 문서 생성과 관리자의 서식 업로드(HWP)가 같이 쓴다."""
 
     def __init__(self, inner: Converter) -> None:
         self.inner = inner
@@ -101,7 +102,7 @@ class DocumentService:
     ) -> None:
         self.session = session
         self.store = store
-        self.converter = _Serialized(converter) if converter is not None else None
+        self.converter = Serialized(converter) if converter is not None else None
 
     # ------------------------------------------------------------ 조회
     def get(self, doc_id: int, owner_id: int | None = None) -> Document:
@@ -112,6 +113,10 @@ class DocumentService:
 
     def schema_of(self, doc: Document) -> FormSchema:
         return load_schema(doc.form_version)
+
+    def rules_of(self, doc: Document) -> ValidationConfig:
+        """관리자가 정한 규칙 설정 (전체 on/off + 이 서식의 예외)."""
+        return config_for(self.session, doc.form_version.form_id)
 
     def raw_input(self, doc: Document) -> dict:
         return json.loads(doc.input_json or "{}")
@@ -143,10 +148,18 @@ class DocumentService:
 
     # ------------------------------------------------------------ 작성
     def create(
-        self, form_id: int, owner_id: int | None = None, *, title: str | None = None
+        self,
+        form_id: int,
+        owner_id: int | None = None,
+        *,
+        title: str | None = None,
+        public_only: bool = True,
     ) -> Document:
-        """새 문서 (FM_09). 서식의 최신 버전으로 만든다."""
-        form = get_form(self.session, form_id)
+        """새 문서 (FM_09). 서식의 최신 버전으로 만든다.
+
+        public_only=False 는 관리자가 공개 전 서식을 점검용으로 써 볼 때다.
+        """
+        form = get_form(self.session, form_id, public_only=public_only)
         doc = Document(
             owner_id=owner_id,
             form_version_id=form.latest.id,
@@ -203,10 +216,16 @@ class DocumentService:
         """입력 완료 검증 (VA_01). 결과를 이력에 남긴다 (MY_07)."""
         doc = self.get(doc_id, owner_id)
         schema = self.schema_of(doc)
-        issues = validate(schema, parse_input(schema, self.raw_input(doc)).data)
+        issues = validate(schema, parse_input(schema, self.raw_input(doc)).data, self.rules_of(doc))
         self._event(doc, "validated", input_json=doc.input_json, issues=issues)
         self.session.commit()
         return issues
+
+    def check(self, doc_id: int, raw: dict, owner_id: int | None = None) -> list[Issue]:
+        """입력 중 실시간 점검 (IN_13~15). 저장하지 않고 이력도 남기지 않는다."""
+        doc = self.get(doc_id, owner_id)
+        schema = self.schema_of(doc)
+        return validate(schema, parse_input(schema, raw).data, self.rules_of(doc))
 
     def generate(
         self,
@@ -223,11 +242,12 @@ class DocumentService:
         version = doc.form_version
         template = self.store.local_path(version.template_key)
         name = self._file_stem(doc)
+        config = self.rules_of(doc)
 
         with tempfile.TemporaryDirectory(prefix="dfg") as tmp:
             result = make_document(
                 schema, parsed, template, Path(tmp), name,
-                converter=self.converter, formats=formats, force=force,
+                converter=self.converter, formats=formats, force=force, config=config,
             )  # fmt: skip
             if result.generated is None:
                 self._event(doc, "validated", input_json=doc.input_json, issues=result.issues)
@@ -258,7 +278,7 @@ class DocumentService:
         skipped = [(f"t{f.table}.r{f.row}.c{f.col}", why) for f, why in gen.formulas.skipped]
         self._event(
             doc, "generated", input_json=doc.input_json, issues=result.issues,
-            rules=sorted(applicable_rules(schema)),
+            rules=sorted(applicable_rules(schema, config)),
             note=f"{doc.revision}판" + (f", 변환 실패 {sorted(errors)}" if errors else ""),
         )  # fmt: skip
         self.session.commit()

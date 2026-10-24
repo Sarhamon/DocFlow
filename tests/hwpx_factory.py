@@ -139,12 +139,20 @@ def body_field(name: str = "content_body", fid: str = "900") -> list[str]:
 
 
 def build(path: Path, *sections: str) -> Path:
-    """mimetype + section 들로 최소 HWPX 를 만든다."""
+    """mimetype + section 들로 최소 HWPX 를 만든다.
+
+    항목 시각을 고정해 같은 내용이면 같은 파일이 된다. 등록은 파일 해시로 바뀐 서식을 가리므로,
+    시각이 들어가면 다시 만든 서식이 초 경계에 따라 바뀐 것으로 잡힌다.
+    """
+
+    def entry(name: str) -> zipfile.ZipInfo:
+        return zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+
     with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr(zipfile.ZipInfo("mimetype"), "application/hwp+zip", zipfile.ZIP_STORED)
-        zf.writestr("version.xml", "<v/>", zipfile.ZIP_DEFLATED)
+        zf.writestr(entry("mimetype"), "application/hwp+zip", zipfile.ZIP_STORED)
+        zf.writestr(entry("version.xml"), "<v/>", zipfile.ZIP_DEFLATED)
         for i, sec in enumerate(sections):
-            zf.writestr(f"Contents/section{i}.xml", sec, zipfile.ZIP_DEFLATED)
+            zf.writestr(entry(f"Contents/section{i}.xml"), sec, zipfile.ZIP_DEFLATED)
     return path
 
 

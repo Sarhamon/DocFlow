@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% set admin_tab = "categories" %}
+{% block title %}카테고리{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+<p class="muted small">
+  사업마다 카테고리 이름을 정합니다. 이름을 바꾸면 그 카테고리의 서식이 모두 함께 바뀌고, 사용자 목록의 필터에도 그대로 나옵니다.
+  사업마다 다른 표기(<code>계획서및보고서</code> / <code>계획서 및 보고서</code>)를 맞출 때도 씁니다.
+  누름틀의 한글 이름은 서식마다 <a href="/admin/forms">서식 관리</a>의 입력폼에서 바꿉니다.
+</p>
+<div class="card" style="padding:0">
+  <div class="list-wrap">
+    <table class="list">
+      <thead><tr><th>사업</th><th>번호</th><th>카테고리</th><th>서식 수</th><th>새 이름</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+
+  async function load() {
+    const rows = await api("GET", "/api/admin/categories");
+    document.getElementById("rows").replaceChildren(...rows.map((c) => {
+      const no = h("input", { type: "number", min: 0, max: 99, style: "width:64px", value: c.category_no ?? "", "aria-label": "카테고리 번호" });
+      const name = h("input", { value: c.category, maxlength: 100, "aria-label": "새 카테고리 이름" });
+      const save = h("button", { class: "small", onclick: async () => {
+        try {
+          const body = { program: c.program, category: c.category, new: name.value, category_no: no.value === "" ? null : Number(no.value) };
+          const out = await api("PUT", "/api/admin/categories", body);
+          DF.toast(`서식 ${out.forms}개의 카테고리를 바꿨습니다.`);
+          await load();
+        } catch (e) { DF.fail(e); }
+      } }, "바꾸기");
+      return h("tr", {}, h("td", {}, c.program || "-"), h("td", {}, no), h("td", {}, c.category || h("span", { class: "muted" }, "(없음)")),
+        h("td", {}, `${c.forms}개`), h("td", {}, name), h("td", {}, save));
+    }));
+  }
+  load().catch(DF.fail);
+})();
+</script>
+{% endblock %}

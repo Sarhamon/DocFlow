@@ -346,6 +346,74 @@ def test_누름틀이_한_번씩이면_변형이_없다(tmp_path):
     assert s.variants == []
 
 
+def _묶음(*parts: tuple[str, str, int]) -> str:
+    """서식 머리 표시 -> 제목 -> 표 n 개 를 이어 붙인 본문 (구역 바로 아래 문단들)."""
+    paras = []
+    for mark, title, tables in parts:
+        paras += [hf.para(mark), hf.para(title)]
+        paras += [hf.para_runs(f'<hp:run charPrIDRef="0">{tbl(1, 1, (0, 0, "칸"))}</hp:run>')
+                  for _ in range(tables)]  # fmt: skip
+    return hf.body(*paras)
+
+
+def schema_of_body(tmp_path, body: str, stem: str):
+    path = hf.build(tmp_path / "f.hwpx", body)
+    return extract(HwpxDocument.open(path), stem=stem)
+
+
+def test_서식_머리의_번호로_서로_다른_서식_묶음을_나눈다(tmp_path):
+    """누름틀이 없어도 나뉘고, 제목은 표시 다음 문단에서 가져온다. 빠진 번호(4-02)는 건너뛴다."""
+    body = _묶음(("[ 앵커 서식 4-01호 ]", "인건비 입금계좌 확인서", 1),
+                 ("[ 앵커 서식 4-03호 ] <전문가 활용시간 배당표>", "", 2),
+                 ("[ 앵커 서식4-04호 ]", "계좌이체에 따른 증빙자료", 1))  # fmt: skip
+    s = schema_of_body(tmp_path, body, "(서식 4-01~04호) [앵커(신산업)] 인건비 입금계좌 확인서 등")
+    assert [(v.label, v.title, v.first_table, v.last_table) for v in s.variants] == [
+        ("4-01호", "인건비 입금계좌 확인서", 0, 0),
+        ("4-03호", "전문가 활용시간 배당표", 1, 2),
+        ("4-04호", "계좌이체에 따른 증빙자료", 3, 3),
+    ]
+
+
+def test_파일_이름의_번호_밖의_머리_표시는_믿지_않는다(tmp_path):
+    """`[혁신 서식 7-01호]` 의 둘째 쪽이 `7-02호` 로 잘못 적혀 있다."""
+    body = _묶음(("[ 혁신 서식 7-01호 ]", "회의계획서", 1),
+                 ("[ 혁신 서식 7-02호 ]", "회의계획서", 1))  # fmt: skip
+    s = schema_of_body(tmp_path, body, "[혁신 서식 7-01호] 회의계획서")
+    assert s.variants == []
+
+
+def test_번호가_붙은_변형은_서식별로_떼어_낸다(tmp_path):
+    body = _묶음(("[ AID 서식 1-01호 ] <과제 사업 계획서 기안문>", "", 1),
+                 ("[ AID 서식 1-02호 ] <과제 결과 보고서 기안문>", "", 1))  # fmt: skip
+    s = schema_of_body(tmp_path, body, "[AID 서식 1-01~02호] 일반기안문(샘플)")
+    parts = s.split()
+    assert [(p.form_id, p.title, p.variant, len(p.variants)) for p in parts] == [
+        ("1-01", "과제 사업 계획서 기안문", 0, 2),
+        ("1-02", "과제 결과 보고서 기안문", 1, 2),
+    ]
+    assert parts[1].choices == [] and s.choices == s.variants
+    assert parts[1].split() == []
+
+
+@pytest.mark.parametrize(
+    ("stem", "title"),
+    [("[AID 서식 1-03호+05호] 일반기안문(선대응 2종)", "세부과제 운영 계획서 기안문 (선대응)"),
+     ("[AID 서식 1-03~05호] 일반기안문(샘플 3종)", "세부과제 운영 계획서 기안문"),
+     ("(서식 1-03~05호) [앵커(신산업)] 일반기안문(샘플)", "세부과제 운영 계획서 기안문"),
+     ("[AID 서식 1-03~05호] 일반기안문", "세부과제 운영 계획서 기안문")],
+)  # fmt: skip
+def test_묶음의_갈래를_떼어_낸_서식_이름_뒤에_붙인다(tmp_path, stem, title):
+    body = _묶음(("[ AID 서식 1-03호 ] <세부과제 운영 계획서 기안문>", "", 1),
+                 ("[ AID 서식 1-05호 ] <세세부과제 운영 계획서 기안문>", "", 1))  # fmt: skip
+    assert schema_of_body(tmp_path, body, stem).split()[0].title == title
+
+
+def test_번호가_없는_변형은_떼어_내지_않는다(tmp_path):
+    s = schema_of(tmp_path, _기안문_변형(1), _기안문_변형(2), stem="(서식 1-05~09호) 지출품의서")
+    assert [v.label for v in s.variants] == ["변형 1", "변형 2"]
+    assert s.split() == []
+
+
 # ------------------------------------------------------------------ 메타
 def test_파일_이름과_경로에서_서식_정보를_채운다(tmp_path):
     s = schema_of(

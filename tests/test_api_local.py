@@ -2,7 +2,7 @@
 
 내부 자료가 필요해서 `pytest -m local` 로만 돈다. 데이터(DB·파일)는 임시 폴더에 둔다.
 
-1. templates/ 의 서식 183개를 등록하고, 다시 등록해도 버전이 늘지 않는다.
+1. templates/ 의 서식을 번호별로 234개 등록하고(묶음 12개를 나눔), 다시 등록해도 버전이 늘지 않는다.
 2. 수직 슬라이스 서식 3종을 API 만으로 만들기 → 임시저장 → 재조회 → 만들기 → 내려받기.
    한컴오피스가 있으면 HWP·PDF 까지, 없으면 HWPX 까지.
 """
@@ -24,13 +24,14 @@ from tests import service_fixtures as fx
 
 pytestmark = pytest.mark.local
 
-EXPECTED_FORMS = 183
+#: 파일 183개 중 묶음 12개를 서식 번호별로 나눠 234개
+EXPECTED_FORMS = 234
 
 #: 입력 예시 -> (검색어, 서식 번호)
 SLICE = {
     "교통비_지급_내역서": ("교통비 지급 내역서", "5-05"),
     "정산서": ("정산서", "3-01"),
-    "일반기안문_1-03호": ("일반기안문", "1-01~10"),
+    "일반기안문_1-03호": ("일반기안문(샘플 10종)", "1-03"),
 }
 
 
@@ -45,7 +46,7 @@ def client(tmp_path_factory):
         first = sync_templates(s, store, settings)
         again = sync_templates(s, store, settings)
     assert (len(first.added), first.failed) == (EXPECTED_FORMS, [])
-    assert (again.added, again.updated, again.unchanged) == ([], [], EXPECTED_FORMS)
+    assert (again.added, again.updated, again.unchanged) == ([], [], 183)
     app = create_app(settings, store=store)
     fx.make_user(app.state.sessions)
     with TestClient(app) as c:

@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% set admin_tab = "forms" %}
+{% block title %}서식 관리{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+<p><a href="/admin/forms">← 서식 목록</a></p>
+<div class="card">
+  <div class="row">
+    <div>
+      <h2 id="title" style="margin:0">서식</h2>
+      <div class="muted small" id="meta"></div>
+    </div>
+    <span class="spacer"></span>
+    <span id="state"></span>
+    <button id="btn-public" type="button" class="primary"></button>
+  </div>
+  <p class="msg warn hidden" id="private-note">
+    비공개 서식은 사용자 목록에 보이지 않습니다. 아래 미리보기로 입력 칸이 맞게 뽑혔는지 확인하고, 필요하면 점검용 문서를 만들어 본 뒤 공개하세요.
+  </p>
+  <div class="summary-grid" id="summary"></div>
+  <p class="small"><a id="preview" href="#">미리보기·점검용 문서 만들기 →</a></p>
+</div>
+
+<div class="card">
+  <h2>서식 정보</h2>
+  <form id="edit" class="row" style="flex-wrap:wrap; align-items:flex-end">
+    <label class="field" style="flex:2; min-width:240px"><span>서식 이름</span><input name="title" required maxlength="300"></label>
+    <label class="field" style="width:140px"><span>사업</span><input name="program" required maxlength="50"></label>
+    <label class="field" style="width:90px"><span>카테고리 번호</span><input name="category_no" type="number" min="0" max="99"></label>
+    <label class="field" style="width:180px"><span>카테고리</span><input name="category" maxlength="100"></label>
+    <label class="field row small" style="width:auto"><input type="checkbox" name="archived"> 지난 학년도</label>
+    <button type="submit">저장</button>
+  </form>
+  <p class="muted small" id="file"></p>
+</div>
+
+<div class="card">
+  <div class="row">
+    <h2>입력폼</h2>
+    <span class="spacer"></span>
+    <button class="primary" id="items-save" type="button">입력폼 저장</button>
+  </div>
+  <p class="muted small">
+    서식에서 자동으로 뽑은 입력 항목입니다. 잘못 잡힌 칸은 <b>사용</b>을 끄면 서식 글자 그대로 두고 입력·검증하지 않습니다.
+    필수·형식·이름을 바꾸면 작성 중인 문서에도 바로 적용되고, 서식을 개정해도 유지됩니다. 빈 칸은 추출한 대로 둡니다.
+  </p>
+  <div class="list-wrap">
+    <table class="list">
+      <thead><tr><th>사용</th><th>종류</th><th>항목 (추출)</th><th>표시 이름</th><th>형식</th><th>필수</th><th>순서</th></tr></thead>
+      <tbody id="items"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <h2>버전</h2>
+    <span class="spacer"></span>
+    <form id="revise" class="row">
+      <input type="file" name="file" accept=".hwp,.hwpx" required aria-label="새 버전 파일">
+      <button type="submit" id="revise-go">개정 (새 버전 올리기)</button>
+    </form>
+  </div>
+  <p class="muted small">개정해도 이미 쓴 문서는 작성 당시 버전으로 계속 만듭니다. 새 문서부터 새 버전을 씁니다.</p>
+  <div id="revise-msg"></div>
+  <table class="list"><thead><tr><th>버전</th><th>올린 때</th><th>이 버전으로 쓴 문서</th></tr></thead><tbody id="versions"></tbody></table>
+</div>
+
+<div class="card hidden" id="siblings-card">
+  <h2>같은 파일에서 나온 서식</h2>
+  <p class="muted small">서식 여러 개가 든 파일이라 서식 번호마다 나눠 등록했습니다. 개정하면 이 서식들도 함께 새 버전이 됩니다. 공개는 서식마다 따로 합니다.</p>
+  <ul id="siblings"></ul>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  const id = DF.params.form_id;
+  let form;
+
+  function draw() {
+    document.title = `${form.title} · 서식 관리 · DocFlow`;
+    document.getElementById("title").textContent = form.title;
+    document.getElementById("meta").textContent = [form.program, form.form_no && `서식 ${form.form_no}`, form.category, `v${form.version}`, form.archived && "지난 학년도"].filter(Boolean).join(" · ");
+    document.getElementById("state").replaceChildren(h("span", { class: `badge ${form.public ? "completed" : "warning"}` }, form.public ? "공개" : "비공개"));
+    const btn = document.getElementById("btn-public");
+    btn.textContent = form.public ? "비공개로 바꾸기" : "공개하기";
+    btn.className = form.public ? "" : "primary";
+    document.getElementById("private-note").classList.toggle("hidden", form.public);
+    const s = form.summary;
+    const stats = [["누름틀", s.fields], ["표 입력 칸", s.cells], ["필수 칸", s.required], ["명단·내역", s.repeats], ["표", s.tables]];
+    document.getElementById("summary").replaceChildren(...stats.map(([k, v]) => h("div", { class: "stat" }, h("b", {}, v), h("span", { class: "muted small" }, k))));
+    document.getElementById("preview").href = `/forms/${form.id}`;
+    const f = document.getElementById("edit");
+    f.title.value = form.title; f.program.value = form.program;
+    f.category_no.value = form.category_no ?? ""; f.category.value = form.category || ""; f.archived.checked = form.archived;
+    document.getElementById("file").textContent = `템플릿 파일: ${form.file}`;
+    document.getElementById("versions").replaceChildren(...form.versions.slice().reverse().map((v) => h("tr", {},
+      h("td", {}, `v${v.version}`), h("td", { class: "small" }, DF.fmtTime(v.created_at)), h("td", {}, `${v.documents}건`))));
+    document.getElementById("siblings-card").classList.toggle("hidden", !form.siblings.length);
+    document.getElementById("siblings").replaceChildren(...form.siblings.map((x) => h("li", {},
+      h("a", { href: `/admin/forms/${x.id}` }, `${x.form_no} ${x.title}`), " ",
+      h("span", { class: `badge ${x.public ? "completed" : "warning"}` }, x.public ? "공개" : "비공개"))));
+  }
+
+  // ---------------------------------------------------------------- 입력폼 (AD_09~12, AD_14)
+  const KIND = { field: "누름틀", cell: "표 칸", column: "명단 열" };
+  const TYPE = { text: "글", date: "날짜", amount: "금액", number: "숫자", checkbox: "선택(□)" };
+  let items = [];
+  let types = [];
+
+  function drawItems() {
+    document.getElementById("items").replaceChildren(...items.map((it) => {
+      const s = it.setting;
+      const ex = it.extracted;
+      const where = it.kind === "field" ? it.key : it.kind === "cell" ? `표 ${ex.table + 1} · ${it.key}` : `표 ${ex.table + 1} · ${it.key}`;
+      const use = h("input", { type: "checkbox", checked: !s.hidden, "aria-label": "입력폼에 쓰기", onchange: (ev) => { s.hidden = !ev.target.checked; } });
+      const label = it.kind === "column" ? h("span", { class: "muted small" }, "명단 열 이름은 바꾸지 않습니다")
+        : h("input", { value: s.label || "", placeholder: ex.label || it.key, maxlength: 200, oninput: (ev) => { s.label = ev.target.value; } });
+      const type = h("select", { onchange: (ev) => { s.input_type = ev.target.value || null; } },
+        h("option", { value: "" }, `추출대로 (${TYPE[ex.input_type] || ex.input_type})`),
+        ...types.map((t) => h("option", { value: t, selected: s.input_type === t }, TYPE[t] || t)));
+      const req = it.kind === "column" ? h("span", { class: "muted small" }, "-")
+        : h("select", { onchange: (ev) => { s.required = ev.target.value === "" ? null : ev.target.value === "1"; } },
+          h("option", { value: "" }, `추출대로 (${ex.required ? "필수" : "선택"})`),
+          h("option", { value: "1", selected: s.required === true }, "필수"),
+          h("option", { value: "0", selected: s.required === false }, "선택"));
+      const pos = it.kind !== "field" ? "" : h("input", { type: "number", min: 0, style: "width:64px", value: s.position ?? "", "aria-label": "표시 순서",
+        oninput: (ev) => { s.position = ev.target.value === "" ? null : Number(ev.target.value); } });
+      const hint = ex.placeholder ? h("div", { class: "hint" }, `서식: ${ex.placeholder.split("\n")[0].slice(0, 60)}`) : null;
+      return h("tr", {}, h("td", {}, use), h("td", { class: "small" }, KIND[it.kind]),
+        h("td", {}, ex.label || "(이름 없음)", h("div", { class: "muted small" }, where), hint),
+        h("td", {}, label), h("td", {}, type), h("td", {}, req), h("td", {}, pos));
+    }));
+  }
+
+  async function loadItems() {
+    const out = await api("GET", `/api/admin/forms/${id}/items`);
+    items = out.items; types = out.input_types;
+    drawItems();
+  }
+
+  document.getElementById("items-save").addEventListener("click", async () => {
+    try {
+      const body = items.map((it) => ({ kind: it.kind, key: it.key, ...it.setting }));
+      const out = await api("PUT", `/api/admin/forms/${id}/items`, body);
+      items = out.items;
+      drawItems();
+      DF.toast("입력폼을 저장했습니다.");
+    } catch (e) { DF.fail(e); }
+  });
+
+  async function load() {
+    form = await api("GET", `/api/admin/forms/${id}`);
+    draw();
+    await loadItems();
+  }
+
+  async function patch(body, ok) {
+    try {
+      await api("PATCH", `/api/admin/forms/${id}`, body);
+      await load();
+      DF.toast(ok);
+    } catch (e) { DF.fail(e); }
+  }
+
+  document.getElementById("btn-public").addEventListener("click", () => {
+    const next = !form.public;
+    if (!next && !confirm("비공개로 바꾸면 사용자 목록에서 사라집니다. 이미 쓴 문서는 그대로 열립니다.")) return;
+    patch({ public: next }, next ? "공개했습니다. 사용자 목록에 나타납니다." : "비공개로 바꿨습니다.");
+  });
+
+  document.getElementById("edit").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    patch({ title: f.title.value, program: f.program.value, category: f.category.value,
+      category_no: f.category_no.value === "" ? null : Number(f.category_no.value), archived: f.archived.checked }, "저장했습니다.");
+  });
+
+  document.getElementById("revise").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const go = document.getElementById("revise-go");
+    const msg = document.getElementById("revise-msg");
+    go.disabled = true;
+    msg.replaceChildren(h("p", { class: "msg info" }, "올리는 중…"));
+    try {
+      const out = await DF.upload(`/api/admin/forms/${id}/versions`, new FormData(ev.target));
+      const mine = out.forms.find((x) => x.id === Number(id));
+      msg.replaceChildren(h("p", { class: "msg ok" }, mine ? `v${mine.version} 으로 개정했습니다.` : "개정했습니다.",
+        out.report.added.length ? ` 새로 나뉜 서식 ${out.report.added.length}개는 비공개로 등록했습니다.` : "",
+        out.report.hidden.length ? ` 새 파일에 없는 서식 ${out.report.hidden.length}개는 숨겼습니다.` : ""));
+      ev.target.reset();
+      await load();
+    } catch (e) {
+      msg.replaceChildren(h("p", { class: "msg error" }, e.message));
+    } finally { go.disabled = false; }
+  });
+
+  load().catch((e) => {
+    document.getElementById("title").textContent = "서식을 열 수 없습니다";
+    DF.fail(e);
+  });
+})();
+</script>
+{% endblock %}

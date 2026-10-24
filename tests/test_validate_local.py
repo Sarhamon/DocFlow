@@ -18,10 +18,12 @@ from docflow.config import get_settings
 from docflow.schema.model import FormSchema
 from docflow.schema.rules import is_total_text
 from docflow.validate import (
+    AMOUNT_INVALID,
     AMOUNT_TOTAL_MISMATCH,
     DATE_INVALID,
     DATE_ORDER,
     REQUIRED_EMPTY,
+    ROW_DUPLICATE,
     FormInput,
     applicable_rules,
     validate,
@@ -39,6 +41,8 @@ EXPECTED_APPLICABLE = {
     AMOUNT_TOTAL_MISMATCH: 49,
     DATE_INVALID: 107,
     DATE_ORDER: 107,
+    AMOUNT_INVALID: 102,
+    ROW_DUPLICATE: 54,
 }
 
 #: 입력 유형별 올바른 값
@@ -84,11 +88,13 @@ def valid_input(schema: FormSchema) -> FormInput:
             {
                 c.col: "1,000"
                 if (rep.id, c.col) in summed_cols and c.input_type not in NOT_AMOUNT
+                else f"20260{i:02d}"  # 명단의 학번은 사람마다 다르다
+                if "학번" in c.label
                 else VALID[c.input_type]
                 for c in rep.columns
                 if c.role == "input"
             }
-            for _ in range(ROWS)
+            for i in range(ROWS)
         ]
 
     for s in sorted(totals, key=lambda x: (x.table, x.col, x.row)):

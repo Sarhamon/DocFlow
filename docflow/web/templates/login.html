@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}로그인{% endblock %}
+{% block content %}
+<div class="auth-box">
+  <h1>DocFlow</h1>
+  <p class="muted">서식 기반 문서 작성·검증</p>
+  <div class="card">
+    <div id="msg" class="msg hidden"></div>
+    <form id="login">
+      <label class="field"><span>아이디</span>
+        <input name="login_id" autocomplete="username" required autofocus></label>
+      <label class="field"><span>비밀번호</span>
+        <input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary" style="width:100%">로그인</button>
+    </form>
+    <p class="small muted" style="margin:12px 0 0">계정은 관리자가 발급합니다. 비밀번호를 잊었거나 계정이 잠겼으면 관리자에게 문의하세요.</p>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const REASONS = {
+    expired: ["info", "로그인 시간이 끝났습니다. 다시 로그인하세요."],
+    duplicate_login: ["warn", "다른 곳에서 같은 계정으로 로그인해 이 화면은 로그아웃되었습니다."],
+    password_reset: ["warn", "관리자가 비밀번호를 초기화해 로그아웃되었습니다."],
+    account_disabled: ["error", "사용할 수 없는 계정입니다. 관리자에게 문의하세요."],
+  };
+  const msg = document.getElementById("msg");
+  const show = (kind, text) => { msg.className = `msg ${kind}`; msg.textContent = text; };
+  const reason = DF.qs("reason");
+  if (REASONS[reason]) show(...REASONS[reason]);
+
+  document.getElementById("login").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = new FormData(ev.target);
+    try {
+      const r = await DF.api("POST", "/api/auth/login", {
+        login_id: f.get("login_id").trim(), password: f.get("password"),
+      });
+      if (r.must_change_password) { location.href = "/password?required=1"; return; }
+      const next = DF.qs("next");
+      location.href = next && next.startsWith("/") && !next.startsWith("//") ? next : "/forms";
+    } catch (e) {
+      show("error", e.message);
+      ev.target.password.value = "";
+      ev.target.password.focus();
+    }
+  });
+})();
+</script>
+{% endblock %}

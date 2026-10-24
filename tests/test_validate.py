@@ -21,10 +21,12 @@ from docflow.schema.model import (
     Variant,
 )
 from docflow.validate import (
+    AMOUNT_INVALID,
     AMOUNT_TOTAL_MISMATCH,
     DATE_INVALID,
     DATE_ORDER,
     REQUIRED_EMPTY,
+    ROW_DUPLICATE,
     Exclusions,
     FormInput,
     RuleConfig,
@@ -68,6 +70,7 @@ def 교통비() -> FormSchema:
                 columns=[
                     RepeatColumn(col=0, label="연번", input_type="number", prefilled="1"),
                     RepeatColumn(col=1, label="성명"),
+                    RepeatColumn(col=3, label="학번"),
                     RepeatColumn(col=4, label="활동일", input_type="date"),
                     RepeatColumn(col=11, label="입금액(원)", input_type="amount",
                                  prefilled="5,000"),
@@ -424,6 +427,52 @@ def test_없는_자리를_가리키면_KeyError():
 # ------------------------------------------------------------------ 적용 규칙
 def test_서식에_적용되는_규칙을_알려준다():
     assert applicable_rules(교통비()) == {
-        REQUIRED_EMPTY, DATE_INVALID, DATE_ORDER, AMOUNT_TOTAL_MISMATCH,
+        REQUIRED_EMPTY, DATE_INVALID, DATE_ORDER, AMOUNT_TOTAL_MISMATCH, AMOUNT_INVALID,
+        ROW_DUPLICATE,
     }  # fmt: skip
     assert applicable_rules(정산서()) == {REQUIRED_EMPTY, AMOUNT_TOTAL_MISMATCH}
+
+
+# ------------------------------------------------------------------ 금액 형식 (IN_15)
+@pytest.mark.parametrize("value", ["5,000", "5,000원", "₩ 5,000", r"\ 650,000", "650,000원정",
+                                   "해당없음", "-"])  # fmt: skip
+def test_금액으로_읽히는_값은_통과한다(value):
+    assert check_repeat_cell(교통비(), "t0.r7-16", 0, 11, value) == []
+
+
+def test_금액_칸에_글자를_넣으면_경고한다():
+    [issue] = check_repeat_cell(교통비(), "t0.r7-16", 0, 11, "오천원")
+    assert (issue.code, issue.severity) == (AMOUNT_INVALID, "warning")
+    [issue] = check_cell(교통비(), "t0.r17.c11", "만오천")
+    assert issue.code == AMOUNT_INVALID
+
+
+def test_금액_형식_경고도_심각도를_설정으로_바꾼다():
+    config = ValidationConfig(RuleConfig(severity={AMOUNT_INVALID: "error"}))
+    [issue] = check_cell(교통비(), "t0.r17.c11", "만오천", config)
+    assert issue.severity == "error"
+
+
+# ------------------------------------------------------------------ 명단 중복 (IN_16)
+def test_명단에_같은_학번이_두_번_나오면_두_번째_행에_경고한다():
+    data = 교통비_입력()
+    for row, number in zip(data.rows["t0.r7-16"], ("2026001", "2026002", "2026 001"),
+                           strict=True):  # fmt: skip
+        row[3] = number
+    [issue] = [i for i in validate(교통비(), data) if i.code == ROW_DUPLICATE]
+    assert (issue.severity, issue.where) == ("warning", "t0.r7-16[2].c3")
+    assert "1번째 행" in issue.message
+
+
+def test_학번이_비었거나_다르면_중복이_아니다():
+    data = 교통비_입력()
+    for row, number in zip(data.rows["t0.r7-16"], ("", "", "2026003"), strict=True):
+        row[3] = number
+    assert validate(교통비(), data) == []
+
+
+def test_같은_이름은_동명이인일_수_있어_보지_않는다():
+    data = 교통비_입력()
+    for row in data.rows["t0.r7-16"]:
+        row[1] = "김철수"
+    assert validate(교통비(), data) == []

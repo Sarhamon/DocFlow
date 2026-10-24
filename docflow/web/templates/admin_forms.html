@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% set admin_tab = "forms" %}
+{% block title %}서식 관리{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+<div class="row" style="margin-bottom:12px; flex-wrap:wrap">
+  <form class="search row" id="search" style="flex:1">
+    <input type="search" name="q" placeholder="서식 이름, 번호, 파일 이름으로 찾기" aria-label="검색어">
+    <select name="visibility" aria-label="공개 여부">
+      <option value="all">공개·비공개 모두</option><option value="private">비공개만</option><option value="public">공개만</option>
+    </select>
+    <select name="archived" aria-label="학년도">
+      <option value="include">지난 학년도 포함</option><option value="exclude">현행만</option><option value="only">지난 학년도만</option>
+    </select>
+    <button type="submit">찾기</button>
+  </form>
+  <button class="primary" id="btn-upload" type="button">서식 등록</button>
+</div>
+<div class="card" style="padding:0">
+  <div class="list-wrap">
+    <table class="list">
+      <thead><tr><th>사업</th><th>번호</th><th>서식 이름</th><th>카테고리</th><th>공개</th><th>버전</th><th>고친 때</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="empty" class="empty hidden">서식이 없습니다.</div>
+</div>
+<div class="pager" id="pager"></div>
+
+<dialog id="upload">
+  <form id="upload-form">
+    <h2>서식 등록</h2>
+    <p class="muted small">
+      HWP 나 HWPX 를 올리면 입력 칸을 자동으로 뽑아 <b>비공개</b>로 등록합니다. 미리 보고 확인한 뒤 공개하세요.
+      파일 이름에서 서식 번호와 이름을 읽습니다 (예: <code>[AID 서식 5-05호] 교통비 지급 내역서.hwp</code>).
+      같은 사업에 같은 이름을 다시 올리면 그 서식의 새 버전이 됩니다.
+    </p>
+    <label class="field"><span>서식 파일</span><input type="file" name="file" accept=".hwp,.hwpx" required></label>
+    <label class="field"><span>사업</span><input name="program" list="programs" required placeholder="AID"></label>
+    <div class="row">
+      <label class="field" style="width:90px"><span>카테고리 번호</span><input name="category_no" type="number" min="0" max="99"></label>
+      <label class="field" style="flex:1"><span>카테고리</span><input name="category" list="category-names" placeholder="학생지원비"></label>
+    </div>
+    <label class="row small"><input type="checkbox" name="archived" value="true"> 지난 학년도 서식</label>
+    <div id="upload-msg"></div>
+    <div class="row"><span class="spacer"></span>
+      <button type="button" onclick="this.closest('dialog').close()">취소</button>
+      <button class="primary" type="submit" id="upload-go">올리기</button>
+    </div>
+  </form>
+</dialog>
+<datalist id="programs"></datalist>
+<datalist id="category-names"></datalist>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  const state = { q: "", visibility: "all", archived: "include", page: 1, size: 50 };
+  let cats = [];
+
+  function visibility(f) {
+    return h("span", { class: `badge ${f.public ? "completed" : "warning"}` }, f.public ? "공개" : "비공개");
+  }
+
+  async function load() {
+    const params = new URLSearchParams({ q: state.q, visibility: state.visibility, archived: state.archived, page: state.page, size: state.size });
+    const data = await api("GET", `/api/admin/forms?${params}`);
+    document.getElementById("rows").replaceChildren(...data.items.map((f) => h("tr", { class: "click", onclick: () => { location.href = `/admin/forms/${f.id}`; } },
+      h("td", {}, f.program), h("td", {}, f.form_no),
+      h("td", {}, h("a", { href: `/admin/forms/${f.id}` }, f.title), f.archived ? h("span", { class: "muted small" }, " (지난 학년도)") : null),
+      h("td", { class: "small" }, f.category || "-"), h("td", {}, visibility(f)),
+      h("td", {}, `v${f.version}`), h("td", { class: "small" }, DF.fmtTime(f.updated_at)))));
+    document.getElementById("empty").classList.toggle("hidden", data.total > 0);
+    const pages = Math.max(1, Math.ceil(data.total / state.size));
+    const pager = document.getElementById("pager");
+    pager.replaceChildren();
+    if (pages > 1) {
+      const go = (p) => () => { state.page = p; load().catch(DF.fail); };
+      pager.append(h("button", { class: "small", disabled: state.page <= 1, onclick: go(state.page - 1) }, "이전"),
+        h("span", { class: "muted small", style: "padding:4px 8px" }, `${state.page} / ${pages} · ${data.total}개`),
+        h("button", { class: "small", disabled: state.page >= pages, onclick: go(state.page + 1) }, "다음"));
+    }
+  }
+
+  async function loadCategories() {
+    cats = await api("GET", "/api/admin/forms/categories");
+    const programs = [...new Set(cats.map((c) => c.program).filter(Boolean))];
+    document.getElementById("programs").replaceChildren(...programs.map((p) => h("option", { value: p })));
+    syncCategories();
+  }
+
+  function syncCategories() {
+    const f = document.getElementById("upload-form");
+    const mine = cats.filter((c) => c.program === f.program.value && c.category);
+    document.getElementById("category-names").replaceChildren(...mine.map((c) => h("option", { value: c.category }, `${c.category_no ?? ""} ${c.category}`)));
+  }
+
+  document.getElementById("search").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    Object.assign(state, { q: f.q.value.trim(), visibility: f.visibility.value, archived: f.archived.value, page: 1 });
+    load().catch(DF.fail);
+  });
+
+  const uf = document.getElementById("upload-form");
+  uf.program.addEventListener("input", syncCategories);
+  uf.category.addEventListener("change", () => {
+    // 이미 있는 카테고리를 고르면 번호도 맞춘다
+    const hit = cats.find((c) => c.program === uf.program.value && c.category === uf.category.value);
+    if (hit && hit.category_no !== null) uf.category_no.value = hit.category_no;
+  });
+  document.getElementById("btn-upload").addEventListener("click", () => {
+    uf.reset();
+    document.getElementById("upload-msg").replaceChildren();
+    document.getElementById("upload").showModal();
+  });
+  uf.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const body = new FormData(uf);
+    if (!uf.category_no.value) body.delete("category_no");
+    const go = document.getElementById("upload-go");
+    const msg = document.getElementById("upload-msg");
+    go.disabled = true;
+    msg.replaceChildren(h("p", { class: "msg info" }, "올리는 중… HWP 는 HWPX 로 바꾸느라 조금 걸립니다."));
+    try {
+      const out = await DF.upload("/api/admin/forms", body);
+      document.getElementById("upload").close();
+      if (out.forms.length === 1) { location.href = `/admin/forms/${out.forms[0].id}`; return; }
+      DF.toast(`서식 ${out.forms.length}개로 나눠 등록했습니다 (비공개).`);
+      Object.assign(state, { q: "", visibility: "private", page: 1 });
+      document.getElementById("search").visibility.value = "private";
+      await load();
+    } catch (e) {
+      msg.replaceChildren(h("p", { class: "msg error" }, e.message));
+    } finally { go.disabled = false; }
+  });
+
+  load().catch(DF.fail);
+  loadCategories().catch(DF.fail);
+})();
+</script>
+{% endblock %}

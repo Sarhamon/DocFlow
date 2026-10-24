@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% set nav = "documents" %}
+{% block title %}문서 작성{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<div class="editor-head">
+  <a href="/documents" title="내 문서함">←</a>
+  <input class="title" id="title" aria-label="문서 이름" maxlength="300">
+  <span class="badge" id="status"></span>
+  <span class="save-state" id="save-state"></span>
+  <span class="spacer"></span>
+  <button id="btn-validate" type="button">검증</button>
+  <button id="btn-generate" type="button" class="primary">문서 만들기</button>
+</div>
+<div id="banner"></div>
+<div class="editor">
+  <section>
+    <fieldset id="form-area">
+      <div class="card hidden" id="variant-card">
+        <label class="row">서식 변형 <select id="variant"></select></label>
+        <p class="hint" style="margin:6px 0 0">한 파일에 든 여러 서식 가운데 하나를 고릅니다. 고르지 않은 쪽은 문서에서 빠집니다.</p>
+      </div>
+      <div class="card hidden" id="fields-card">
+        <h2>기본 항목</h2>
+        <div class="fields-grid" id="fields"></div>
+      </div>
+      <div class="card" id="tables-card">
+        <div class="row"><h2>서식 입력</h2><span class="spacer"></span>
+          <span class="legend"><span><i style="background:var(--cell-input);border:1px solid var(--border)"></i>입력 칸</span><span><i style="background:var(--primary)"></i>필수</span><span><i style="background:var(--surface-2)"></i>자동·결재란</span></span>
+        </div>
+        <div id="tables"></div>
+      </div>
+      <div class="card" id="replace-card">
+        <h2>본문 문구 바꾸기</h2>
+        <p class="hint">입력 칸이 아닌 본문에 남은 자리표시자(예: <code>20○○년 ○○월 ○○일</code>)를 바꿀 문구로 바꿉니다.</p>
+        <div id="replace"></div>
+        <div class="row">
+          <button type="button" class="small" id="add-replace">+ 문구 추가</button>
+          <button type="button" class="small" id="add-today">작성일을 오늘로</button>
+        </div>
+      </div>
+    </fieldset>
+  </section>
+  <aside class="side">
+    <div class="card">
+      <div class="row"><h2>검증 결과</h2><span class="spacer"></span><span class="small muted" id="issue-count"></span></div>
+      <div class="filters" id="filters">
+        <button type="button" class="small on" data-sev="">전체</button>
+        <button type="button" class="small" data-sev="error">오류</button>
+        <button type="button" class="small" data-sev="warning">경고</button>
+      </div>
+      <ul class="issues" id="issues"><li class="muted small" style="cursor:default;border:0">입력하면 칸마다 바로 점검합니다. 다 채웠으면 [검증]을 누르세요.</li></ul>
+    </div>
+    <div class="card hidden" id="result-card">
+      <h2>만든 문서</h2>
+      <div id="result"></div>
+    </div>
+  </aside>
+</div>
+
+<dialog id="gen-dialog">
+  <h2>문서 만들기</h2>
+  <div id="gen-warn"></div>
+  <p>내려받을 형식을 고르세요. 한글 문서(HWPX)는 늘 함께 만듭니다.</p>
+  <div class="row" style="margin-bottom:16px">
+    <label class="row"><input type="checkbox" name="fmt" value="HWP" checked> HWP</label>
+    <label class="row"><input type="checkbox" name="fmt" value="PDF" checked> PDF</label>
+  </div>
+  <div class="row"><span class="spacer"></span>
+    <button type="button" onclick="this.closest('dialog').close()">취소</button>
+    <button type="button" class="primary" id="gen-go">만들기</button>
+  </div>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script src="/static/sheet.js"></script>
+<script src="/static/editor.js"></script>
+{% endblock %}

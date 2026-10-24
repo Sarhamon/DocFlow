@@ -24,9 +24,9 @@ from typing import Any
 
 from docflow.convert import ConversionJob, ConversionResult, Converter
 from docflow.generate import GenerateResult, generate
-from docflow.schema.model import FormSchema, RepeatSpec
+from docflow.schema.model import FormSchema, RepeatColumn, RepeatSpec
 from docflow.schema.rules import is_placeholder
-from docflow.validate import FormInput, Issue, validate
+from docflow.validate import DEFAULT_CONFIG, FormInput, Issue, ValidationConfig, validate
 
 
 class InputError(ValueError):
@@ -62,11 +62,13 @@ def _visible(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _variant(schema: FormSchema, value: Any) -> int | None:
     if value is None:
-        return None
+        return schema.variant
     for v in schema.variants:
         if str(value) in (str(v.index), v.label):
+            if schema.variant not in (None, v.index):
+                break  # 떼어 낸 서식은 다른 변형으로 바꿀 수 없다
             return v.index
-    labels = ", ".join(f"{v.index}={v.label}" for v in schema.variants) or "변형 없음"
+    labels = ", ".join(f"{v.index}={v.label}" for v in schema.choices) or "변형 없음"
     raise InputError(f"없는 변형 {value!r} ({labels})")
 
 
@@ -123,13 +125,16 @@ def skeleton(schema: FormSchema, variant: int | None = None) -> dict[str, Any]:
     def default(text: str) -> str:
         return "" if is_placeholder(text) else text
 
+    if schema.variant is not None:
+        variant = schema.variant
+
     def mine(table: int) -> bool:
         owner = schema.variant_of(table)
         return variant is None or owner is None or owner == variant
 
     out: dict[str, Any] = {"_form": schema.title}
-    if schema.variants:
-        out["_variants"] = {str(v.index): v.label for v in schema.variants}
+    if schema.choices:
+        out["_variants"] = {str(v.index): v.label for v in schema.choices}
         out["variant"] = schema.variants[variant or 0].label
     out["fields"] = {f.name: default(f.placeholder) for f in schema.fields if f.role == "input"}
     slots = [s for s in schema.slots if s.role == "input" and mine(s.table)]
@@ -139,8 +144,20 @@ def skeleton(schema: FormSchema, variant: int | None = None) -> dict[str, Any]:
         for s in slots
     }
     out["cells"] = {s.id: default(s.placeholder) for s in slots}
+    def column_key(rep: RepeatSpec, col: RepeatColumn) -> str:
+        """열 이름이 겹치면(`사업추진일정 0월` 여러 개) 이름으로 못 찾으므로 열 번호를 쓴다."""
+        try:
+            return col.label if col.label and _column(rep, col.label) == col.col else str(col.col)
+        except InputError:
+            return str(col.col)
+
+    def prefill(col: RepeatColumn) -> str:
+        """미리 적힌 연번·기본 금액은 두고, `2000.00.00(금)` 같은 날짜 자리표시자는 뺀다."""
+        value = col.prefilled or ""
+        return default(value) if col.input_type == "date" else value
+
     out["rows"] = {
-        r.id: [{c.label or str(c.col): c.prefilled or "" for c in r.columns if c.role == "input"}]
+        r.id: [{column_key(r, c): prefill(c) for c in r.columns if c.role == "input"}]
         for r in schema.repeats
         if mine(r.table)
     }
@@ -159,9 +176,10 @@ def make_document(
     converter: Converter | None = None,
     formats: tuple[str, ...] = ("HWP", "PDF"),
     force: bool = False,
+    config: ValidationConfig = DEFAULT_CONFIG,
 ) -> MakeResult:
     """검증 → HWPX 생성 → 변환. 검증 오류가 있으면 force 가 아닌 한 만들지 않는다."""
-    result = MakeResult(issues=validate(schema, parsed.data))
+    result = MakeResult(issues=validate(schema, parsed.data, config))
     if result.errors and not force:
         return result
     hwpx = Path(out_dir) / f"{stem}.hwpx"

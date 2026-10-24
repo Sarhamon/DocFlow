@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% set admin_tab = "system" %}
+{% block title %}시스템{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+<div class="card">
+  <h2>변환기 (한글)</h2>
+  <p id="converter" class="muted">확인 중…</p>
+  <p class="muted small">HWP·PDF 변환과 HWP 서식 등록에 씁니다. 없으면 HWPX 만 만들고, 서식은 HWPX 로 올려야 합니다.</p>
+</div>
+<div class="card">
+  <div class="row"><h2>LLM 서버</h2><span class="spacer"></span><button id="recheck" type="button" class="small">다시 확인</button></div>
+  <p id="llm-status" class="muted">확인 중…</p>
+  <form id="llm" class="row" style="flex-wrap:wrap; align-items:flex-end">
+    <label class="field" style="flex:2; min-width:240px"><span>서버 주소 (Ollama)</span><input name="llm_url" required></label>
+    <label class="field" style="flex:1; min-width:180px"><span>모델</span><input name="llm_model" required list="models"></label>
+    <button type="submit">저장</button>
+  </form>
+  <datalist id="models"></datalist>
+  <p class="muted small">프롬프트로 서식 칸을 채우고 본문 초안을 만드는 데 씁니다(M10). 학생 명단·계좌·주민등록번호는 LLM 에 보내지 않습니다.</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+
+  async function load() {
+    const out = await api("GET", "/api/admin/system");
+    const c = out.converter;
+    document.getElementById("converter").replaceChildren(
+      h("span", { class: `badge ${c.available ? "completed" : "warning"}` }, c.available ? "사용 가능" : "없음"),
+      " ", c.available ? `(${c.name})` : "이 서버에 한컴오피스가 없습니다.");
+    const llm = out.llm;
+    const f = document.getElementById("llm");
+    f.llm_url.value = llm.llm_url; f.llm_model.value = llm.llm_model;
+    const st = llm.status;
+    document.getElementById("llm-status").replaceChildren(
+      h("span", { class: `badge ${st.ok ? "completed" : st.reachable ? "warning" : "error"}` }, st.ok ? "준비됨" : st.reachable ? "모델 없음" : "연결 안 됨"),
+      " ", st.detail);
+    document.getElementById("models").replaceChildren(...st.models.map((m) => h("option", { value: m })));
+  }
+
+  document.getElementById("llm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      await api("PUT", "/api/admin/system", { llm_url: ev.target.llm_url.value, llm_model: ev.target.llm_model.value });
+      DF.toast("저장했습니다.");
+      await load();
+    } catch (e) { DF.fail(e); }
+  });
+  document.getElementById("recheck").addEventListener("click", () => load().catch(DF.fail));
+  load().catch(DF.fail);
+})();
+</script>
+{% endblock %}

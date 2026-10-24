@@ -12,6 +12,8 @@
 | AMOUNT_TOTAL_MISMATCH | 금액 항목의 합이 합계 칸과 같은가 |
 | DATE_INVALID | 날짜 칸의 값이 달력에 있는 날짜인가 |
 | DATE_ORDER | 칸 안의 기간이 거꾸로가 아닌가 |
+| AMOUNT_INVALID | 금액 칸의 값이 금액으로 읽히는가 (경고) |
+| ROW_DUPLICATE | 명단의 학번이 겹치지 않는가 (경고) |
 
 호출 방식은 두 가지이고 같은 규칙을 쓴다.
 
@@ -34,7 +36,24 @@ REQUIRED_EMPTY = "REQUIRED_EMPTY"
 AMOUNT_TOTAL_MISMATCH = "AMOUNT_TOTAL_MISMATCH"
 DATE_INVALID = "DATE_INVALID"
 DATE_ORDER = "DATE_ORDER"
-RULES = (REQUIRED_EMPTY, AMOUNT_TOTAL_MISMATCH, DATE_INVALID, DATE_ORDER)
+AMOUNT_INVALID = "AMOUNT_INVALID"
+ROW_DUPLICATE = "ROW_DUPLICATE"
+RULES = (
+    REQUIRED_EMPTY, AMOUNT_TOTAL_MISMATCH, DATE_INVALID, DATE_ORDER, AMOUNT_INVALID, ROW_DUPLICATE,
+)  # fmt: skip
+#: 관리자 화면의 규칙 이름과 설명 (AD_15)
+RULE_INFO: dict[str, tuple[str, str]] = {
+    REQUIRED_EMPTY: ("필수 누락", "자리표시자가 있던 칸·필수 누름틀이 비었는가"),
+    AMOUNT_TOTAL_MISMATCH: ("금액 합계", "작성자가 적는 합계 칸이 항목들의 합과 같은가"),
+    DATE_INVALID: ("날짜 형식", "날짜 칸의 값이 달력에 있는 날짜인가"),
+    DATE_ORDER: ("날짜 순서", "칸 안의 기간이 거꾸로가 아닌가"),
+    AMOUNT_INVALID: ("금액 형식", "금액 칸의 값이 금액으로 읽히는가 (경고)"),
+    ROW_DUPLICATE: ("학번 중복", "명단에 같은 학번이 두 번 나오는가 (경고)"),
+}
+#: 설정이 따로 주지 않을 때의 심각도. 형식·중복은 입력을 막지 않는 경고다 (명세 F3)
+DEFAULT_SEVERITY: dict[str, Severity] = {AMOUNT_INVALID: "warning", ROW_DUPLICATE: "warning"}
+#: 중복을 보는 명단 열 (학번). 같은 이름은 동명이인이 있어 보지 않는다
+_DUPLICATE_COLUMN_RE = re.compile(r"학번")
 
 Severity = Literal["error", "warning"]
 
@@ -150,6 +169,10 @@ _AMOUNT_RE = re.compile(r"-?\d[\d,]*")
 _ITEM_AMOUNT_RE = re.compile(r"^-?\s*(?:\d{1,3}(?:,\d{3})+|\d+)\s*원?$")
 #: 금액 항목이 될 수 없는 입력 유형 (연번·수량·날짜)
 _NOT_AMOUNT = {"number", "date", "checkbox"}
+#: 금액 칸에 받는 값: `5,000` `5,000원` `₩ 5,000` `\ 650,000` `650,000원정`
+_AMOUNT_TEXT_RE = re.compile(r"^[-₩\\\s]*\d[\d,]*\s*(?:원정?)?$")
+#: 금액이 없다는 뜻으로 적는 말. 금액 칸에 있어도 경고하지 않는다
+_NO_AMOUNT_RE = re.compile(r"^(?:해당\s*없음|없음|-|—)$")
 #: 입력값에 쓰인 날짜. 자리표시자와 달리 실제 숫자만 받는다.
 _DATE_RE = re.compile(r"(\d{4})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})")
 
@@ -205,7 +228,19 @@ def _in_variant(schema: FormSchema, table: int, variant: int | None) -> bool:
     return owner is None or owner == variant
 
 
+def field_required(spec: FieldSpec) -> bool:
+    """누름틀이 필수인가. 관리자가 정했으면 그대로, 아니면 자리표시자가 있으면 필수다.
+
+    주소·공개여부처럼 서식에 이미 값이 박혀 있는 누름틀은 채울 곳이 아니다.
+    """
+    if spec.role != "input":
+        return False
+    return spec.required if spec.required is not None else is_placeholder(spec.placeholder)
+
+
 def _slot_target(slot: SlotSpec, ex: Exclusions) -> _Target | None:
+    if slot.role == "fixed":
+        return None  # 관리자가 입력폼에서 뺀 칸
     if (ex.approval and slot.role == "approval") or (ex.computed and slot.role == "computed"):
         return None
     required = slot.required or (not ex.optional_empty and slot.role == "input")
@@ -218,14 +253,12 @@ def _slot_target(slot: SlotSpec, ex: Exclusions) -> _Target | None:
 
 
 def _field_target(spec: FieldSpec, ex: Exclusions) -> _Target | None:
-    if ex.approval and spec.role == "approval":
+    if spec.role == "fixed" or (ex.approval and spec.role == "approval"):
         return None
-    # 주소·공개여부처럼 서식에 이미 값이 박혀 있는 누름틀은 채울 곳이 아니다
-    required = spec.role == "input" and is_placeholder(spec.placeholder)
     return _Target(
-        Location("field", spec.name, label=spec.name),
+        Location("field", spec.name, label=spec.label or spec.name),
         spec.input_type,
-        required,
+        field_required(spec),
         _one_line(spec.placeholder),
     )
 
@@ -304,14 +337,34 @@ def _date(t: _Target, value: str) -> list[tuple[str, str, str]]:
     return []
 
 
-_CELL_RULES = (_required, _date)
+def _amount(t: _Target, value: str) -> list[tuple[str, str, str]]:
+    """금액 칸에 글자가 들어갔는가 (IN_15). 그대로 두면 합계를 낼 수 없다."""
+    raw = _one_line(value)
+    if t.input_type != "amount" or not raw:
+        return []
+    if _AMOUNT_TEXT_RE.match(raw) or _NO_AMOUNT_RE.match(raw):
+        return []
+    return [
+        (
+            AMOUNT_INVALID,
+            f"'{t.name}' 을(를) 금액으로 읽을 수 없습니다: {raw}",
+            "5,000 처럼 숫자로 입력하세요 (쉼표·'원'은 써도 됩니다).",
+        )
+    ]
+
+
+_CELL_RULES = (_required, _date, _amount)
+
+
+def _severity(config: RuleConfig, code: str) -> Severity:
+    return config.severity.get(code, DEFAULT_SEVERITY.get(code, "error"))
 
 
 def _issues(t: _Target, value: str, config: RuleConfig) -> list[Issue]:
     if t.location.key in config.ignore:
         return []
     return [
-        Issue(code, config.severity.get(code, "error"), t.location, message, action)
+        Issue(code, _severity(config, code), t.location, message, action)
         for rule in _CELL_RULES
         for code, message, action in rule(t, value)
         if code not in config.disabled
@@ -373,7 +426,7 @@ def _total_issue(
     return [
         Issue(
             AMOUNT_TOTAL_MISMATCH,
-            config.severity.get(AMOUNT_TOTAL_MISMATCH, "error"),
+            _severity(config, AMOUNT_TOTAL_MISMATCH),
             location,
             f"{len(items)}개 항목의 합은 {actual:,}원인데 합계에 {declared:,}원이 적혀 있습니다.",
             f"합계를 {actual:,}원으로 고치거나 항목 금액을 확인하세요.",
@@ -444,7 +497,48 @@ def validate(
     issues: list[Issue] = []
     for target, value in _targets(schema, data, rules.exclusions):
         issues += _issues(target, value, rules)
-    return issues + check_amount_totals(schema, data, rules)
+    return issues + check_amount_totals(schema, data, rules) + check_duplicates(schema, data, rules)
+
+
+def _duplicate_columns(rep: RepeatSpec) -> list[RepeatColumn]:
+    return [c for c in rep.columns if c.role == "input" and _DUPLICATE_COLUMN_RE.search(c.label)]
+
+
+def check_duplicates(
+    schema: FormSchema, data: FormInput, config: RuleConfig | None = None
+) -> list[Issue]:
+    """명단 안에서 같은 학번이 두 번 나오는가 (IN_16). 두 번째 행부터 경고한다."""
+    config = config or RuleConfig()
+    if ROW_DUPLICATE in config.disabled:
+        return []
+    issues: list[Issue] = []
+    for rep in schema.repeats:
+        if not _in_variant(schema, rep.table, data.variant):
+            continue
+        rows = data.rows.get(rep.id, [])
+        for col in _duplicate_columns(rep):
+            seen: dict[str, int] = {}
+            for i, row in enumerate(rows):
+                value = "".join(str(row.get(col.col, "")).split())
+                if not value:
+                    continue
+                if value not in seen:
+                    seen[value] = i
+                    continue
+                where = Location("repeat", rep.id, rep.table, rep.start_row + i, col.col, i,
+                                 col.label)  # fmt: skip
+                if where.key in config.ignore:
+                    continue
+                issues.append(
+                    Issue(
+                        ROW_DUPLICATE,
+                        _severity(config, ROW_DUPLICATE),
+                        where,
+                        f"'{col.label}' {value} 이(가) {seen[value] + 1}번째 행과 겹칩니다.",
+                        "같은 사람을 두 번 적었는지 확인하세요.",
+                    )
+                )
+    return issues
 
 
 def applicable_rules(schema: FormSchema, config: ValidationConfig = DEFAULT_CONFIG) -> set[str]:
@@ -458,6 +552,10 @@ def applicable_rules(schema: FormSchema, config: ValidationConfig = DEFAULT_CONF
             found.add(REQUIRED_EMPTY)
         if t.input_type == "date":
             found |= {DATE_INVALID, DATE_ORDER}
+        if t.input_type == "amount":
+            found.add(AMOUNT_INVALID)
     if any(s.role == "input" and is_total_text(s.label) for s in schema.slots):
         found.add(AMOUNT_TOTAL_MISMATCH)
+    if any(_duplicate_columns(r) for r in schema.repeats):
+        found.add(ROW_DUPLICATE)
     return found - rules.disabled

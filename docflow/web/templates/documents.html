@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% set nav = "documents" %}
+{% block title %}내 문서함{% endblock %}
+{% block content %}
+<div class="row" style="margin-bottom:12px">
+  <h1>내 문서함</h1>
+  <span class="spacer"></span>
+  <a class="btn primary" href="/forms">새 문서</a>
+</div>
+<div class="tabs" role="tablist">
+  <button data-status="" class="on">전체</button>
+  <button data-status="draft">작성 중</button>
+  <button data-status="completed">완료</button>
+</div>
+<div class="card" style="padding:0">
+  <div class="list-wrap">
+    <table class="list">
+      <thead><tr><th>문서 이름</th><th>서식</th><th>상태</th><th>판</th><th>고친 때</th><th>내려받기</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="empty" class="empty hidden">문서가 없습니다. <a href="/forms">서식을 골라</a> 새 문서를 만드세요.</div>
+</div>
+<div class="pager" id="pager"></div>
+
+<dialog id="history">
+  <div class="row"><h2 id="history-title">문서 이력</h2><span class="spacer"></span><button class="small" onclick="this.closest('dialog').close()">닫기</button></div>
+  <div class="list-wrap"><table class="list"><thead><tr><th>때</th><th>일</th><th>내용</th></tr></thead><tbody id="history-rows"></tbody></table></div>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  const state = { status: "", page: 1, size: 20 };
+  const KINDS = { created: "만듦", copied: "복제", validated: "검증", generated: "문서 생성" };
+
+  function downloads(d) {
+    if (!d.files.length) return h("span", { class: "muted small" }, "-");
+    return h("span", { class: "downloads" }, ...d.files.filter((f) => f !== "HWPX" || d.files.length === 1)
+      .map((f) => h("a", { class: "btn small", href: `/api/documents/${d.id}/files/${f}` }, f)));
+  }
+
+  async function showHistory(d) {
+    const events = await api("GET", `/api/documents/${d.id}/history`);
+    document.getElementById("history-title").textContent = `이력 — ${d.title}`;
+    // 검증 결과·수정 기록 (MY_07·MY_08)
+    document.getElementById("history-rows").replaceChildren(...events.slice().reverse().map((e) => {
+      const errors = (e.issues || []).filter((i) => i.severity === "error").length;
+      const warns = (e.issues || []).length - errors;
+      const what = [e.note, e.issues ? `오류 ${errors} · 경고 ${warns}` : "", e.rules ? `규칙 ${e.rules.join(", ")}` : ""].filter(Boolean).join(" / ");
+      return h("tr", {}, h("td", { class: "small" }, DF.fmtTime(e.at)), h("td", {}, KINDS[e.kind] || e.kind), h("td", { class: "small" }, what));
+    }));
+    document.getElementById("history").showModal();
+  }
+
+  async function act(fn, ok) {
+    try { await fn(); if (ok) DF.toast(ok); await load(); } catch (e) { DF.fail(e); }
+  }
+
+  function actions(d) {
+    const list = [h("button", { class: "small", onclick: () => showHistory(d).catch(DF.fail) }, "이력")];
+    if (d.status === "completed") {
+      // 재수정은 복제해서 새 문서로 (MY_06)
+      list.push(h("button", { class: "small", onclick: () => act(async () => {
+        const copy = await api("POST", `/api/documents/${d.id}/copy`);
+        location.href = `/documents/${copy.id}`;
+      }) }, "복제해서 고치기"));
+    } else {
+      list.push(h("button", { class: "small danger", onclick: () => {
+        if (confirm(`'${d.title}' 을(를) 지울까요? 되돌릴 수 없습니다.`)) act(() => api("DELETE", `/api/documents/${d.id}`), "지웠습니다.");
+      } }, "삭제"));
+    }
+    return h("span", { class: "row" }, ...list);
+  }
+
+  async function load() {
+    const params = new URLSearchParams({ page: state.page, size: state.size });
+    if (state.status) params.set("status", state.status);
+    const data = await api("GET", `/api/documents?${params}`);
+    document.getElementById("rows").replaceChildren(...data.items.map((d) => h("tr", {},
+      h("td", {}, h("a", { href: `/documents/${d.id}` }, d.title)),
+      h("td", { class: "small" }, [d.form.program, d.form.form_no].filter(Boolean).join(" "), h("br"), h("span", { class: "muted" }, `${d.form.title} v${d.form.version}`)),
+      h("td", {}, h("span", { class: `badge ${d.status}` }, DF.STATUS[d.status] || d.status)),
+      h("td", {}, d.revision ? `${d.revision}판` : "-"),
+      h("td", { class: "small" }, DF.fmtTime(d.updated_at)),
+      h("td", {}, downloads(d)),
+      h("td", {}, actions(d)))));
+    document.getElementById("empty").classList.toggle("hidden", data.total > 0);
+    const pages = Math.max(1, Math.ceil(data.total / state.size));
+    const pager = document.getElementById("pager");
+    pager.replaceChildren();
+    if (pages > 1) {
+      const go = (p) => () => { state.page = p; load().catch(DF.fail); };
+      pager.append(h("button", { class: "small", disabled: state.page <= 1, onclick: go(state.page - 1) }, "이전"),
+        h("span", { class: "muted small", style: "padding:4px 8px" }, `${state.page} / ${pages}`),
+        h("button", { class: "small", disabled: state.page >= pages, onclick: go(state.page + 1) }, "다음"));
+    }
+  }
+
+  for (const b of document.querySelectorAll(".tabs button")) {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === b));
+      state.status = b.dataset.status; state.page = 1; load().catch(DF.fail);
+    });
+  }
+  load().catch(DF.fail);
+})();
+</script>
+{% endblock %}

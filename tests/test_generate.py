@@ -214,6 +214,15 @@ def test_변형이_있으면_골라야_한다(variants, tmp_path):
         generate(schema, FormInput(variant=5), template, tmp_path / "o.hwpx")
 
 
+def test_떼어_낸_서식은_정해진_변형만_남긴다(variants, tmp_path):
+    schema, template = variants
+    part = schema.split()[1]
+    result = generate(part, FormInput(cells={"t1.r0.c0": "값"}), template, tmp_path / "o.hwpx")
+    assert [b.text for b in HwpxDocument.open(result.path).blocks()] == ["[ 서식 1-02호 ]", "", ""]
+    with pytest.raises(GenerateError, match="정해져"):
+        generate(part, FormInput(variant=0), template, tmp_path / "o.hwpx")
+
+
 def test_고르지_않은_변형의_칸에는_쓰지_않는다(variants, tmp_path):
     schema, template = variants
     data = FormInput(cells={"t0.r0.c0": "x"}, variant=1)

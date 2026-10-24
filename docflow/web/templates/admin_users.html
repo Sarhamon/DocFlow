@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% set admin_tab = "users" %}
+{% block title %}계정 관리{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+<div class="row" style="margin-bottom:12px">
+  <select id="f-role" aria-label="역할로 거르기">
+    <option value="">모든 역할</option><option value="user">사용자</option><option value="admin">관리자</option><option value="root">루트</option>
+  </select>
+  <select id="f-status" aria-label="상태로 거르기">
+    <option value="">삭제 말고 전부</option><option value="active">사용 중</option><option value="inactive">비활성</option><option value="deleted">삭제됨</option>
+  </select>
+  <span class="spacer"></span>
+  <button class="primary" id="btn-new" type="button">계정 발급</button>
+</div>
+<div class="card" style="padding:0">
+  <div class="list-wrap">
+    <table class="list">
+      <thead><tr><th>아이디</th><th>이름</th><th>부서</th><th>역할</th><th>상태</th><th>마지막 로그인</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="empty" class="empty hidden">계정이 없습니다.</div>
+</div>
+
+<dialog id="edit">
+  <form id="edit-form" method="dialog">
+    <h2 id="edit-title">계정 발급</h2>
+    <label class="field"><span>아이디</span><input name="login_id" required maxlength="50" autocomplete="off"></label>
+    <label class="field"><span>이름</span><input name="name" required maxlength="50"></label>
+    <label class="field" id="role-field"><span>역할</span>
+      <select name="role"><option value="user">사용자</option><option value="admin">관리자</option></select>
+    </label>
+    <label class="field"><span>부서</span><input name="department" maxlength="100"></label>
+    <label class="field"><span>전화</span><input name="phone" maxlength="30"></label>
+    <label class="field"><span>전자우편</span><input name="email" type="email" maxlength="255"></label>
+    <div class="row"><span class="spacer"></span>
+      <button type="button" onclick="this.closest('dialog').close()">취소</button>
+      <button class="primary" type="submit">저장</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="issued">
+  <h2>초기 비밀번호</h2>
+  <p id="issued-text"></p>
+  <p class="msg warn">이 비밀번호는 지금 한 번만 보입니다. 받는 사람에게 전하면 첫 로그인 때 바꾸게 됩니다.</p>
+  <p><code id="issued-password" style="font-size:20px"></code></p>
+  <div class="row"><span class="spacer"></span><button class="primary" onclick="this.closest('dialog').close()">확인</button></div>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  const ROLES = { user: "사용자", admin: "관리자", root: "루트" };
+  const STATUS = { active: "사용 중", inactive: "비활성", deleted: "삭제됨" };
+  const isRoot = DF.me.role === "root";
+  let editing = null;
+
+  function showPassword(out, what) {
+    document.getElementById("issued-text").textContent = `${out.user.name} (${out.user.login_id}) ${what}`;
+    document.getElementById("issued-password").textContent = out.initial_password;
+    document.getElementById("issued").showModal();
+  }
+
+  async function act(fn, ok) {
+    try { await fn(); if (ok) DF.toast(ok); await load(); } catch (e) { DF.fail(e); }
+  }
+
+  function openEdit(u) {
+    editing = u;
+    const f = document.getElementById("edit-form");
+    f.reset();
+    document.getElementById("edit-title").textContent = u ? `계정 정보 — ${u.login_id}` : "계정 발급";
+    f.login_id.disabled = !!u;
+    // 관리자 계정 발급은 루트만 한다
+    document.getElementById("role-field").classList.toggle("hidden", !!u || !isRoot);
+    if (u) for (const k of ["login_id", "name", "department", "phone", "email"]) f[k].value = u[k] || "";
+    document.getElementById("edit").showModal();
+  }
+
+  document.getElementById("edit-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    const body = { name: f.name.value.trim(), department: f.department.value.trim(),
+      phone: f.phone.value.trim() || null, email: f.email.value.trim() || null };
+    act(async () => {
+      if (editing) {
+        await api("PATCH", `/api/admin/users/${editing.id}`, body);
+      } else {
+        const out = await api("POST", "/api/admin/users", { ...body, login_id: f.login_id.value.trim(), role: isRoot ? f.role.value : "user" });
+        showPassword(out, "계정을 발급했습니다.");
+      }
+      document.getElementById("edit").close();
+    }, editing ? "저장했습니다." : null);
+  });
+
+  function actions(u) {
+    // 루트는 서버 CLI 로만 다룬다. 관리자 계정은 루트만 다룬다 (서버가 다시 막는다)
+    if (u.role === "root" || u.id === DF.me.id || u.status === "deleted") return "";
+    if (u.role === "admin" && !isRoot) return h("span", { class: "muted small" }, "루트만");
+    const list = [h("button", { class: "small", onclick: () => openEdit(u) }, "수정")];
+    list.push(h("button", { class: "small", onclick: () => {
+      if (confirm(`${u.login_id} 의 비밀번호를 초기화할까요? 잠금도 풀립니다.`)) {
+        act(async () => showPassword(await api("POST", `/api/admin/users/${u.id}/reset-password`), "비밀번호를 초기화했습니다."));
+      }
+    } }, "비밀번호 초기화"));
+    if (u.locked) list.push(h("button", { class: "small", onclick: () => act(() => api("POST", `/api/admin/users/${u.id}/unlock`), "잠금을 풀었습니다.") }, "잠금 해제"));
+    const next = u.status === "active" ? "inactive" : "active";
+    list.push(h("button", { class: "small", onclick: () => act(() => api("PUT", `/api/admin/users/${u.id}/status`, { status: next }), `${STATUS[next]}으로 바꿨습니다.`) },
+      u.status === "active" ? "비활성화" : "활성화"));
+    list.push(h("button", { class: "small danger", onclick: () => {
+      if (confirm(`${u.login_id} 계정을 삭제할까요? 되살릴 수 없고, 같은 사람은 새로 발급해야 합니다.`)) {
+        act(() => api("PUT", `/api/admin/users/${u.id}/status`, { status: "deleted" }), "삭제했습니다.");
+      }
+    } }, "삭제"));
+    return h("span", { class: "row" }, ...list);
+  }
+
+  function statusBadge(u) {
+    const parts = [h("span", { class: `badge ${u.status === "active" ? "completed" : ""}` }, STATUS[u.status] || u.status)];
+    if (u.locked) parts.push(" ", h("span", { class: "badge error" }, "잠김"));
+    if (u.must_change_password && u.status === "active") parts.push(" ", h("span", { class: "badge warning" }, "초기 비밀번호"));
+    return h("span", {}, ...parts);
+  }
+
+  async function load() {
+    const params = new URLSearchParams();
+    const role = document.getElementById("f-role").value;
+    const status = document.getElementById("f-status").value;
+    if (role) params.set("role", role);
+    if (status) params.set("status", status);
+    const users = await api("GET", `/api/admin/users?${params}`);
+    document.getElementById("rows").replaceChildren(...users.map((u) => h("tr", {},
+      h("td", {}, u.login_id), h("td", {}, u.name), h("td", { class: "small" }, u.department || "-"),
+      h("td", {}, ROLES[u.role] || u.role), h("td", {}, statusBadge(u)),
+      h("td", { class: "small" }, u.last_login_at ? DF.fmtTime(u.last_login_at) : "-"),
+      h("td", {}, actions(u)))));
+    document.getElementById("empty").classList.toggle("hidden", users.length > 0);
+  }
+
+  document.getElementById("btn-new").addEventListener("click", () => openEdit(null));
+  for (const id of ["f-role", "f-status"]) document.getElementById(id).addEventListener("change", () => load().catch(DF.fail));
+  load().catch(DF.fail);
+})();
+</script>
+{% endblock %}

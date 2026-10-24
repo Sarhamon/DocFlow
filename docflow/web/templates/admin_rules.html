@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% set admin_tab = "rules" %}
+{% block title %}검증 규칙{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+<p class="muted small">
+  규칙은 서식에서 자동으로 정해집니다(자리표시자가 있던 칸은 필수, 날짜 칸은 날짜 규칙 …). 여기서 규칙을 전체로 끄거나,
+  특정 서식에서만 끌 수 있습니다. 실시간 점검·완료 검증·문서 만들기에 모두 바로 적용됩니다.
+</p>
+<div id="rules"></div>
+
+<dialog id="pick">
+  <h2 id="pick-title">예외 서식</h2>
+  <form class="search row" id="pick-search">
+    <input type="search" name="q" placeholder="서식 이름·번호로 찾기" aria-label="서식 찾기">
+    <button type="submit">찾기</button>
+  </form>
+  <div class="list-wrap" style="max-height:320px; overflow:auto">
+    <table class="list"><tbody id="pick-rows"></tbody></table>
+  </div>
+  <div class="row" style="margin-top:12px"><span class="spacer"></span><button onclick="this.closest('dialog').close()">닫기</button></div>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  let rules = [];
+  let picking = null;
+
+  async function setExceptions(rule, ids, ok) {
+    try {
+      await api("PUT", `/api/admin/rules/${rule.code}/exceptions`, { form_ids: ids });
+      DF.toast(ok);
+      await load();
+    } catch (e) { DF.fail(e); }
+  }
+
+  function card(r) {
+    const toggle = h("button", { class: r.enabled ? "" : "primary", onclick: async () => {
+      if (r.enabled && !confirm(`'${r.name}' 규칙을 모든 서식에서 끌까요?`)) return;
+      try { await api("PUT", `/api/admin/rules/${r.code}`, { enabled: !r.enabled }); await load(); } catch (e) { DF.fail(e); }
+    } }, r.enabled ? "끄기" : "켜기");
+    const ids = r.exceptions.map((f) => f.id);
+    const list = r.exceptions.length
+      ? h("ul", {}, ...r.exceptions.map((f) => h("li", {}, `${f.program} ${f.form_no} ${f.title} `,
+        h("button", { class: "small link", onclick: () => setExceptions(r, ids.filter((x) => x !== f.id), "예외에서 뺐습니다.") }, "빼기"))))
+      : h("p", { class: "muted small" }, "예외 서식 없음");
+    return h("div", { class: "card" },
+      h("div", { class: "row" },
+        h("h2", { style: "margin:0" }, r.name, " ", h("code", { class: "small" }, r.code)),
+        h("span", { class: `badge ${r.severity === "error" ? "error" : "warning"}` }, r.severity === "error" ? "오류" : "경고"),
+        h("span", { class: "spacer" }),
+        h("span", { class: `badge ${r.enabled ? "completed" : ""}` }, r.enabled ? "켜짐" : "꺼짐"), toggle),
+      h("p", { class: "muted" }, r.description),
+      h("p", { class: "small" }, `적용 서식 ${r.applies} / ${r.forms}`),
+      h("div", { class: "row" }, h("b", { class: "small" }, "이 서식에서만 끄기"), h("span", { class: "spacer" }),
+        h("button", { class: "small", disabled: !r.enabled, onclick: () => openPick(r) }, "+ 서식 추가")),
+      list);
+  }
+
+  async function load() {
+    rules = await api("GET", "/api/admin/rules");
+    document.getElementById("rules").replaceChildren(...rules.map(card));
+  }
+
+  function openPick(rule) {
+    picking = rule;
+    document.getElementById("pick-title").textContent = `'${rule.name}' 을(를) 끌 서식`;
+    document.getElementById("pick-rows").replaceChildren();
+    document.getElementById("pick-search").reset();
+    document.getElementById("pick").showModal();
+  }
+
+  document.getElementById("pick-search").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      const params = new URLSearchParams({ q: ev.target.q.value.trim(), size: 50 });
+      const data = await api("GET", `/api/admin/forms?${params}`);
+      const have = new Set(picking.exceptions.map((f) => f.id));
+      document.getElementById("pick-rows").replaceChildren(...data.items.map((f) => h("tr", {},
+        h("td", { class: "small" }, `${f.program} ${f.form_no}`), h("td", {}, f.title),
+        h("td", {}, have.has(f.id) ? h("span", { class: "muted small" }, "이미 예외") : h("button", { class: "small", onclick: async () => {
+          await setExceptions(picking, [...have, f.id], `${f.title} 에서 끕니다.`);
+          picking = rules.find((x) => x.code === picking.code);
+          document.getElementById("pick").close();
+        } }, "추가")))));
+    } catch (e) { DF.fail(e); }
+  });
+
+  load().catch(DF.fail);
+})();
+</script>
+{% endblock %}

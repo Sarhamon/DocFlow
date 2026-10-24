@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}DocFlow{% endblock %} · DocFlow</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js"></script>
+</head>
+<body>
+{% if me %}
+<header class="top">
+  <a class="brand" href="/forms">DocFlow</a>
+  <nav class="nav">
+    <a href="/forms" class="{{ 'on' if nav == 'forms' }}">서식 선택</a>
+    <a href="/documents" class="{{ 'on' if nav == 'documents' }}">내 문서함</a>
+    {% if me.admin %}<a href="/admin" class="{{ 'on' if nav == 'admin' }}">관리자</a>{% endif %}
+  </nav>
+  <div class="who">
+    <span class="name">{{ me.name }} ({{ me.login_id }})</span>
+    <span class="timer" id="timer" title="남은 로그인 시간">--:--</span>
+    <button class="small" id="extend" type="button">연장</button>
+    <a href="/password" class="small">비밀번호</a>
+    <button class="small" id="logout" type="button">로그아웃</button>
+  </div>
+</header>
+{% endif %}
+<main class="{% block main_class %}{% endblock %}">
+{% block content %}{% endblock %}
+</main>
+<script>window.DF.params = {{ (params or {}) | tojson }}; window.DF.me = {{ me | tojson }};</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

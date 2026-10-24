@@ -1,4 +1,4 @@
-"""DocFlow 웹 API (M6·M7). 화면(M8)은 이 API 위에 올린다.
+"""DocFlow 웹 API (M6·M7)와 화면(M8). 화면은 이 API 위에 올린다(`docflow/web/pages.py`).
 
     uvicorn --factory docflow.web.app:create_app          # 개발 서버
     python tools/sync_forms.py                            # templates/ 의 서식을 먼저 등록
@@ -30,9 +30,11 @@ from docflow.config import Settings, get_settings
 from docflow.convert import Converter
 from docflow.generate import GenerateError
 from docflow.pipeline import InputError, skeleton
+from docflow.schema.labels import field_label
+from docflow.schema.model import FormSchema
 from docflow.service import catalog
 from docflow.service.auth import AuthError, AuthService, Client, Forbidden, SessionInvalid
-from docflow.service.catalog import NotFound
+from docflow.service.catalog import NotFound, Unavailable
 from docflow.service.db import Document, DocumentEvent, Form, User, UserSession, connect, now
 from docflow.service.documents import (
     Conflict,
@@ -42,6 +44,8 @@ from docflow.service.documents import (
     issue_dict,
 )
 from docflow.service.storage import FileStore, LocalFileStore
+from docflow.validate import field_required
+from docflow.web import admin_api, pages
 
 API = "/api"
 COOKIE = "docflow_session"
@@ -148,6 +152,21 @@ def outcome_dict(out: GenerateOutcome) -> dict[str, Any]:
     }
 
 
+def fields_meta(schema: FormSchema) -> list[dict[str, Any]]:
+    """입력 화면의 누름틀 목록 (IN_01~03): 한글 이름, 필수 여부. 결재란은 뺀다."""
+    return [
+        {
+            "name": f.name,
+            "label": f.label or field_label(f.name),
+            "input_type": f.input_type,
+            "placeholder": f.placeholder,
+            "required": field_required(f),
+        }
+        for f in schema.fields
+        if f.role == "input"
+    ]
+
+
 def user_dict(user: User) -> dict[str, Any]:
     return {
         "id": user.id,
@@ -241,6 +260,10 @@ def create_app(
         return user.id
 
     signed_in = [Depends(current_user)]
+
+    def public_only(user: User = Depends(current_user)) -> bool:
+        """사용자는 공개 서식만 본다. 관리자는 올린 서식을 공개 전에 미리 본다 (AD_04)."""
+        return user.role not in ("admin", "root")
 
     # ------------------------------------------------------------ 로그인
     @app.post(f"{API}/auth/login")
@@ -373,13 +396,15 @@ def create_app(
         return catalog.facets(s)
 
     @app.get(f"{API}/forms/{{form_id}}", dependencies=signed_in)
-    def form_detail(form_id: int, s: Session = Depends(session)) -> dict[str, Any]:
-        form = catalog.get_form(s, form_id)
+    def form_detail(
+        form_id: int, s: Session = Depends(session), only: bool = Depends(public_only)
+    ) -> dict[str, Any]:
+        form = catalog.get_form(s, form_id, public_only=only)
         schema = catalog.load_schema(form.latest)
         return {
             **form_summary(form),
             "summary": catalog.summarize(schema),
-            "variants": [{"index": v.index, "label": v.label} for v in schema.variants],
+            "variants": [{"index": v.index, "label": v.label} for v in schema.choices],
             "versions": [
                 {"version": v.version, "created_at": v.created_at.isoformat()}
                 for v in form.versions
@@ -388,10 +413,26 @@ def create_app(
 
     @app.get(f"{API}/forms/{{form_id}}/schema", dependencies=signed_in)
     def form_schema(
-        form_id: int, version: int | None = None, s: Session = Depends(session)
+        form_id: int,
+        version: int | None = None,
+        s: Session = Depends(session),
+        only: bool = Depends(public_only),
     ) -> dict[str, Any]:
-        form = catalog.get_form(s, form_id)
+        form = catalog.get_form(s, form_id, public_only=only)
         return catalog.load_schema(catalog.get_version(form, version)).model_dump()
+
+    @app.get(f"{API}/forms/{{form_id}}/layout", dependencies=signed_in)
+    def form_layout(
+        form_id: int, s: Session = Depends(session), only: bool = Depends(public_only)
+    ) -> dict[str, Any]:
+        """서식 구조 보기 (FM_07): 스키마와 표 배치(병합 포함)."""
+        form = catalog.get_form(s, form_id, public_only=only)
+        schema = catalog.load_schema(form.latest)
+        return {
+            "schema": schema.model_dump(),
+            "layout": catalog.layout(form.latest, store),
+            "fields": fields_meta(schema),
+        }
 
     @app.get(f"{API}/forms/{{form_id}}/skeleton", dependencies=signed_in)
     def form_skeleton(
@@ -403,9 +444,12 @@ def create_app(
     # ------------------------------------------------------------ 문서
     @app.post(f"{API}/documents", status_code=201)
     def create_document(
-        body: NewDocument, svc: DocumentService = Depends(service), me=Depends(owner)
+        body: NewDocument,
+        svc: DocumentService = Depends(service),
+        me=Depends(owner),
+        only: bool = Depends(public_only),
     ) -> dict[str, Any]:
-        return document_summary(svc.create(body.form_id, me, title=body.title))
+        return document_summary(svc.create(body.form_id, me, title=body.title, public_only=only))
 
     @app.get(f"{API}/documents")
     def list_documents(
@@ -433,11 +477,13 @@ def create_app(
         doc = svc.get(doc_id, me)
         schema = svc.schema_of(doc)
         variant = svc.raw_input(doc).get("variant")
-        index = next((v.index for v in schema.variants if variant in (v.label, v.index)), None)
+        index = next((v.index for v in schema.choices if variant in (v.label, v.index)), None)
         return {
             "schema": schema.model_dump(),
             "summary": catalog.summarize(schema),
             "skeleton": skeleton(schema, index),
+            "layout": catalog.layout(doc.form_version, store),
+            "fields": fields_meta(schema),
         }
 
     @app.put(f"{API}/documents/{{doc_id}}/input")
@@ -448,6 +494,20 @@ def create_app(
         me=Depends(owner),
     ) -> dict[str, Any]:
         return document_summary(svc.save_input(doc_id, raw, me))
+
+    @app.post(f"{API}/documents/{{doc_id}}/check")
+    def check_document(
+        doc_id: int,
+        raw: dict[str, Any] = Body(...),
+        svc: DocumentService = Depends(service),
+        me=Depends(owner),
+    ) -> dict[str, Any]:
+        """입력 중 실시간 점검: 저장하지 않은 입력값을 같은 규칙으로 본다 (이력 없음)."""
+        issues = svc.check(doc_id, raw, me)
+        return {
+            "ok": not any(i.severity == "error" for i in issues),
+            "issues": [issue_dict(i) for i in issues],
+        }
 
     @app.patch(f"{API}/documents/{{doc_id}}")
     def rename_document(
@@ -506,6 +566,8 @@ def create_app(
     ) -> list[dict[str, Any]]:
         return [event_dict(e) for e in svc.history(doc_id, me)]
 
+    admin_api.mount(app, session=session, admin_user=admin_user, store=store, converter=converter)
+    pages.mount(app, auth)
     return app
 
 
@@ -518,6 +580,7 @@ def _errors(app: FastAPI) -> None:
 
     app.add_exception_handler(NotFound, handler(404))
     app.add_exception_handler(Conflict, handler(409))
+    app.add_exception_handler(Unavailable, handler(503))
     for bad in (InputError, GenerateError, ValueError):
         app.add_exception_handler(bad, handler(400))
 

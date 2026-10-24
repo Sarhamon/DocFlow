@@ -30,11 +30,14 @@ def main() -> int:
     with sessions() as session:
         report = sync_templates(session, LocalFileStore(settings.data / "files"), settings)
     log.info(
-        "새 서식 %d / 개정 %d / 그대로 %d / 실패 %d",
-        len(report.added), len(report.updated), report.unchanged, len(report.failed),
+        "새 서식 %d / 개정 %d / 그대로 %d / 숨김 %d / 실패 %d",
+        len(report.added), len(report.updated), report.unchanged, len(report.hidden),
+        len(report.failed),
     )  # fmt: skip
     for key in report.updated:
         log.info("  개정: %s", key)
+    for key in report.hidden:
+        log.info("  숨김(서식별로 나눔): %s", key)
     for key, why in report.failed:
         log.error("  실패: %s: %s", key, why)
     return 0 if not report.failed else 2

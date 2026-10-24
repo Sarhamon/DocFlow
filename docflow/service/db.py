@@ -6,6 +6,10 @@
 * 산출물(artifacts): 문서를 만들 때마다 판(revision)이 하나씩 올라가고 형식별 파일이 쌓인다.
 * 이력(document_events): 만들기·검증·복제 때의 입력값, 검증 결과, 적용 규칙, 서식 버전.
 * 계정(users)·세션(user_sessions)·로그인 이력(login_history): 관리자가 발급하는 계정(M7).
+* 입력폼 설정(form_items): 관리자가 추출 항목을 빼거나 필수·형식·이름·순서를 고친 것(M9).
+* 규칙 설정(rule_settings): 검증 규칙의 전체 on/off 와 서식별 예외(M9).
+* 시스템 설정(system_settings): LLM 서버 주소·모델 같은 운영 설정 (키-값, M9).
+  서식 단위로 두어 개정해도 유지된다. 있는 표에 칸을 더하지 않으려고 따로 둔다.
 """
 
 from __future__ import annotations
@@ -47,10 +51,57 @@ class Form(Base):
     versions: Mapped[list[FormVersion]] = relationship(
         back_populates="form", order_by="FormVersion.version", cascade="all, delete-orphan"
     )
+    items: Mapped[list[FormItem]] = relationship(cascade="all, delete-orphan")
 
     @property
     def latest(self) -> FormVersion | None:
         return self.versions[-1] if self.versions else None
+
+
+class FormItem(Base):
+    """입력폼 항목 하나에 대한 관리자 설정 (AD_09~12, AD_14). 비운 값은 추출한 대로 둔다."""
+
+    __tablename__ = "form_items"
+    __table_args__ = (UniqueConstraint("form_id", "kind", "key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    form_id: Mapped[int] = mapped_column(ForeignKey("forms.id"), index=True)
+    #: field 누름틀(키는 이름) / cell 표 칸(키는 t0.r1.c2) / column 반복영역 열(키는 t0.r3-9:4)
+    kind: Mapped[str] = mapped_column(String(10))
+    key: Mapped[str] = mapped_column(String(200))
+    #: 입력폼에서 뺀다 (서식 글자를 그대로 둔다)
+    hidden: Mapped[bool] = mapped_column(default=False)
+    required: Mapped[bool | None] = mapped_column(default=None)
+    input_type: Mapped[str | None] = mapped_column(String(20), default=None)
+    label: Mapped[str | None] = mapped_column(String(200), default=None)
+    #: 누름틀 표시 순서. 작은 것부터
+    position: Mapped[int | None] = mapped_column(default=None)
+    updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
+
+
+class RuleSetting(Base):
+    """검증 규칙 설정 (AD_16·AD_17). form_id 가 없으면 전체 설정, 있으면 그 서식의 예외다.
+
+    줄이 없으면 켜진 것이다. 예외는 전체로 켠 규칙을 그 서식에서만 끈다.
+    """
+
+    __tablename__ = "rule_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), index=True)
+    form_id: Mapped[int | None] = mapped_column(ForeignKey("forms.id"), default=None, index=True)
+    enabled: Mapped[bool] = mapped_column(default=False)
+    updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
+
+
+class SystemSetting(Base):
+    """운영 설정 하나 (AD_27). 값은 글자로 둔다."""
+
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
 
 
 class FormVersion(Base):

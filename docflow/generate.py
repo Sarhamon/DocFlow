@@ -115,6 +115,10 @@ def generate(
 
 # ---------------------------------------------------------------- 변형
 def _check_variant(schema: FormSchema, data: FormInput) -> int | None:
+    if schema.variant is not None:
+        if data.variant not in (None, schema.variant):
+            raise GenerateError(f"이 서식은 변형 {schema.variant} 로 정해져 있다")
+        return schema.variant
     if not schema.variants:
         if data.variant is not None:
             raise GenerateError("변형이 없는 서식이다")
@@ -284,7 +288,8 @@ def find_leftovers(
     작성자가 쓴 값은 보지 않는다. 실제 값(13:00, 5,000)도 자리표시자 패턴(00)에 걸리기 때문이다.
     쓰지 않은 자리는 서식의 글자 그대로이므로 거기서 자리표시자가 보이면 서식의 잔여물이다.
     """
-    written = set(data.cells) | {s.id for s in schema.slots if s.role == "approval"}
+    #: 결재란은 비웠고, 관리자가 뺀 칸(fixed)은 서식 글자를 일부러 남긴다
+    written = set(data.cells) | {s.id for s in schema.slots if s.role in ("approval", "fixed")}
     regions = {
         (r.table, row)
         for r in schema.repeats
@@ -301,7 +306,7 @@ def find_leftovers(
             if c.text and is_leftover(c.text):
                 found.append(Leftover("cell", key, c.text))
 
-    touched = set(data.fields) | {f.name for f in schema.fields if f.role == "approval"}
+    touched = set(data.fields) | {f.name for f in schema.fields if f.role in ("approval", "fixed")}
     seen: set[str] = set()
     for f in doc.fields():
         if f.type == "FORMULA" or f.name in touched or f.name in seen:

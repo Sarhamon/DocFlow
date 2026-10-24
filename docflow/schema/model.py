@@ -5,6 +5,7 @@
 * 반복영역이 합계 행을 포함하고 예시 행을 빼먹었다 -> 헤더 행 / 데이터 행 / 합계 행을 따로 둔다.
 * 헤더가 두 줄인 서식에서 열 이름이 비었다 -> 열마다 헤더 줄을 합친 이름을 둔다.
 * 기안문 1-01~04호처럼 변형 4종이 한 파일에 든다 -> `variants` 로 변형을 구분한다.
+  번호가 붙은 변형은 서식 목록에 따로 올린다 (`split`, 떼어 낸 서식은 `variant` 가 고정).
 * 결재란의 템플릿 잔여값(00/00, ○○○)이 문서에 남는다 -> `role="approval"` 로 표시한다.
 * 수식 칸(합계 등)을 입력 대상과 구분하지 못했다 -> `formulas` 로 따로 둔다.
 
@@ -14,11 +15,17 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+#: 서식 번호가 붙은 변형 이름 (`1-02호`)
+_NUMBERED_RE = re.compile(r"^\d+-\d+호$")
+#: 묶음 파일 이름 끝의 갈래: "일반기안문(선대응 2종)" -> 선대응. "샘플" 은 갈래가 아니다
+_KIND_RE = re.compile(r"\((?P<kind>[^()]+?)\s*(?:\d+\s*종)?\)\s*$")
 
 #: 입력칸의 종류. 입력폼의 입력기와 형식 점검(날짜·금액)이 이 값을 따른다.
 InputType = Literal["text", "date", "amount", "number", "checkbox"]
@@ -26,7 +33,8 @@ InputType = Literal["text", "date", "amount", "number", "checkbox"]
 #: input    작성자가 채운다
 #: approval 결재선이 채운다 (apbN_*). 입력폼에서 빼고, 생성할 때 템플릿 잔여값을 비운다
 #: computed 수식이 계산한다 (합계 등). 입력 대상이 아니다
-Role = Literal["input", "approval", "computed"]
+#: fixed    관리자가 입력폼에서 뺐다 (AD_09). 서식의 글자를 그대로 두고 검증도 하지 않는다
+Role = Literal["input", "approval", "computed", "fixed"]
 
 
 class FieldSpec(BaseModel):
@@ -38,6 +46,10 @@ class FieldSpec(BaseModel):
     input_type: InputType = "text"
     occurrences: int = Field(default=1, ge=1, description="문서 안에서 나오는 횟수")
     placeholder: str = Field(default="", description="서식에 박혀 있던 첫 값")
+    required: bool | None = Field(
+        default=None, description="관리자가 정한 필수 여부. None 이면 자리표시자가 있으면 필수"
+    )
+    label: str = Field(default="", description="관리자가 정한 한글 이름. 비면 기본 이름표를 쓴다")
 
 
 class SlotSpec(BaseModel):
@@ -152,6 +164,8 @@ class Variant(BaseModel):
 
     index: int = Field(ge=0)
     label: str
+    #: 서식 머리의 이름 (`[ AID 서식 1-02호 ] <과제 결과 보고서 기안문>` 의 꺾쇠 안)
+    title: str = ""
     first_table: int = Field(ge=0)
     last_table: int = Field(ge=0)
 
@@ -172,6 +186,9 @@ class FormSchema(BaseModel):
     archived: bool = Field(default=False, description="지난 학년도 서식")
     template: str = Field(default="", description="저장소 루트 기준 HWPX 템플릿 경로")
     variants: list[Variant] = Field(default_factory=list, description="비어 있으면 변형 없음")
+    variant: int | None = Field(
+        default=None, description="묶음 파일에서 떼어 낸 서식이면 그 변형 (입력의 변형이 고정된다)"
+    )
     fields: list[FieldSpec] = Field(default_factory=list)
     tables: list[TableSpec] = Field(default_factory=list)
     slots: list[SlotSpec] = Field(default_factory=list)
@@ -192,7 +209,34 @@ class FormSchema(BaseModel):
         for v in self.variants:
             if v.last_table >= count:
                 raise ValueError(f"변형 {v.label} 이(가) 없는 표 {v.last_table} 을 가리킨다")
+        if self.variant is not None and all(v.index != self.variant for v in self.variants):
+            raise ValueError(f"없는 변형 {self.variant} 로 고정했다")
         return self
+
+    @property
+    def choices(self) -> list[Variant]:
+        """작성자가 고르는 변형. 떼어 낸 서식은 이미 정해져 있어 고를 것이 없다."""
+        return [] if self.variant is not None else self.variants
+
+    def split(self) -> list[FormSchema]:
+        """묶음 파일을 서식 번호마다 하나씩 떼어 낸다. 번호가 없는 변형(`변형 1`)이면 나누지 않는다.
+
+        템플릿은 그대로 같이 쓰고, 생성할 때 고르지 않은 변형의 쪽을 지운다.
+        묶음에 갈래가 있으면(`일반기안문(선대응 2종)`) 이름 뒤에 붙인다. 샘플 묶음의 같은 번호
+        서식(`1-03호`)과 다른 서식이라 목록에서 구별해야 한다.
+        """
+        if self.variant is not None or not all(_NUMBERED_RE.match(v.label) for v in self.variants):
+            return []
+        m = _KIND_RE.search(self.title)
+        suffix = f" ({m.group('kind')})" if m and m.group("kind") != "샘플" else ""
+        return [
+            self.model_copy(
+                update={"form_id": v.label.removesuffix("호"),
+                        "title": f"{v.title}{suffix}" if v.title else self.title,
+                        "variant": v.index}  # fmt: skip
+            )
+            for v in self.variants
+        ]
 
     def variant_of(self, table: int) -> int | None:
         """표가 속한 변형의 번호. 변형이 없거나 어느 변형에도 속하지 않으면 None."""

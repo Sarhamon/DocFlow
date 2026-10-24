@@ -6,7 +6,7 @@
 * 수식    -> formulas (입력 대상이 아니다)
 * 반복영역 -> repeats. 같은 칸 배치의 행이 이어지고 그중 2행 이상이 비어 있으면 명단·내역으로 본다.
 * 나머지 표 칸 -> slots. 자리표시자가 있는 칸(필수)과 항목명이 붙은 빈 칸(선택).
-* 한 파일에 든 서식 변형 -> variants
+* 한 파일에 든 서식 여러 개 -> variants (머리의 번호 표시, 없으면 누름틀 반복으로 나눈다)
 """
 
 from __future__ import annotations
@@ -464,8 +464,62 @@ def find_fields(doc: HwpxDocument) -> list[FieldSpec]:
     return list(grouped.values())
 
 
+#: 서식 머리의 번호 표시: "[ AID 서식 1-02호 ] <과제 결과 보고서 기안문>", "[ 앵커 서식1-01호 ]"
+_MARK_RE = re.compile(r"^\[[^\]]*?서식\s*(?P<no>\d+-\d+)\s*호\s*\]\s*(?:<(?P<title>[^>]*)>)?")
+
+
 def find_variants(doc: HwpxDocument, form_id: str, table_count: int) -> list[Variant]:
-    """한 파일에 같은 서식이 여러 번 들어 있으면 변형으로 나눈다.
+    """한 파일에 서식이 여러 개 들어 있으면 변형으로 나눈다.
+
+    서식 머리의 번호 표시로 먼저 나누고, 표시가 없으면 누름틀 반복으로 나눈다.
+    """
+    return (
+        _marked_variants(doc, form_id, table_count)
+        or _repeated_variants(doc, form_id, table_count)
+    )  # fmt: skip
+
+
+def _marked_variants(doc: HwpxDocument, form_id: str, table_count: int) -> list[Variant]:
+    """서식마다 머리에 적힌 번호(`[ 앵커 서식 4-02호 ]`)를 경계로 나눈다.
+
+    누름틀이 없는 서식 묶음(인건비 입금계좌 확인서 등)이나 번호가 건너뛴 묶음(1-05~09호에
+    1-07호가 없음)도 나뉜다. 변형 k 는 그 표시부터 다음 표시 앞까지의 첫 표에서 시작한다.
+    번호가 파일 이름의 번호 밖이면 믿지 않는다 (`[혁신 서식 7-01호]` 안의 둘째 쪽이 `7-02호` 로
+    잘못 적혀 있다. 새 판은 `7-01-2호`).
+    """
+    blocks = doc.blocks()
+    marks = [(i, m) for i, b in enumerate(blocks) if (m := _MARK_RE.match(b.text.strip()))]
+    numbers = [m.group("no") for _, m in marks]
+    if len(numbers) < 2 or len(set(numbers)) != len(numbers):
+        return []
+    if not set(numbers) <= set(form_numbers(form_id)):
+        return []
+
+    starts: list[int] = []
+    titles: list[str] = []
+    ends = [i for i, _ in marks[1:]] + [len(blocks)]
+    for (i, m), end in zip(marks, ends, strict=True):
+        tables = [t for b in blocks[i:end] for t in b.tables]
+        if not tables:
+            return []  # 표 없는 서식은 경계를 표로 잡을 수 없다
+        starts.append(min(tables))
+        title = m.group("title") or next(
+            (b.text for b in blocks[i + 1 : end] if b.text.strip() and not b.tables), ""
+        )
+        titles.append(" ".join(title.split())[:100])
+    starts[0] = 0  # 첫 표시 앞의 표는 첫 서식에 붙인다
+    if any(b <= a for a, b in zip(starts, starts[1:], strict=False)):
+        return []
+
+    bounds = zip(starts, [s - 1 for s in starts[1:]] + [table_count - 1], strict=True)
+    return [
+        Variant(index=k, label=f"{no}호", title=title, first_table=a, last_table=b)
+        for k, (no, title, (a, b)) in enumerate(zip(numbers, titles, bounds, strict=True))
+    ]
+
+
+def _repeated_variants(doc: HwpxDocument, form_id: str, table_count: int) -> list[Variant]:
+    """같은 서식이 여러 번 들어 있으면 변형으로 나눈다.
 
     결재선이 아닌 첫 누름틀이 n 번 나오면 변형 n 개다. 변형 k 는 그 앞 변형의 마지막 누름틀
     다음에 나오는 첫 표부터 시작한다. 기안문은 본문 표가, 지출품의서는 머리 표가 첫 누름틀보다
