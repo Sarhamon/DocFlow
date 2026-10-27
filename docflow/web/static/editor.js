@@ -14,6 +14,8 @@
   let schema;     // 서식 스키마 (문서가 묶인 버전)
   let layout;     // 표 배치
   let fieldsMeta; // 누름틀 목록 (한글 이름·필수)
+  let draftTargets = new Map(); // 본문 초안을 쓸 수 있는 칸: where -> 이름
+  let checklist = 0;            // 정성 판정 물음 수 (관리자가 정한다)
   let raw;        // 입력값
   const prefill = new Map(); // 반복영역 id -> 새 행 기본값 {열번호: 값}
   let issues = [];
@@ -56,6 +58,9 @@
     const out = { fields: {}, cells: {}, rows: {}, replace: {} };
     if (src.variant !== undefined) out.variant = src.variant;
     else if (DF.choices(schema).length) out.variant = schema.variants[0].label;
+    // 채택한 초안 칸 -> 인용 근거(고쳐 쓰기 전의 글). 예전 모양(칸 목록)도 읽는다
+    const drafted = src._drafted || {};
+    out._drafted = Array.isArray(drafted) ? Object.fromEntries(drafted.map((w) => [w, ""])) : { ...drafted };
     for (const k of ["fields", "cells", "replace"]) {
       for (const [key, v] of Object.entries(src[k] || {})) if (!key.startsWith("_")) out[k][key] = String(v);
     }
@@ -91,6 +96,9 @@
       if (rows.length) out.rows[id] = rows;
     }
     for (const [k, v] of Object.entries(raw.replace)) if (k.trim()) out.replace[k] = v;
+    // 채택한 본문 초안 칸: 점검이 입력값과 숫자가 어긋나는지 계속 본다 (ED_05)
+    const drafted = Object.entries(raw._drafted).filter(([w]) => String(valueAt(w)).trim());
+    if (drafted.length) out._drafted = Object.fromEntries(drafted);
     return out;
   }
 
@@ -139,7 +147,7 @@
     if (readonly()) return;
     try {
       const r = await api("POST", `/api/documents/${docId}/check`, payload());
-      showIssues(r.issues);
+      showIssues([...r.issues, ...liveNotes(), ...reviewIssues()]);
     } catch (e) { DF.fail(e); }
   }
 
@@ -165,6 +173,7 @@
 
   function placeName(i) {
     const loc = i.location;
+    if (loc.kind === "document") return "문서 전체";
     if (loc.kind === "field") {
       const f = fieldsMeta.find((x) => x.name === loc.id);
       return f ? f.label : loc.id;
@@ -193,6 +202,7 @@
   }
 
   function focusWhere(where) {
+    if (where === "document") { DF.toast("문서 전체에 대한 판정입니다. 근거를 문서에서 찾지 못했습니다."); return; }
     const el = cellOf(where);
     if (!el) { DF.toast("이 칸은 지금 화면에 없습니다 (다른 변형이거나 지운 행)."); return; }
     el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -274,6 +284,7 @@
         h("div", { class: `lab${f.required ? " required" : ""}` }, f.label, f.label !== f.name ? h("div", { class: "hint" }, f.name) : null),
         h("div", { class: "input-wrap" },
           input(f.name, f.input_type, raw.fields[f.name], f.placeholder, (v) => { raw.fields[f.name] = v; }, { multiline }),
+          draftButton(f.name),
           f.placeholder && f.required ? h("div", { class: "hint" }, `서식 예시: ${f.placeholder.split("\n")[0].slice(0, 80)}`) : null),
       );
     }
@@ -335,8 +346,10 @@
           if (slot.role === "approval") return { node: c.text.trim() ? c.text : "결재란", cls: "approval" };
           if (slot.role === "computed") return { node: "자동 계산", cls: "computed" };
           const multiline = slot.input_type === "text" && (slot.placeholder.includes("\n") || slot.placeholder.length > 40);
+          const field = input(slot.id, slot.input_type, raw.cells[slot.id], slot.placeholder, (v) => { raw.cells[slot.id] = v; }, { multiline });
+          const button = draftButton(slot.id);
           return {
-            node: input(slot.id, slot.input_type, raw.cells[slot.id], slot.placeholder, (v) => { raw.cells[slot.id] = v; }, { multiline }),
+            node: button ? h("div", { class: "input-wrap" }, field, button) : field,
             cls: `slot${slot.required ? " required" : ""}`,
           };
         }
@@ -418,6 +431,11 @@
     return h("div", {}, tools, sums(rep));
   }
 
+  /** 사용자가 적은 값이 있는 행인가. 미리 적힌 연번·금액만 있는 행은 덮어써도 된다. */
+  function rowFilled(rep, line, i) {
+    return Object.entries(line).some(([k, v]) => String(v).trim() && newRow(rep, i)[k] !== v);
+  }
+
   // ---------------------------------------------------------------- 명단 가져오기 (F2-d)
   const PERSON_RE = /성명|예금주|이름|계좌|학번/;
   let rosterRep = null;
@@ -464,9 +482,7 @@
   function applyRoster(replace) {
     const rep = rosterRep;
     let lines = raw.rows[rep.id] || [];
-    // 입력이 없는 행(미리 적힌 연번·금액만 있는 행)은 덮어쓴다
-    const filled = (line, i) => Object.entries(line).some(([k, v]) => String(v).trim() && newRow(rep, i)[k] !== v);
-    lines = replace ? [] : lines.filter(filled);
+    lines = replace ? [] : lines.filter((line, i) => rowFilled(rep, line, i));
     for (const row of rosterRows) lines.push({ ...newRow(rep, lines.length), ...row });
     raw.rows[rep.id] = lines;
     $("roster-dialog").close();
@@ -553,6 +569,210 @@
     changed();
   }
 
+  // ---------------------------------------------------------------- 글로 채우기 (F2-c, M10)
+  let prefillOut = null;
+  let llmNotes = []; // LLM 이 채운 값의 인용 경고. 사용자가 그 칸을 고치면 사라진다
+
+  /** 입력값에서 where(검증 결과의 자리)의 지금 값. */
+  function valueAt(where) {
+    const m = /^(.+)\[(\d+)\]\.c(\d+)$/.exec(where);
+    if (m) return ((raw.rows[m[1]] || [])[Number(m[2])] || {})[m[3]] || "";
+    return raw.cells[where] ?? raw.fields[where] ?? "";
+  }
+
+  function liveNotes() {
+    llmNotes = llmNotes.filter((n) => valueAt(n.issue.where) === n.value);
+    return llmNotes.map((n) => n.issue);
+  }
+
+  async function prefillGo() {
+    const text = $("prefill-text").value.trim();
+    if (!text) { DF.toast("채울 내용을 적으세요.", "error"); return; }
+    const btn = $("prefill-go");
+    btn.disabled = true;
+    btn.textContent = "채우는 중… (1분쯤 걸릴 수 있습니다)";
+    try {
+      prefillOut = await api("POST", `/api/documents/${docId}/prefill`, { prompt: text, variant: raw.variant ?? null });
+      showPrefill(prefillOut);
+    } catch (e) { DF.fail(e); } finally {
+      btn.disabled = false;
+      btn.textContent = "채우기";
+    }
+  }
+
+  function showPrefill(out) {
+    const warned = new Map(out.issues.map((i) => [i.where, i]));
+    const note = $("prefill-note");
+    note.replaceChildren(
+      h("p", { class: "small" }, `${out.filled.length}칸을 채웠습니다`, out.issues.length ? ` · 확인할 값 ${out.issues.length}건` : "",
+        h("span", { class: "muted" }, ` (${out.model}, ${out.elapsed}초)`)),
+      out.skipped.length ? h("div", { class: "msg info small" }, `LLM 에 넘기지 않은 칸: ${out.skipped.join(", ")}`) : "");
+    const label = (f) => (f.location.kind === "repeat" ? `${f.label} (${f.location.index + 1}행)` : f.label);
+    const current = (f) => (f.location.kind === "repeat" ? "" : valueAt(f.where));
+    $("prefill-rows").replaceChildren(
+      h("thead", {}, h("tr", {}, h("th", {}, "항목"), h("th", {}, "채울 값"), h("th", {}, "지금 값"), h("th", {}, "확인"))),
+      h("tbody", {}, ...out.filled.map((f) => {
+        const w = warned.get(f.where);
+        return h("tr", { class: w ? "warning" : "" },
+          h("td", {}, label(f)), h("td", { style: "white-space:pre-wrap" }, f.value),
+          h("td", { class: "muted", style: "white-space:pre-wrap" }, current(f)),
+          h("td", { class: "small" }, w ? h("span", { class: "badge warning" }, w.message) : ""));
+      })));
+    $("prefill-all").disabled = $("prefill-empty").disabled = !out.filled.length;
+    $("prefill-dialog").showModal();
+  }
+
+  function applyPrefill(overwrite) {
+    const out = prefillOut;
+    const applied = new Set();
+    for (const part of ["fields", "cells"]) {
+      for (const [k, v] of Object.entries(out.input[part] || {})) {
+        if (overwrite || !String(raw[part][k] ?? "").trim()) { raw[part][k] = v; applied.add(k); }
+      }
+    }
+    // 명단이 아닌 반복영역(지출 내역 등): 덮어쓰면 바꾸고, 아니면 적어 둔 행 뒤에 붙인다
+    const shift = {};
+    for (const [rid, rows] of Object.entries(out.input.rows || {})) {
+      const rep = schema.repeats.find((r) => r.id === rid);
+      if (!rep) continue;
+      let lines = raw.rows[rid] || [];
+      lines = overwrite ? [] : lines.filter((line, i) => rowFilled(rep, line, i));
+      shift[rid] = lines.length;
+      for (const row of rows) lines.push({ ...newRow(rep, lines.length), ...row });
+      raw.rows[rid] = lines;
+    }
+    const fresh = [];
+    for (const i of out.issues) {
+      const loc = i.location;
+      if (loc.kind === "repeat") {
+        const index = shift[loc.id] + loc.index;
+        const where = `${loc.id}[${index}].c${loc.col}`;
+        fresh.push({ ...i, where, location: { ...loc, index, row: loc.row - loc.index + index } });
+      } else if (applied.has(loc.id)) fresh.push(i);
+    }
+    llmNotes = [...llmNotes.filter((n) => !fresh.some((x) => x.where === n.issue.where)),
+      ...fresh.map((issue) => ({ issue, value: valueAt(issue.where) }))];
+    $("prefill-dialog").close();
+    redraw(); changed(); check();
+    const rowCount = Object.values(out.input.rows || {}).reduce((n, r) => n + r.length, 0);
+    DF.toast(`${applied.size}칸${rowCount ? `과 ${rowCount}행` : ""}을 넣었습니다.${fresh.length ? ` 확인할 값 ${fresh.length}건은 검증 결과에 경고로 남깁니다.` : ""}`);
+  }
+  $("prefill-go").addEventListener("click", prefillGo);
+  $("prefill-all").addEventListener("click", () => {
+    if (confirm("이미 적은 칸도 LLM 이 채운 값으로 바꿀까요?")) applyPrefill(true);
+  });
+  $("prefill-empty").addEventListener("click", () => applyPrefill(false));
+  $("prefill-text").addEventListener("input", (ev) => {
+    $("prefill-count").textContent = ev.target.value.length ? `${ev.target.value.length.toLocaleString("ko-KR")} / 4,000자` : "";
+  });
+
+  // ---------------------------------------------------------------- 본문 초안 (F2-b, DR_01~08)
+  let draftWhere = null;
+  let lastDraft = null; // 마지막으로 받은 초안 (채택할 때 인용 근거를 같이 적는다)
+
+  function draftButton(where) {
+    if (readonly() || !draftTargets.has(where)) return null;
+    return h("button", { type: "button", class: "small", style: "margin-top:4px", onclick: () => openDraft(where) }, "초안 쓰기");
+  }
+
+  function openDraft(where) {
+    draftWhere = where;
+    lastDraft = null;
+    $("draft-title").textContent = `본문 초안 — ${draftTargets.get(where)}`;
+    $("draft-result").classList.add("hidden");
+    $("draft-note").replaceChildren();
+    $("draft-text").value = "";
+    for (const id of ["draft-retry", "draft-use"]) $(id).classList.add("hidden");
+    $("draft-go").classList.remove("hidden");
+    $("draft-go").textContent = String(valueAt(where)).trim() ? "지금 글을 고쳐 쓰기" : "초안 만들기";
+    $("draft-dialog").showModal();
+  }
+
+  async function draftGo(retry) {
+    const buttons = ["draft-go", "draft-retry", "draft-use"].map($);
+    buttons.forEach((b) => { b.disabled = true; });
+    const busy = retry ? $("draft-retry") : $("draft-go");
+    const label = busy.textContent;
+    busy.textContent = "쓰는 중… (1분쯤 걸릴 수 있습니다)";
+    try {
+      const out = await api("POST", `/api/documents/${docId}/draft`,
+        { target: draftWhere, input: payload(), instruction: $("draft-instruction").value, retry });
+      lastDraft = out;
+      $("draft-text").value = out.text;
+      $("draft-result").classList.remove("hidden");
+      $("draft-note").replaceChildren(
+        ...out.issues.map((i) => h("div", { class: "msg warn small", style: "margin-top:8px" }, `${i.message} → ${i.action}`)),
+        h("p", { class: "small muted" }, out.cited.length ? `인용한 입력값: ${out.cited.map((c) => c.label).join(", ")}` : "인용한 입력값이 없습니다.",
+          ` (${out.model}, ${out.elapsed}초)`));
+      $("draft-go").classList.add("hidden");
+      $("draft-retry").classList.remove("hidden");
+      $("draft-use").classList.remove("hidden");
+    } catch (e) { DF.fail(e); } finally {
+      buttons.forEach((b) => { b.disabled = false; });
+      busy.textContent = label;
+    }
+  }
+
+  function useDraft() {
+    const text = $("draft-text").value.trim();
+    if (!text) { DF.toast("글이 비었습니다.", "error"); return; }
+    const part = fieldsMeta.some((f) => f.name === draftWhere) ? "fields" : "cells";
+    raw[part][draftWhere] = text;
+    raw._drafted[draftWhere] = lastDraft ? lastDraft.basis : "";
+    $("draft-dialog").close();
+    redraw(); changed(); check();
+    DF.toast("초안을 넣었습니다. 입력값과 숫자가 어긋나면 검증 결과에 경고가 나옵니다.");
+  }
+  $("draft-go").addEventListener("click", () => draftGo(false));
+  $("draft-retry").addEventListener("click", () => draftGo(true));
+  $("draft-use").addEventListener("click", useDraft);
+
+  // ---------------------------------------------------------------- 정성 판정 (ER_05·ER_06)
+  let reviewed = null; // { snapshot: 판정한 입력값, issues }
+
+  /** 판정한 입력값이 그대로일 때만 판정 경고를 보인다. 고치면 다시 판정해야 한다. */
+  function reviewIssues() {
+    if (!reviewed) return [];
+    if (JSON.stringify(payload()) === reviewed.snapshot) return reviewed.issues;
+    reviewed = null;
+    $("review-state").textContent = "입력이 바뀌었습니다. 필요하면 다시 판정하세요";
+    return [];
+  }
+
+  async function reviewGo() {
+    const btn = $("btn-review");
+    btn.disabled = true;
+    btn.textContent = "판정 중… (1분쯤 걸릴 수 있습니다)";
+    try {
+      const input = payload();
+      const out = await api("POST", `/api/documents/${docId}/review`, { input });
+      reviewed = { snapshot: JSON.stringify(input), issues: out.issues };
+      const count = (v) => out.results.filter((r) => r.verdict === v).length;
+      $("review-state").textContent = `적합 ${count("pass")} · 부적합 ${count("fail")} · 판단 불가 ${count("unknown")}`;
+      showReview(out);
+      await check();
+    } catch (e) { DF.fail(e); } finally {
+      btn.disabled = false;
+      btn.textContent = "정성 판정";
+    }
+  }
+
+  function showReview(out) {
+    const cls = { pass: "completed", fail: "error", unknown: "warning" };
+    $("review-rows").replaceChildren(
+      h("thead", {}, h("tr", {}, h("th", {}, "물음"), h("th", {}, "판정"), h("th", {}, "이유"), h("th", {}, "근거"))),
+      h("tbody", {}, ...out.results.map((r) => h("tr", {},
+        h("td", {}, r.question),
+        h("td", {}, h("span", { class: `badge ${cls[r.verdict]}` }, r.verdict_name)),
+        h("td", { class: "small" }, r.reason),
+        h("td", { class: "small" }, !r.evidence ? h("span", { class: "muted" }, "없음")
+          : r.verified ? h("button", { type: "button", class: "small link", onclick: () => { $("review-dialog").close(); focusWhere(r.where); } }, `“${r.evidence}”`)
+            : h("span", { class: "muted", title: "문서에서 이 문장을 찾지 못했습니다" }, `“${r.evidence}” (문서에 없음)`))))));
+    $("review-meta").textContent = `${out.model}, ${out.elapsed}초`;
+    $("review-dialog").showModal();
+  }
+  $("btn-review").addEventListener("click", reviewGo);
+
   // ---------------------------------------------------------------- 그리기
   function redraw() {
     drawFields();
@@ -572,6 +792,8 @@
     $("btn-validate").disabled = readonly();
     $("btn-generate").disabled = readonly();
     $("replace-card").classList.toggle("hidden", readonly() && !Object.keys(raw.replace).length);
+    $("prefill-card").classList.toggle("hidden", readonly());
+    $("review-bar").classList.toggle("hidden", readonly() || !checklist);
     const banner = $("banner");
     banner.replaceChildren();
     if (readonly()) {
@@ -600,8 +822,10 @@
     await save();
     const r = await api("POST", `/api/documents/${docId}/validate`);
     const errors = r.issues.filter((i) => i.severity === "error").length;
-    const note = errors ? `오류 ${errors}건을 고쳐야 문서를 만들 수 있습니다.` : r.issues.length ? `오류는 없고 경고 ${r.issues.length}건이 있습니다. 확인 후 만들 수 있습니다.` : "검증을 통과했습니다. 문서를 만들 수 있습니다.";
-    showIssues(r.issues, note);
+    const notes = [...liveNotes(), ...reviewIssues()];
+    const warns = r.issues.length + notes.length;
+    const note = errors ? `오류 ${errors}건을 고쳐야 문서를 만들 수 있습니다.` : warns ? `오류는 없고 경고 ${warns}건이 있습니다. 확인 후 만들 수 있습니다.` : "검증을 통과했습니다. 문서를 만들 수 있습니다.";
+    showIssues([...r.issues, ...notes], note);
     return r;
   }
 
@@ -697,6 +921,8 @@
     schema = f.schema;
     layout = f.layout;
     fieldsMeta = f.fields;
+    draftTargets = new Map((f.draft_targets || []).map((t) => [t.where, t.label]));
+    checklist = f.checklist || 0;
     raw = normalize(d.input, f.skeleton);
     if (DF.choices(schema).length) {
       const sel = $("variant");

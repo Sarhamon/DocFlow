@@ -19,6 +19,7 @@ import json
 import os
 import tempfile
 from collections.abc import Callable, Iterator
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -32,10 +33,21 @@ from docflow.config import Settings, get_settings
 from docflow.convert import Converter
 from docflow.generate import GenerateError
 from docflow.hwpx.document import HwpxDocument
+from docflow.llm import LlmClient, LlmError
 from docflow.pipeline import InputError, skeleton
 from docflow.schema.labels import field_label
 from docflow.schema.model import FormSchema
-from docflow.service import audit, catalog, crosscheck, crypto, roster
+from docflow.service import (
+    audit,
+    catalog,
+    crosscheck,
+    crypto,
+    draft,
+    prefill,
+    review,
+    roster,
+    system,
+)
 from docflow.service.auth import AuthError, AuthService, Client, Forbidden, SessionInvalid
 from docflow.service.catalog import NotFound, Unavailable
 from docflow.service.db import Document, DocumentEvent, Form, User, UserSession, connect, now
@@ -100,6 +112,29 @@ class StatusChange(BaseModel):
 class LinkRequest(BaseModel):
     #: 이을 문서. null 이면 끊는다
     document_id: int | None = None
+
+
+class PrefillRequest(BaseModel):
+    #: 사용자가 적은 글
+    prompt: str = Field(min_length=1, max_length=prefill.MAX_PROMPT)
+    #: 고른 변형 (라벨이나 번호). 없으면 서식의 기본
+    variant: str | int | None = None
+
+
+class DraftRequest(BaseModel):
+    #: 초안을 쓸 칸 (누름틀 이름이나 슬롯 id)
+    target: str
+    #: 지금 화면의 입력값 (저장하지 않은 값 포함)
+    input: dict[str, Any] = Field(default_factory=dict)
+    #: 추가 요청 (분량·강조할 점)
+    instruction: str = Field("", max_length=draft.MAX_INSTRUCTION)
+    #: 다시 만들기면 다른 글이 나오게 한다
+    retry: bool = False
+
+
+class ReviewRequest(BaseModel):
+    #: 지금 화면의 입력값 (저장하지 않은 값 포함)
+    input: dict[str, Any] = Field(default_factory=dict)
 
 
 class GenerateRequest(BaseModel):
@@ -222,8 +257,12 @@ def create_app(
     store: FileStore | None = None,
     database_url: str | None = None,
     clock: Callable[[], datetime] = now,
+    llm: LlmClient | None | str = "auto",
 ) -> FastAPI:
     """앱을 만든다. converter 가 "auto" 면 한컴오피스가 있을 때만 한컴 변환기를 쓴다.
+
+    llm 이 "auto" 면 요청마다 시스템 설정의 주소·모델로 Ollama 를 부른다(관리자가 바꾸면 바로 적용).
+    None 이면 자연어 일괄 입력을 쓸 수 없다(503).
 
     clock 은 세션 시간 계산에 쓴다(테스트가 시간을 옮긴다). HTTPS 로 띄울 때는 환경변수
     DOCFLOW_SECURE_COOKIE=1 로 쿠키에 Secure 를 붙인다.
@@ -253,6 +292,16 @@ def create_app(
 
     def service(s: Session = Depends(session)) -> DocumentService:
         return DocumentService(s, store, converter)
+
+    def llm_client(s: Session = Depends(session)) -> LlmClient:
+        if llm is None:
+            raise Unavailable("LLM 을 쓰지 않도록 설정되어 있다. 칸을 직접 채우세요")
+        if llm == "auto":
+            from docflow.adapters.ollama import OllamaClient
+
+            cfg = system.get_settings(s)
+            return OllamaClient(cfg["llm_url"], cfg["llm_model"])
+        return llm
 
     def auth(s: Session = Depends(session)) -> AuthService:
         return AuthService(s, clock)
@@ -510,6 +559,10 @@ def create_app(
             "skeleton": skeleton(schema, index),
             "layout": catalog.layout(doc.form_version, store),
             "fields": fields_meta(schema),
+            # 본문 초안을 만들 수 있는 칸 (변형과 상관없이 모두. 화면이 보이는 칸에만 단추를 단다)
+            "draft_targets": [{"where": t.key, "label": t.label} for t in draft.targets(schema)],
+            # 정성 판정 물음 수. 없으면 화면이 [정성 판정] 단추를 숨긴다
+            "checklist": len(review.items_for(svc.session, doc.form_version.form_id)),
         }
 
     @app.put(f"{API}/documents/{{doc_id}}/input")
@@ -637,6 +690,99 @@ def create_app(
             ],  # fmt: skip
         }
 
+    @app.post(f"{API}/documents/{{doc_id}}/prefill")
+    def prefill_document(
+        doc_id: int,
+        body: PrefillRequest,
+        svc: DocumentService = Depends(service),
+        client: LlmClient = Depends(llm_client),
+        me=Depends(owner),
+    ) -> dict[str, Any]:
+        """자연어 일괄 입력: 글로 LLM 이 칸을 채운다 (저장하지 않는다).
+
+        화면이 결과를 미리 보여 주고, 사용자가 넣으면 임시저장으로 저장된다. 명단·계좌·주민등록번호
+        칸은 LLM 에 넘기지 않는다. 채운 금액·날짜가 글에 없으면 LLM_UNCITED 경고를 함께 준다.
+        """
+        doc = svc.get(doc_id, me)
+        try:
+            out = prefill.prefill(svc.schema_of(doc), body.prompt, client, variant=body.variant)
+        except LlmError as exc:
+            raise Unavailable(f"{exc}. 잠시 뒤 다시 하거나 칸을 직접 채우세요") from exc
+        return {
+            "input": out.input,
+            "filled": [
+                {"where": f.location.key, "location": asdict(f.location),
+                 "label": f.target.label, "value": f.value}
+                for f in out.filled
+            ],  # fmt: skip
+            "issues": [issue_dict(i) for i in out.issues],
+            "skipped": out.skipped,
+            "model": out.model,
+            "elapsed": round(out.elapsed, 1),
+        }
+
+    @app.post(f"{API}/documents/{{doc_id}}/draft")
+    def draft_document(
+        doc_id: int,
+        body: DraftRequest,
+        svc: DocumentService = Depends(service),
+        client: LlmClient = Depends(llm_client),
+        me=Depends(owner),
+    ) -> dict[str, Any]:
+        """본문 초안: 채운 입력값으로 LLM 이 서술형 칸의 글을 쓴다 (저장하지 않는다).
+
+        화면이 초안을 보여 주고 사용자가 채택·수정·재생성한다. 채택하면 입력값의 `_drafted` 에
+        칸과 근거를 적어, 이후 점검이 입력값과 숫자가 어긋나는지 계속 본다(DRAFT_UNCITED).
+        """
+        doc = svc.get(doc_id, me)
+        try:
+            out = draft.draft(svc.schema_of(doc), body.input, body.target, client,
+                              instruction=body.instruction, retry=body.retry)  # fmt: skip
+        except LlmError as exc:
+            raise Unavailable(f"{exc}. 잠시 뒤 다시 하거나 직접 쓰세요") from exc
+        return {
+            "target": out.target.key,
+            "label": out.target.label,
+            "text": out.text,
+            "cited": [{"key": f.key, "label": f.label, "value": f.value} for f in out.cited],
+            "issues": [issue_dict(i) for i in out.issues],
+            # 채택할 때 입력값의 _drafted[칸] 에 적는다 (고쳐 쓰기 전의 글도 인용 근거)
+            "basis": out.basis,
+            "model": out.model,
+            "elapsed": round(out.elapsed, 1),
+        }
+
+    @app.post(f"{API}/documents/{{doc_id}}/review")
+    def review_document(
+        doc_id: int,
+        body: ReviewRequest,
+        svc: DocumentService = Depends(service),
+        client: LlmClient = Depends(llm_client),
+        me=Depends(owner),
+    ) -> dict[str, Any]:
+        """정성 판정: 관리자가 정한 체크리스트로 LLM 이 판정하고 근거 문장을 댄다 (저장하지 않는다).
+
+        부적합·판단 불가는 QUALITATIVE 경고로 준다. 근거 문장을 문서에서 찾으면 그 칸을 가리킨다.
+        """
+        doc = svc.get(doc_id, me)
+        items = review.items_for(svc.session, doc.form_version.form_id)
+        questions = [review.Question(i.id, i.text) for i in items]
+        try:
+            out = review.review(svc.schema_of(doc), body.input, questions, client)
+        except LlmError as exc:
+            raise Unavailable(f"{exc}. 잠시 뒤 다시 하세요") from exc
+        return {
+            "results": [
+                {"id": v.question.id, "question": v.question.text, "verdict": v.verdict,
+                 "verdict_name": review.VERDICTS[v.verdict], "reason": v.reason,
+                 "evidence": v.evidence, "where": v.location.key, "verified": v.verified}
+                for v in out.verdicts
+            ],  # fmt: skip
+            "issues": [issue_dict(i) for i in out.issues],
+            "model": out.model,
+            "elapsed": round(out.elapsed, 1),
+        }
+
     @app.get(f"{API}/documents/{{doc_id}}/links")
     def document_links(
         doc_id: int, svc: DocumentService = Depends(service), me=Depends(owner)
@@ -678,6 +824,7 @@ def create_app(
     admin_api.mount(app, session=session, admin_user=admin_user, store=store, converter=converter)
     admin_ops.mount(app, session=session, admin_user=admin_user, store=store)
     admin_ops.mount_cross(app, session=session, admin_user=admin_user)
+    admin_ops.mount_checklist(app, session=session, admin_user=admin_user)
     pages.mount(app, auth)
     return app
 

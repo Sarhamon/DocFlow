@@ -88,7 +88,7 @@ def test_관리자_메뉴는_관리자에게만_보인다(app, client):
 ADMIN_PAGES = (
     "/admin/users", "/admin/forms", "/admin/forms/1", "/admin/categories", "/admin/rules",
     "/admin/system", "/admin/documents", "/admin/stats", "/admin/logins", "/admin/audit",
-    "/admin/cross",
+    "/admin/cross", "/admin/checklist",
 )  # fmt: skip
 
 

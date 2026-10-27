@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from docflow.service import audit, catalog, crosscheck, crypto, operations
-from docflow.service.db import CrossRule, Document, Form, User
+from docflow.service import audit, catalog, crosscheck, crypto, operations, review
+from docflow.service.db import ChecklistItem, CrossRule, Document, Form, User
 from docflow.service.documents import DocumentService
 from docflow.service.storage import FileStore
 from docflow.web.files import download_response
@@ -276,3 +276,71 @@ def _rule(s: Session, rule_id: int) -> CrossRule:
     if rule is None:
         raise catalog.NotFound(f"대조 규칙 {rule_id} 이(가) 없다")
     return rule
+
+
+# ---------------------------------------------------------------- 정성 판정 체크리스트 (ER_05)
+class ChecklistBody(BaseModel):
+    text: str = Field(max_length=review.MAX_TEXT)
+    #: 없으면 모든 서식에 묻는다
+    form_id: int | None = None
+    enabled: bool = True
+
+
+def checklist_dict(item: ChecklistItem) -> dict[str, Any]:
+    form = item.form
+    return {
+        "id": item.id,
+        "text": item.text,
+        "enabled": item.enabled,
+        "form": {"id": form.id, "program": form.program, "form_no": form.form_no,
+                 "title": form.title} if form else None,  # fmt: skip
+    }
+
+
+def mount_checklist(
+    app: FastAPI, *, session: Callable[..., Session], admin_user: Callable[..., User]
+) -> None:
+    admins = [Depends(admin_user)]
+
+    @app.get(f"{API}/checklist", dependencies=admins)
+    def checklist_list(s: Session = Depends(session)) -> list[dict[str, Any]]:
+        return [checklist_dict(i) for i in review.all_items(s)]
+
+    def save(item: ChecklistItem | None, body: ChecklistBody, s: Session, actor: User) -> dict:
+        item = review.save_item(s, item, **body.model_dump())
+        out = checklist_dict(item)
+        scope = audit.form_name(item.form) if item.form else "모든 서식"
+        audit.record(s, actor, "checklist.save", item.text[:300],
+                     {"scope": scope, "enabled": item.enabled})  # fmt: skip
+        return out
+
+    @app.post(f"{API}/checklist", status_code=201)
+    def checklist_create(
+        body: ChecklistBody, s: Session = Depends(session), actor: User = Depends(admin_user)
+    ) -> dict[str, Any]:
+        return save(None, body, s, actor)
+
+    @app.put(f"{API}/checklist/{{item_id}}")
+    def checklist_update(
+        item_id: int,
+        body: ChecklistBody,
+        s: Session = Depends(session),
+        actor: User = Depends(admin_user),
+    ) -> dict[str, Any]:
+        return save(_item(s, item_id), body, s, actor)
+
+    @app.delete(f"{API}/checklist/{{item_id}}", status_code=204)
+    def checklist_delete(
+        item_id: int, s: Session = Depends(session), actor: User = Depends(admin_user)
+    ) -> None:
+        item = _item(s, item_id)
+        text = item.text
+        review.delete_item(s, item)
+        audit.record(s, actor, "checklist.save", text[:300], "삭제")
+
+
+def _item(s: Session, item_id: int) -> ChecklistItem:
+    item = s.get(ChecklistItem, item_id)
+    if item is None:
+        raise catalog.NotFound(f"체크리스트 항목 {item_id} 이(가) 없다")
+    return item

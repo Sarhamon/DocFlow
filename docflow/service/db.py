@@ -164,6 +164,24 @@ class CrossRule(Base):
     target_form: Mapped[Form] = relationship(foreign_keys=[target_form_id])
 
 
+class ChecklistItem(Base):
+    """정성 판정 체크리스트 항목 (M10, ER_05). form_id 가 없으면 모든 서식에 묻는다.
+
+    규정 해석이 필요한 물음이다(예: "다과비가 회의 목적과 인원에 비추어 과다하지 않은가").
+    LLM 이 문서 입력값만 보고 적합·부적합·판단 불가와 근거 문장을 낸다.
+    """
+
+    __tablename__ = "checklist_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    text: Mapped[str] = mapped_column(Text)
+    form_id: Mapped[int | None] = mapped_column(ForeignKey("forms.id"), default=None, index=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(default=now)
+
+    form: Mapped[Form | None] = relationship()
+
+
 class DocumentLink(Base):
     """사용자가 대조 규칙에 이어 둔 문서 쌍 (정산서 ↔ 계획서). 어느 쪽에서 이어도 양쪽에서 본다."""
 

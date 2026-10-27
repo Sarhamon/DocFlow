@@ -20,6 +20,14 @@
         <label class="row">서식 변형 <select id="variant"></select></label>
         <p class="hint" style="margin:6px 0 0">한 파일에 든 여러 서식 가운데 하나를 고릅니다. 고르지 않은 쪽은 문서에서 빠집니다.</p>
       </div>
+      <div class="card hidden" id="prefill-card">
+        <h2>글로 채우기</h2>
+        <p class="hint" style="margin-top:0">무엇을 하는지 적으면 LLM 이 칸을 채웁니다. 넣기 전에 확인합니다. 명단·계좌·주민등록번호는 LLM 에 넘기지 않습니다.</p>
+        <textarea id="prefill-text" rows="4" style="width:100%" maxlength="4000" placeholder="예: 10월 30일 오후 2시 공학관 301호에서 캡스톤 중간점검 회의. 참석 5명, 다과비 50,000원."></textarea>
+        <div class="row" style="margin-top:8px"><span class="small muted" id="prefill-count"></span><span class="spacer"></span>
+          <button type="button" class="primary" id="prefill-go">채우기</button>
+        </div>
+      </div>
       <div class="card hidden" id="fields-card">
         <h2>기본 항목</h2>
         <div class="fields-grid" id="fields"></div>
@@ -44,6 +52,10 @@
   <aside class="side">
     <div class="card">
       <div class="row"><h2>검증 결과</h2><span class="spacer"></span><span class="small muted" id="issue-count"></span></div>
+      <div class="row hidden" id="review-bar" style="margin-bottom:8px">
+        <button type="button" class="small" id="btn-review">정성 판정</button>
+        <span class="small muted" id="review-state">규정 해석이 필요한 물음을 LLM 이 판정합니다</span>
+      </div>
       <div class="filters" id="filters">
         <button type="button" class="small on" data-sev="">전체</button>
         <button type="button" class="small" data-sev="error">오류</button>
@@ -76,6 +88,45 @@
   </div>
 </dialog>
 <input type="file" id="roster-file" accept=".hwp,.hwpx" multiple hidden>
+
+<dialog id="draft-dialog" style="max-width:min(820px, calc(100vw - 32px)); width:100%">
+  <h2 id="draft-title">본문 초안</h2>
+  <p class="hint">채운 칸의 값으로 LLM 이 글을 씁니다. 금액·날짜·인원이 입력값에 없으면 경고합니다. 명단은 인원과 합계만 넘깁니다.</p>
+  <label class="small">추가 요청 (선택)
+    <textarea id="draft-instruction" rows="2" style="width:100%" maxlength="1000" placeholder="예: 세 문장 이내로, 학생 참여를 강조"></textarea>
+  </label>
+  <div class="hidden" id="draft-result" style="margin-top:12px">
+    <textarea id="draft-text" rows="10" style="width:100%" aria-label="초안"></textarea>
+    <div id="draft-note"></div>
+  </div>
+  <div class="row" style="margin-top:12px"><span class="spacer"></span>
+    <button type="button" onclick="this.closest('dialog').close()">취소</button>
+    <button type="button" id="draft-go" class="primary">초안 만들기</button>
+    <button type="button" id="draft-retry" class="hidden">다시 만들기</button>
+    <button type="button" id="draft-use" class="primary hidden">이 글로 채우기</button>
+  </div>
+</dialog>
+
+<dialog id="review-dialog" style="max-width:min(900px, calc(100vw - 32px)); width:100%">
+  <h2>정성 판정 결과</h2>
+  <p class="hint">LLM 의 판정이라 참고용입니다. 부적합·판단 불가는 검증 결과에 경고로 남고, 입력을 고치면 사라집니다. 근거를 누르면 그 칸으로 갑니다.</p>
+  <div class="list-wrap" style="max-height:440px; overflow:auto"><table class="list" id="review-rows"></table></div>
+  <div class="row" style="margin-top:12px"><span class="small muted" id="review-meta"></span><span class="spacer"></span>
+    <button type="button" class="primary" onclick="this.closest('dialog').close()">닫기</button>
+  </div>
+</dialog>
+
+<dialog id="prefill-dialog" style="max-width:min(960px, calc(100vw - 32px)); width:100%">
+  <h2>LLM 이 채운 값</h2>
+  <p class="hint">글에 없는 금액·날짜는 경고로 표시합니다. 넣은 뒤에도 칸에서 고칠 수 있습니다.</p>
+  <div id="prefill-note"></div>
+  <div class="list-wrap" style="max-height:400px; overflow:auto"><table class="list" id="prefill-rows"></table></div>
+  <div class="row" style="margin-top:12px"><span class="spacer"></span>
+    <button type="button" onclick="this.closest('dialog').close()">취소</button>
+    <button type="button" id="prefill-all">모두 덮어쓰기</button>
+    <button type="button" class="primary" id="prefill-empty">빈 칸만 채우기</button>
+  </div>
+</dialog>
 
 <dialog id="gen-dialog">
   <h2>문서 만들기</h2>

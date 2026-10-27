@@ -93,6 +93,7 @@ def mount(app: FastAPI, auth: Callable[..., AuthService]) -> None:
         "/admin/documents": ("admin_documents.html", True),
         "/admin/stats": ("admin_stats.html", True),
         "/admin/cross": ("admin_cross.html", True),
+        "/admin/checklist": ("admin_checklist.html", True),
     }
     for path, (name, admin) in routes.items():
         app.add_api_route(path, page(name, admin=admin), methods=["GET"],

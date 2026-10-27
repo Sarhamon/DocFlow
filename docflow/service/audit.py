@@ -29,6 +29,7 @@ ACTIONS = {
     "rule.toggle": "규칙 켜기·끄기",
     "rule.exceptions": "규칙 예외 서식",
     "cross.save": "문서 간 대조 규칙",
+    "checklist.save": "정성 판정 체크리스트",
     "system.save": "시스템 설정",
     "document.view": "문서 열람",
     "document.download": "문서 내려받기",

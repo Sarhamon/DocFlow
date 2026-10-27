@@ -76,8 +76,8 @@ Severity = Literal["error", "warning"]
 class Location:
     """오류가 난 자리. 화면이 이 정보로 해당 입력칸으로 이동한다."""
 
-    #: cell 표 칸 / field 누름틀 / repeat 반복영역의 한 칸
-    kind: Literal["cell", "field", "repeat"]
+    #: cell 표 칸 / field 누름틀 / repeat 반복영역의 한 칸 / document 문서 전체 (정성 판정)
+    kind: Literal["cell", "field", "repeat", "document"]
     #: 슬롯 id(t0.r1.c2) / 누름틀 이름 / 반복영역 id(t0.r7-16)
     id: str
     table: int | None = None

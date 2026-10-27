@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% set nav = "admin" %}
+{% set admin_tab = "checklist" %}
+{% block title %}정성 판정{% endblock %}
+{% block content %}
+{% include "_admin_nav.html" %}
+<div class="row" style="margin-bottom:12px">
+  <p class="muted small" style="margin:0; flex:1">
+    규정 해석이 필요한 물음입니다. 사용자가 문서 작성 화면에서 <b>정성 판정</b>을 누르면 LLM 이 물음마다 적합·부적합·판단 불가와
+    근거 문장을 냅니다. 부적합·판단 불가는 검증 결과에 경고로 나오며 문서 만들기를 막지 않습니다. 명단·계좌·주민등록번호는 LLM 에 넘기지 않습니다.
+  </p>
+  <button class="primary" id="btn-new" type="button">물음 추가</button>
+</div>
+<div class="list-wrap"><table class="list" id="items"></table></div>
+<p id="empty" class="muted hidden">아직 물음이 없습니다. 예: "다과비가 회의 목적과 참석 인원에 비추어 과다하지 않은가"</p>
+
+<dialog id="edit" style="max-width:min(720px, calc(100vw - 32px)); width:100%">
+  <form id="edit-form">
+    <h2 id="edit-title">물음</h2>
+    <label class="field"><span>물음 (예/아니오로 답할 수 있게)</span>
+      <textarea name="text" rows="3" required maxlength="300" style="width:100%" placeholder="예: 집행 목적이 사업 목적과 직접 관련되는가"></textarea>
+    </label>
+    <div style="margin:8px 0">
+      <label class="row small"><input type="radio" name="scope" value="all" checked> 모든 서식에 묻기</label>
+      <label class="row small"><input type="radio" name="scope" value="form"> 한 서식에만 묻기</label>
+      <div id="form-pick" class="hidden" style="margin:6px 0 0 22px"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="row small"><input type="checkbox" name="enabled" checked> 켜기</label>
+      <span class="spacer"></span>
+      <button type="button" onclick="this.closest('dialog').close()">취소</button>
+      <button class="primary" type="submit">저장</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { h, api } = DF;
+  const $ = (id) => document.getElementById(id);
+  let editing = null;
+  let picked = null; // 고른 서식
+
+  const formName = (f) => `${f.program} ${f.form_no} ${f.title}`;
+
+  async function load() {
+    const items = await api("GET", "/api/admin/checklist");
+    $("items").replaceChildren(
+      h("thead", {}, h("tr", {}, h("th", {}, "물음"), h("th", {}, "대상"), h("th", {}, "상태"), h("th", {}, ""))),
+      h("tbody", {}, ...items.map((it) => h("tr", {},
+        h("td", {}, it.text),
+        h("td", { class: "small" }, it.form ? formName(it.form) : "모든 서식"),
+        h("td", {}, h("span", { class: `badge ${it.enabled ? "completed" : ""}` }, it.enabled ? "켜짐" : "꺼짐")),
+        h("td", { class: "row", style: "justify-content:flex-end" },
+          h("button", { type: "button", class: "small", onclick: () => openEdit(it) }, "수정"),
+          h("button", { type: "button", class: "small danger", onclick: async () => {
+            if (!confirm("이 물음을 지울까요?")) return;
+            try { await api("DELETE", `/api/admin/checklist/${it.id}`); await load(); } catch (e) { DF.fail(e); }
+          } }, "삭제"))))));
+    $("items").classList.toggle("hidden", !items.length);
+    $("empty").classList.toggle("hidden", items.length > 0);
+  }
+
+  function drawPick() {
+    const box = $("form-pick");
+    const search = h("input", { type: "search", placeholder: "서식 이름·번호로 찾기", "aria-label": "서식 찾기" });
+    const results = h("div", { class: "small" });
+    const find = async () => {
+      const data = await api("GET", `/api/admin/forms?${new URLSearchParams({ q: search.value.trim(), size: 20 })}`);
+      results.replaceChildren(...data.items.map((f) => h("div", {}, h("button", { type: "button", class: "small link", onclick: () => { picked = f; drawPick(); } }, formName(f)))));
+    };
+    search.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); find().catch(DF.fail); } });
+    box.replaceChildren(
+      picked ? h("p", { class: "small", style: "margin:0 0 6px" }, "고른 서식: ", h("b", {}, formName(picked))) : h("p", { class: "muted small", style: "margin:0 0 6px" }, "서식을 찾아 고르세요."),
+      h("div", { class: "row" }, search, h("button", { type: "button", class: "small", onclick: () => find().catch(DF.fail) }, "찾기")),
+      results);
+  }
+
+  function syncScope() {
+    $("form-pick").classList.toggle("hidden", $("edit-form").scope.value !== "form");
+  }
+
+  function openEdit(it) {
+    editing = it;
+    const f = $("edit-form");
+    f.reset();
+    $("edit-title").textContent = it ? "물음 수정" : "물음 추가";
+    picked = it && it.form ? it.form : null;
+    if (it) { f.text.value = it.text; f.enabled.checked = it.enabled; f.scope.value = it.form ? "form" : "all"; }
+    drawPick();
+    syncScope();
+    $("edit").showModal();
+  }
+
+  for (const r of document.querySelectorAll("input[name=scope]")) r.addEventListener("change", syncScope);
+
+  $("edit-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    const one = f.scope.value === "form";
+    if (one && !picked) { DF.toast("물음을 붙일 서식을 고르세요.", "error"); return; }
+    const body = { text: f.text.value, enabled: f.enabled.checked, form_id: one ? picked.id : null };
+    try {
+      await api(editing ? "PUT" : "POST", editing ? `/api/admin/checklist/${editing.id}` : "/api/admin/checklist", body);
+      $("edit").close();
+      DF.toast("저장했습니다.");
+      await load();
+    } catch (e) { DF.fail(e); }
+  });
+  $("btn-new").addEventListener("click", () => openEdit(null));
+  load().catch(DF.fail);
+})();
+</script>
+{% endblock %}

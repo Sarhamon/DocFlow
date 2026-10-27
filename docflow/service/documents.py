@@ -30,12 +30,12 @@ from docflow.convert import ConversionJob, ConversionResult, Converter
 from docflow.generate import Leftover
 from docflow.pipeline import ParsedInput, make_document, parse_input
 from docflow.schema.model import FormSchema
-from docflow.service import crosscheck, crypto
+from docflow.service import crosscheck, crypto, draft
 from docflow.service.catalog import NotFound, get_form, load_schema
 from docflow.service.db import Artifact, Document, DocumentEvent, now
 from docflow.service.rules import config_for
 from docflow.service.storage import FileStore
-from docflow.validate import Issue, ValidationConfig, applicable_rules, validate
+from docflow.validate import FormInput, Issue, ValidationConfig, applicable_rules, validate
 
 STATUSES = ("draft", "completed")
 #: 파일 이름에 쓸 수 없는 글자
@@ -218,10 +218,9 @@ class DocumentService:
         """입력 완료 검증 (VA_01). 결과를 이력에 남긴다 (MY_07)."""
         doc = self.get(doc_id, owner_id)
         schema = self.schema_of(doc)
-        data = parse_input(schema, self.raw_input(doc)).data
-        issues = validate(schema, data, self.rules_of(doc)) + crosscheck.check(
-            self.session, doc, schema, data
-        )
+        raw = self.raw_input(doc)
+        data = parse_input(schema, raw).data
+        issues = self._issues(doc, schema, raw, data)
         self._event(doc, "validated", input_json=doc.input_json, issues=issues)
         self.session.commit()
         return issues
@@ -230,9 +229,14 @@ class DocumentService:
         """입력 중 실시간 점검 (IN_13~15). 저장하지 않고 이력도 남기지 않는다."""
         doc = self.get(doc_id, owner_id)
         schema = self.schema_of(doc)
-        data = parse_input(schema, raw).data
-        return validate(schema, data, self.rules_of(doc)) + crosscheck.check(
-            self.session, doc, schema, data
+        return self._issues(doc, schema, raw, parse_input(schema, raw).data)
+
+    def _issues(self, doc: Document, schema: FormSchema, raw: dict, data: FormInput) -> list[Issue]:
+        """규칙 검증 + 문서 간 대조 + 채택한 본문 초안의 인용 검사 (모두 LLM 없이)."""
+        return (
+            validate(schema, data, self.rules_of(doc))
+            + crosscheck.check(self.session, doc, schema, data)
+            + draft.check(schema, raw, data)
         )
 
     def generate(
