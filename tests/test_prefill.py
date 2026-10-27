@@ -120,8 +120,9 @@ def test_결재란_칸은_빼고_같은_이름의_사본은_한_번만_묻는다
     assert [t.key for t in p.cells] == ["t0.r0.c1"]
     assert [t.key for t in p.copies["t0.r0.c1"]] == ["t1.r0.c1"]
     raw, filled = read_answer(p, {"cells": {"t0.r0.c1": "중간점검"}})
-    assert raw["cells"] == {"t0.r0.c1": "중간점검", "t1.r0.c1": "중간점검"}
-    assert [f.location.key for f in filled] == ["t0.r0.c1", "t1.r0.c1"]
+    # 사본에는 쓰지 않는다. 비운 사본은 원본 값을 쓰므로 원본을 고치면 따라간다
+    assert raw["cells"] == {"t0.r0.c1": "중간점검"}
+    assert [f.location.key for f in filled] == ["t0.r0.c1"]
 
 
 @pytest.mark.parametrize(

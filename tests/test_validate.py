@@ -477,3 +477,11 @@ def test_같은_이름은_동명이인일_수_있어_보지_않는다():
     for row in data.rows["t0.r7-16"]:
         row[1] = "김철수"
     assert validate(교통비(), data) == []
+
+
+def test_채우지_않은_자리가_남으면_FILL_LEFT_경고():
+    """제출 문장은 문장째 미리 채워 두므로 날짜·이름을 고치지 않고 내기 쉽다."""
+    left = check_cell(정산서(), "t0.r1.c2", "제출합니다. 20○○년 ○○월 ○○일 담당 : ○ ○ ○ (날인)")
+    assert [(i.code, i.severity) for i in left] == [(FILL_LEFT, "warning")]
+    done = "제출합니다. 2026년 10월 30일 담당 : 김민수 (날인)"
+    assert check_cell(정산서(), "t0.r1.c2", done) == []

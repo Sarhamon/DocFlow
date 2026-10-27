@@ -377,10 +377,11 @@ def read_answer(p: Plan, data: dict[str, Any]) -> tuple[dict[str, Any], list[Fil
         got = data.get(part)
         got = got if isinstance(got, dict) else {}
         for t in targets:
+            # 사본 칸에는 쓰지 않는다. 비운 사본은 원본 값을 쓰므로(pipeline.copy_map) 원본을
+            # 고치면 사본도 따라간다
             if (value := _text(got.get(t.key))) and not _useless(t, value):
-                for same in [t, *p.copies.get(t.key, [])]:
-                    raw[part][same.key] = value
-                    filled.append(Filled(same, value))
+                raw[part][t.key] = value
+                filled.append(Filled(t, value))
     rows = data.get("rows")
     rows = rows if isinstance(rows, dict) else {}
     for rid, cols in p.rows.items():

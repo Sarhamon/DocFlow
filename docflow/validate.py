@@ -283,8 +283,8 @@ def _field_target(spec: FieldSpec, ex: Exclusions) -> _Target | None:
 def _repeat_target(
     rep: RepeatSpec, col: RepeatColumn, index: int, ex: Exclusions
 ) -> _Target | None:
-    if ex.computed and col.role == "computed":
-        return None
+    if (ex.computed and col.role == "computed") or col.role == "fixed":
+        return None  # fixed: 관리자가 뺀 열(서명 등). 서식 글자 그대로 둔다
     return _Target(
         Location("repeat", rep.id, rep.table, rep.start_row + index, col.col, index, col.label),
         col.input_type,

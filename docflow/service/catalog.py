@@ -284,8 +284,8 @@ def added_slot(schema: FormSchema, item: FormItem) -> SlotSpec | None:
 def apply_items(schema: FormSchema, items: list[FormItem]) -> FormSchema:
     """관리자 설정을 덧씌운 스키마. 서식에 없는 키(개정으로 사라진 칸)는 건너뛴다.
 
-    결재란·수식 칸은 작성자 입력이 아니라 손대지 않는다. 반복영역 열은 입력 형식만 바꾼다
-    (열 이름은 입력값의 키로도 쓰여 바꾸면 저장한 명단을 못 읽는다).
+    결재란·수식 칸은 작성자 입력이 아니라 손대지 않는다. 반복영역 열은 입력 형식과 사용 여부만
+    바꾼다 (열 이름은 입력값의 키로도 쓰여 바꾸면 저장한 명단을 못 읽는다).
     """
     if not items:
         return schema
@@ -305,7 +305,11 @@ def apply_items(schema: FormSchema, items: list[FormItem]) -> FormSchema:
     for rep in out.repeats:
         for c in rep.columns:
             item = by.get(("column", column_key(rep, c)))
-            if c.role == "input" and item and item.input_type:
+            if c.role != "input" or item is None:
+                continue
+            if item.hidden:
+                c.role = "fixed"  # 서명 열처럼 손으로 쓰는 열. 입력·검증에서 빼고 서식 글자를 둔다
+            elif item.input_type:
                 c.input_type = item.input_type  # type: ignore[assignment]
     order = {i.key: i.position for i in items if i.kind == "field" and i.position is not None}
     if order:

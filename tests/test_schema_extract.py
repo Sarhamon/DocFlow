@@ -450,3 +450,39 @@ def test_수식이_읽는_빈_입력칸은_금액이다(tmp_path):
     types = {x.id: x.input_type for x in s.slots}
     assert types["t0.r1.c1"] == types["t0.r2.c1"] == "amount"
     assert types["t0.r1.c2"] == "text"  # 수식이 읽지 않는 비고 칸은 그대로
+
+
+# ------------------------------------------------------------------ 서식 5개 점검 (2026-10-27)
+def test_결재_칸이_있는_행의_직위는_모두_결재란이다(tmp_path):
+    """회의계획서: `담당교수`·`부서담당자` 는 직위 이름 규칙에 안 걸려 서명 칸이 입력 칸이 됐다."""
+    s = schema_of(tmp_path, tbl(
+        2, 4, (0, 0, "결\n재"), (0, 1, "담당교수"), (0, 2, "부서담당자"), (0, 3, "학과장"),
+        (1, 0, ""), (1, 1, ""), (1, 2, ""), (1, 3, ""),
+    ))  # fmt: skip
+    assert {x.id: x.role for x in s.slots} == {
+        "t0.r1.c0": "approval", "t0.r1.c1": "approval", "t0.r1.c2": "approval",
+        "t0.r1.c3": "approval",
+    }  # fmt: skip
+
+
+def test_제출_문장은_문장을_두고_날짜·이름만_고치는_칸이다(tmp_path):
+    text = "상기와 같이 확인서를 제출합니다.\n20○○년 ○○월 ○○일\n사업담당자 : ○ ○ ○ (날인)"
+    s = schema_of(tmp_path, tbl(2, 2, (0, 0, "붙임"), (0, 1, ""), (1, 0, text, 2, 1)))
+    slot = next(x for x in s.slots if x.id == "t0.r1.c0")
+    assert (slot.origin, slot.label, slot.required, slot.input_type) == (
+        "template", "제출 문장", False, "text")  # fmt: skip
+
+
+def test_명단_열_이름에_윗줄_예시를_넣지_않고_0만_적힌_예시는_글자다(tmp_path):
+    """회의계획서 산업체 명단: 열 이름이 `홍길동, 홍길은.... 성명`, 산업체명·직위가 숫자였다."""
+    s = schema_of(tmp_path, tbl(
+        5, 4,
+        (0, 0, "참석\n대상", 1, 2), (0, 1, "홍길동, 홍길은...."), (0, 2, ""), (0, 3, ""),
+        (1, 1, "성명"), (1, 2, "산업체명"), (1, 3, "직위"),
+        (2, 0, ""), (2, 1, "000"), (2, 2, "0000"), (2, 3, "00"),
+        (3, 0, ""), (3, 1, ""), (3, 2, ""), (3, 3, ""),
+        (4, 0, ""), (4, 1, ""), (4, 2, ""), (4, 3, ""),
+    ))  # fmt: skip
+    [rep] = s.repeats
+    cols = {c.label: c.input_type for c in rep.columns if c.label}
+    assert cols == {"참석 대상": "text", "성명": "text", "산업체명": "text", "직위": "text"}

@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,42 @@ def _column(rep: RepeatSpec, key: str) -> int:
     return found[0].col
 
 
+#: 한 문서를 용도별로 여러 벌 낼 때 각 벌 앞에 적는 표시: 학과용, 부서용, 보관용, 제출용
+_COPY_MARK_RE = re.compile(r"^[가-힣]{1,6}용$")
+
+
+def copy_map(schema: FormSchema) -> dict[str, str]:
+    """사본 표의 칸 -> 원본 칸. 입력 칸 구성(자리·이름·형식)이 통째로 같은 표는 같은 서식의
+    사본이다(회의계획서의 학과용·부서용). 작성자가 한 번만 쓰면 사본에도 들어간다.
+    """
+    tables: dict[int, list[SlotSpec]] = {}
+    for s in schema.input_slots():
+        tables.setdefault(s.table, []).append(s)
+
+    def copy_mark(index: int) -> str | None:
+        """바로 앞 표가 `학과용`·`부서용` 처럼 용도를 적은 표면 그 용도."""
+        if index < 0 or not schema.tables[index].grid:
+            return None
+        text = next((t for row in schema.tables[index].grid for t in row if t.strip()), "")
+        return text if _COPY_MARK_RE.match("".join(text.split())) else None
+
+    first: dict[tuple, list[SlotSpec]] = {}
+    out: dict[str, str] = {}
+    for table, slots in tables.items():
+        # 칸 구성이 같아도 예시가 같은 다른 표일 수 있다(운영비 예산표와 수익금 예산표, 카드 증빙
+        # 1·2·3). 그래서 용도 표시(`학과용`/`부서용`)가 앞에 붙은 표끼리만 사본으로 본다
+        if copy_mark(table - 1) is None:
+            continue
+        sig = (
+            schema.variant_of(table),
+            tuple((s.row, s.col, "".join(s.label.split()), s.input_type) for s in slots),
+        )
+        original = first.setdefault(sig, slots)
+        if original is not slots:
+            out.update({c.id: o.id for o, c in zip(original, slots, strict=True)})
+    return out
+
+
 def parse_input(schema: FormSchema, raw: dict[str, Any]) -> ParsedInput:
     """입력 JSON 을 FormInput 으로 읽는다. 반복영역 열은 이름으로도 받는다."""
     raw = _visible(raw)
@@ -105,8 +142,12 @@ def parse_input(schema: FormSchema, raw: dict[str, Any]) -> ParsedInput:
         rows[rid] = [
             {_column(rep, str(k)): str(v) for k, v in _visible(line).items()} for line in lines
         ]
+    cells = {k: str(v) for k, v in _visible(raw.get("cells") or {}).items()}
+    for copy, original in copy_map(schema).items():
+        if not cells.get(copy, "").strip() and cells.get(original, "").strip():
+            cells[copy] = cells[original]  # 비운 사본 칸은 원본 표의 값을 쓴다
     data = FormInput(
-        cells={k: str(v) for k, v in _visible(raw.get("cells") or {}).items()},
+        cells=cells,
         fields={k: str(v) for k, v in _visible(raw.get("fields") or {}).items()},
         rows=rows,
         variant=_variant(schema, raw.get("variant")),

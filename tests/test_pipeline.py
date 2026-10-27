@@ -181,3 +181,19 @@ def test_입력_틀은_반복영역의_날짜_자리표시자를_값으로_넣�
         ],
     )  # fmt: skip
     assert skeleton(schema)["rows"]["t0.r1-3"] == [{"연번": "1", "일자": "", "금액": "5,000"}]
+
+
+def test_비운_사본_칸은_원본_표의_값을_쓴다():
+    """학과용·부서용처럼 같은 표가 두 벌이면 한 번만 쓴다. 사본에 따로 쓰면 그 값을 둔다."""
+    from docflow.pipeline import copy_map, parse_input
+    from docflow.schema.model import FormSchema, SlotSpec, TableSpec
+
+    tables = [TableSpec(index=i, rows=2, cols=2) for i in range(3)]
+    slots = [SlotSpec(table=t, row=0, col=1, label=label)
+             for t, label in ((0, "회 의 명"), (1, "회의명"), (2, "다른 칸"))]  # fmt: skip
+    s = FormSchema(title="회의", tables=tables, slots=slots)
+    assert copy_map(s) == {"t1.r0.c1": "t0.r0.c1"}
+    assert parse_input(s, {"cells": {"t0.r0.c1": "중간점검"}}).data.cells == {
+        "t0.r0.c1": "중간점검", "t1.r0.c1": "중간점검"}  # fmt: skip
+    own = {"cells": {"t0.r0.c1": "중간점검", "t1.r0.c1": "부서 회의"}}
+    assert parse_input(s, own).data.cells["t1.r0.c1"] == "부서 회의"
