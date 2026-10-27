@@ -18,7 +18,7 @@ from datetime import date
 from typing import Any, Literal
 
 from docflow.llm import LlmClient, LlmRequest
-from docflow.pipeline import parse_input
+from docflow.pipeline import copy_map, parse_input
 from docflow.schema.labels import field_label
 from docflow.schema.model import FormSchema, SlotSpec
 from docflow.schema.rules import column_concept, is_approval_title, is_placeholder
@@ -209,18 +209,15 @@ def plan(schema: FormSchema, variant: int | None = None) -> Plan:
         example = _example(s.placeholder)
         t = Target("cell", s.id, label, s.input_type, example, s.table, s.row, s.col)
         by_table.setdefault(s.table, []).append(t)
-    # 칸 구성(자리·이름·형식)이 통째로 같은 표는 같은 서식의 사본(학과용·부서용)이다. 한 번만 묻고
-    # 답을 사본에 똑같이 넣는다. 칸 하나만 이름이 같다고 묶으면 강사료 표와 전문가활용비 표처럼
-    # 다른 표의 칸이 묶인다(행 값 `보조` 가 이름이 된 경우, 실측)
-    originals: dict[tuple, list[Target]] = {}
+    # 학과용·부서용 사본 표는 한 번만 묻는다. 비운 사본은 원본 값을 쓴다(pipeline.copy_map).
+    # 칸 이름만 같다고 묶으면 강사료 표와 전문가활용비 표처럼 다른 표의 칸이 묶인다(실측)
+    copies = copy_map(schema)
     for targets in by_table.values():
-        sig = tuple((t.row, t.col, "".join(t.label.split()), t.input_type) for t in targets)
-        first = originals.setdefault(sig, targets)
-        if first is targets:
-            out.cells += targets
-        else:
-            for orig, copy in zip(first, targets, strict=True):
-                out.copies.setdefault(orig.key, []).append(copy)
+        for t in targets:
+            if t.key in copies:
+                out.copies.setdefault(copies[t.key], []).append(t)
+            else:
+                out.cells.append(t)
     for rep in schema.repeats:
         if not mine(rep.table):
             continue
