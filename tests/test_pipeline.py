@@ -188,12 +188,17 @@ def test_비운_사본_칸은_원본_표의_값을_쓴다():
     from docflow.pipeline import copy_map, parse_input
     from docflow.schema.model import FormSchema, SlotSpec, TableSpec
 
-    tables = [TableSpec(index=i, rows=2, cols=2) for i in range(3)]
+    def mark(i: int, text: str) -> TableSpec:
+        return TableSpec(index=i, rows=1, cols=1, grid=[[text]])
+
+    body = [TableSpec(index=i, rows=2, cols=2) for i in (1, 3, 4)]
+    tables = [mark(0, "학과용"), body[0], mark(2, "부서용"), body[1], body[2]]
+    # 표 4 는 칸이 같아도 용도 표시 없이 이어지는 다른 표다
     slots = [SlotSpec(table=t, row=0, col=1, label=label)
-             for t, label in ((0, "회 의 명"), (1, "회의명"), (2, "다른 칸"))]  # fmt: skip
+             for t, label in ((1, "회 의 명"), (3, "회의명"), (4, "회의명"))]  # fmt: skip
     s = FormSchema(title="회의", tables=tables, slots=slots)
-    assert copy_map(s) == {"t1.r0.c1": "t0.r0.c1"}
-    assert parse_input(s, {"cells": {"t0.r0.c1": "중간점검"}}).data.cells == {
-        "t0.r0.c1": "중간점검", "t1.r0.c1": "중간점검"}  # fmt: skip
-    own = {"cells": {"t0.r0.c1": "중간점검", "t1.r0.c1": "부서 회의"}}
-    assert parse_input(s, own).data.cells["t1.r0.c1"] == "부서 회의"
+    assert copy_map(s) == {"t3.r0.c1": "t1.r0.c1"}
+    assert parse_input(s, {"cells": {"t1.r0.c1": "중간점검"}}).data.cells == {
+        "t1.r0.c1": "중간점검", "t3.r0.c1": "중간점검"}  # fmt: skip
+    own = {"cells": {"t1.r0.c1": "중간점검", "t3.r0.c1": "부서 회의"}}
+    assert parse_input(s, own).data.cells["t3.r0.c1"] == "부서 회의"

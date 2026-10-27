@@ -110,19 +110,24 @@ def test_요청의_스키마는_입력_JSON_모양이고_칸_이름을_설명에
     assert req.temperature == 0
 
 
+def 용도(index: int, mark: str) -> TableSpec:
+    """`학과용`·`부서용` 처럼 한 벌의 용도를 적은 표. 이 표 다음 표끼리만 사본이다."""
+    return TableSpec(index=index, rows=1, cols=1, grid=[[mark]])
+
+
 def test_결재란_칸은_빼고_같은_이름의_사본은_한_번만_묻는다():
-    s = 회의비().model_copy(update={"variants": [], "slots": [
-        SlotSpec(table=0, row=0, col=1, label="회의명"),
-        SlotSpec(table=0, row=1, col=1, label="결 재"),
-        SlotSpec(table=1, row=0, col=1, label="회 의 명"),  # 학과용·부서용 두 벌
-    ]})  # fmt: skip
+    body = [TableSpec(index=i, rows=2, cols=2) for i in (1, 3)]
+    slots = [SlotSpec(table=t, row=r, col=1, label=label)
+             for t in (1, 3) for r, label in ((0, "회의명"), (1, "결 재"))]  # fmt: skip
+    tables = [용도(0, "학과용"), body[0], 용도(2, "부서용"), body[1]]
+    s = FormSchema(title="회의", tables=tables, slots=slots)
     p = plan(s)
-    assert [t.key for t in p.cells] == ["t0.r0.c1"]
-    assert [t.key for t in p.copies["t0.r0.c1"]] == ["t1.r0.c1"]
-    raw, filled = read_answer(p, {"cells": {"t0.r0.c1": "중간점검"}})
+    assert [t.key for t in p.cells] == ["t1.r0.c1"]
+    assert [t.key for t in p.copies["t1.r0.c1"]] == ["t3.r0.c1"]
+    raw, filled = read_answer(p, {"cells": {"t1.r0.c1": "중간점검"}})
     # 사본에는 쓰지 않는다. 비운 사본은 원본 값을 쓰므로 원본을 고치면 따라간다
-    assert raw["cells"] == {"t0.r0.c1": "중간점검"}
-    assert [f.location.key for f in filled] == ["t0.r0.c1"]
+    assert raw["cells"] == {"t1.r0.c1": "중간점검"}
+    assert [f.location.key for f in filled] == ["t1.r0.c1"]
 
 
 @pytest.mark.parametrize(
@@ -417,23 +422,23 @@ def test_열_제목은_빈_칸을_건너_다른_블록에서_가져오지_않는
     assert [t.label for t in plan(s).cells] == ["회의비용"]
 
 
-def test_칸_구성이_통째로_같은_표만_사본이다():
-    """실측: 강사료 표와 전문가활용비 표의 칸이 행 값 '보조' 로 이름이 같아 묶였다."""
-    t0, s0 = 정산표(0)
-    t1, s1 = 정산표(1)  # 학과용·부서용처럼 똑같은 표
-    t2, s2 = 정산표(2, ("① 강사료", "③ 재료비"))  # 한 줄이 다른 표
-    p = plan(FormSchema(title="정산서", tables=[t0, t1, t2], slots=s0 + s1 + s2))
+def test_용도_표시가_붙은_같은_표만_사본이다():
+    """실측: 강사료 표와 전문가활용비 표, 운영비 예산표와 수익금 예산표가 칸이 같아 묶였다."""
+    t1, s1 = 정산표(1)
+    t3, s3 = 정산표(3)  # 학과용·부서용 두 벌
+    t4, s4 = 정산표(4)  # 칸은 같지만 용도 표시 없이 이어지는 다른 표
+    tables = [용도(0, "학과용"), t1, 용도(2, "부서용"), t3, t4]
+    p = plan(FormSchema(title="정산서", tables=tables, slots=s1 + s3 + s4))
     assert {k: [c.key for c in v] for k, v in p.copies.items()} == {
-        "t0.r1.c1": ["t1.r1.c1"], "t0.r1.c2": ["t1.r1.c2"],
-        "t0.r2.c1": ["t1.r2.c1"], "t0.r2.c2": ["t1.r2.c2"],
+        "t1.r1.c1": ["t3.r1.c1"], "t1.r1.c2": ["t3.r1.c2"],
+        "t1.r2.c1": ["t3.r2.c1"], "t1.r2.c2": ["t3.r2.c2"],
     }  # fmt: skip
-    assert {t.table for t in p.cells} == {0, 2}
+    assert {t.table for t in p.cells} == {1, 4}
 
 
 def test_프롬프트에_표_모양을_넣고_채울_자리를_키로_표시한다():
     t0, s0 = 정산표(0)
-    t1, s1 = 정산표(1)
-    s = FormSchema(title="정산서", tables=[t0, t1], slots=s0 + s1)
+    s = FormSchema(title="정산서", tables=[t0], slots=s0)
     view = table_view(s, plan(s))
     assert view == ("표 1:\n| 집행항목 | 예산금액 | 현집행금액 |\n"
                     "| ① 강사료 | {cells.t0.r1.c1} | {cells.t0.r1.c2} |\n"
