@@ -37,6 +37,19 @@
 
 <div class="card">
   <div class="row">
+    <h2>표에서 입력 칸 고르기</h2>
+    <span class="spacer"></span>
+    <span class="legend small"><span><i style="background:var(--cell-input);border:1px solid var(--border)"></i>입력 칸</span><span><i style="background:var(--ok-soft)"></i>추가한 칸</span><span><i style="background:var(--surface-2)"></i>고를 수 없음</span></span>
+  </div>
+  <p class="muted small" style="margin-top:0">
+    서식에 예시 값이 적혀 있어(예: <code>본관2층</code>) 입력 칸으로 잡히지 않은 칸을 눌러 입력 칸으로 바꿉니다. 이름을 적고 아래 <b>입력폼 저장</b>을 누르세요.
+    비워 둔 칸은 문서를 만들 때 예시 글자를 지웁니다. 되돌리려면 입력폼 목록에서 <b>사용</b>을 끄고 저장합니다.
+  </p>
+  <div id="picker"></div>
+</div>
+
+<div class="card">
+  <div class="row">
     <h2>입력폼</h2>
     <span class="spacer"></span>
     <button class="primary" id="items-save" type="button">입력폼 저장</button>
@@ -74,6 +87,7 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script src="/static/sheet.js"></script>
 <script>
 (() => {
   const { h, api } = DF;
@@ -106,10 +120,14 @@
   }
 
   // ---------------------------------------------------------------- 입력폼 (AD_09~12, AD_14)
-  const KIND = { field: "누름틀", cell: "표 칸", column: "명단 열" };
+  const KIND = { field: "누름틀", cell: "표 칸", column: "명단 열", added: "추가한 칸" };
   const TYPE = { text: "글", date: "날짜", amount: "금액", number: "숫자", checkbox: "선택(□)" };
   let items = [];
   let types = [];
+  let layout = [];
+  let blocked = new Set();
+  let variant = null;
+  let variants = [];
 
   function drawItems() {
     document.getElementById("items").replaceChildren(...items.map((it) => {
@@ -130,24 +148,73 @@
       const pos = it.kind !== "field" ? "" : h("input", { type: "number", min: 0, style: "width:64px", value: s.position ?? "", "aria-label": "표시 순서",
         oninput: (ev) => { s.position = ev.target.value === "" ? null : Number(ev.target.value); } });
       const hint = ex.placeholder ? h("div", { class: "hint" }, `서식: ${ex.placeholder.split("\n")[0].slice(0, 60)}`) : null;
-      return h("tr", {}, h("td", {}, use), h("td", { class: "small" }, KIND[it.kind]),
+      return h("tr", {}, h("td", {}, use), h("td", { class: "small" }, KIND[ex.added ? "added" : it.kind]),
         h("td", {}, ex.label || "(이름 없음)", h("div", { class: "muted small" }, where), hint),
         h("td", {}, label), h("td", {}, type), h("td", {}, req), h("td", {}, pos));
     }));
   }
 
   async function loadItems() {
-    const out = await api("GET", `/api/admin/forms/${id}/items`);
+    setItems(await api("GET", `/api/admin/forms/${id}/items`));
+  }
+
+  function setItems(out) {
     items = out.items; types = out.input_types;
+    layout = out.layout; blocked = new Set(out.blocked);
+    variant = out.variant; variants = out.variants;
     drawItems();
+    drawPicker();
+  }
+
+  // ---------------------------------------------------------------- 표에서 칸 고르기 (AD_09)
+  /** 떼어 낸 서식은 제 변형의 표만 보인다. */
+  function mineTable(t) {
+    if (variant === null || variant === undefined) return true;
+    const owner = variants.find((v) => v.first_table <= t && t <= v.last_table);
+    return !owner || owner.index === variant;
+  }
+
+  /** 같은 행 왼쪽에서 가장 가까운 글자 (새 칸 이름의 기본값). */
+  function leftLabel(t, c) {
+    const left = t.cells.filter((x) => x.row === c.row && x.col < c.col && x.text.trim()).sort((a, b) => b.col - a.col);
+    return left.length ? left[0].text.replace(/\s+/g, " ").trim().slice(0, 60) : "";
+  }
+
+  function addCell(t, c, key) {
+    const name = prompt("이 칸의 이름 (입력 화면과 LLM 이 봅니다)", leftLabel(t, c));
+    if (name === null) return;
+    if (!name.trim()) { DF.toast("이름을 적어야 합니다.", "error"); return; }
+    items.push({ kind: "cell", key,
+      extracted: { label: "", input_type: "text", required: false, placeholder: c.text, table: t.index, added: true },
+      setting: { hidden: false, required: null, input_type: null, label: name.trim(), position: null } });
+    drawItems(); drawPicker();
+    DF.toast("추가했습니다. [입력폼 저장]을 눌러야 반영됩니다.");
+  }
+
+  function drawPicker() {
+    const byKey = new Map(items.filter((it) => it.kind === "cell").map((it) => [it.key, it]));
+    const box = document.getElementById("picker");
+    box.replaceChildren(...layout.filter((t) => mineTable(t.index)).map((t) => h("div", { class: "sheet" },
+      h("div", { class: "muted small" }, `표 ${t.index + 1}`),
+      DF.renderTable(t, { cell: (c) => {
+        const key = `t${t.index}.r${c.row}.c${c.col}`;
+        const it = byKey.get(key);
+        const text = c.text.replace(/\s+/g, " ").trim();
+        if (it && !it.setting.hidden) {
+          const name = it.setting.label || it.extracted.label || key;
+          return { node: h("span", { class: "small", title: text }, `▣ ${name}`),
+            cls: it.extracted.added ? "preview-repeat" : "preview-slot" };
+        }
+        if (it || blocked.has(key)) return { node: text, cls: "approval" };
+        return { node: h("button", { type: "button", class: "link small", title: "눌러서 입력 칸으로 바꾸기",
+          style: "text-align:left; white-space:normal", onclick: () => addCell(t, c, key) }, text || "(빈 칸)"), cls: "" };
+      } }))));
   }
 
   document.getElementById("items-save").addEventListener("click", async () => {
     try {
       const body = items.map((it) => ({ kind: it.kind, key: it.key, ...it.setting }));
-      const out = await api("PUT", `/api/admin/forms/${id}/items`, body);
-      items = out.items;
-      drawItems();
+      setItems(await api("PUT", `/api/admin/forms/${id}/items`, body));
       DF.toast("입력폼을 저장했습니다.");
     } catch (e) { DF.fail(e); }
   });

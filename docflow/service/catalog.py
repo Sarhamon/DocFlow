@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 
@@ -25,7 +26,7 @@ from docflow.schema.model import (
     RepeatSpec,
     SlotSpec,
 )
-from docflow.schema.rules import FormLocation
+from docflow.schema.rules import FormLocation, infer_input_type
 from docflow.service.db import Document, Form, FormItem, FormVersion
 from docflow.service.storage import FileStore
 
@@ -233,6 +234,53 @@ def column_key(rep: RepeatSpec, col: RepeatColumn) -> str:
     return f"{rep.id}:{col.col}"
 
 
+_CELL_KEY_RE = re.compile(r"^t(\d+)\.r(\d+)\.c(\d+)$")
+
+
+def cell_position(key: str) -> tuple[int, int, int] | None:
+    m = _CELL_KEY_RE.match(key)
+    return (int(m[1]), int(m[2]), int(m[3])) if m else None
+
+
+def blocked_cells(schema: FormSchema) -> set[tuple[int, int, int]]:
+    """입력 칸으로 바꿀 수 없는 자리: 이미 잡힌 칸(결재란 포함), 수식, 명단의 데이터·예시 행."""
+    out = {(s.table, s.row, s.col) for s in schema.slots}
+    out |= {(f.table, f.row, f.col) for f in schema.formulas}
+    for r in schema.repeats:
+        cols = schema.tables[r.table].cols if r.table < len(schema.tables) else 0
+        rows = [*range(r.start_row, r.end_row + 1), *r.example_rows]
+        out |= {(r.table, row, c) for row in rows for c in range(cols)}
+    return out
+
+
+def _grid_text(schema: FormSchema, pos: tuple[int, int, int]) -> str | None:
+    """그 자리의 서식 글자. 표 밖이면 None."""
+    t, r, c = pos
+    if t >= len(schema.tables):
+        return None
+    grid = schema.tables[t].grid
+    return grid[r][c] if r < len(grid) and c < len(grid[r]) else None
+
+
+def added_slot(schema: FormSchema, item: FormItem) -> SlotSpec | None:
+    """관리자가 입력 칸으로 바꾼 칸 (AD_09). 예시 값이 적힌 칸이라 추출이 고정 글자로 봤던 자리다.
+
+    서식 글자는 예시로 보여 주고(placeholder), 작성자가 비워 두면 만들 때 지운다(origin example).
+    """
+    pos = cell_position(item.key)
+    if item.kind != "cell" or item.hidden or pos is None:
+        return None
+    text = _grid_text(schema, pos)
+    if text is None or pos in blocked_cells(schema):
+        return None
+    label = item.label or ""
+    return SlotSpec(
+        table=pos[0], row=pos[1], col=pos[2], label=label, placeholder=text, origin="example",
+        input_type=item.input_type or infer_input_type(text, label), role="input",
+        required=bool(item.required),
+    )  # fmt: skip
+
+
 def apply_items(schema: FormSchema, items: list[FormItem]) -> FormSchema:
     """관리자 설정을 덧씌운 스키마. 서식에 없는 키(개정으로 사라진 칸)는 건너뛴다.
 
@@ -249,6 +297,11 @@ def apply_items(schema: FormSchema, items: list[FormItem]) -> FormSchema:
     for s in out.slots:
         if s.role == "input" and (item := by.get(("cell", s.id))):
             _apply(s, item)
+    known = {s.id for s in out.slots}
+    added = [x for i in items if i.kind == "cell" and i.key not in known
+             and (x := added_slot(out, i)) is not None]  # fmt: skip
+    if added:
+        out.slots = sorted([*out.slots, *added], key=lambda s: (s.table, s.row, s.col))
     for rep in out.repeats:
         for c in rep.columns:
             item = by.get(("column", column_key(rep, c)))
@@ -273,9 +326,19 @@ def _apply(spec: FieldSpec | SlotSpec, item: FormItem) -> None:
         spec.label = item.label
 
 
-def save_items(session: Session, form: Form, settings: list[dict]) -> list[FormItem]:
-    """서식의 입력폼 설정을 통째로 바꾼다. 아무것도 바꾸지 않은 항목은 저장하지 않는다."""
+def save_items(
+    session: Session,
+    form: Form,
+    settings: list[dict],
+    anchors: set[tuple[int, int, int]] | None = None,
+) -> list[FormItem]:
+    """서식의 입력폼 설정을 통째로 바꾼다. 아무것도 바꾸지 않은 항목은 저장하지 않는다.
+
+    서식에 없는 표 칸은 관리자가 입력 칸으로 바꾼 칸이다(AD_09). 병합 칸의 왼쪽 위(anchors)여야
+    하고, 이름을 적어야 한다. 사용을 끄면(hidden) 다시 서식 글자로 돌아간다.
+    """
     schema = load_schema(form.latest, raw=True)
+    blocked = blocked_cells(schema)
     known = {("field", f.name) for f in schema.fields if f.role == "input"}
     known |= {("cell", s.id) for s in schema.slots if s.role == "input"}
     known |= {("column", column_key(r, c)) for r in schema.repeats for c in r.columns
@@ -283,8 +346,13 @@ def save_items(session: Session, form: Form, settings: list[dict]) -> list[FormI
     rows: list[FormItem] = []
     for raw in settings:
         kind, key = raw.get("kind"), raw.get("key")
+        added = False
         if (kind, key) not in known:
-            raise ValueError(f"서식에 없는 항목이다: {kind} {key}")
+            pos = cell_position(str(key)) if kind == "cell" else None
+            if (pos is None or pos in blocked or _grid_text(schema, pos) is None
+                    or (anchors is not None and pos not in anchors)):  # fmt: skip
+                raise ValueError(f"서식에 없는 항목이다: {kind} {key}")
+            added = True
         input_type = raw.get("input_type") or None
         if input_type is not None and input_type not in INPUT_TYPES:
             raise ValueError(f"입력 형식은 {INPUT_TYPES} 중 하나다")
@@ -293,7 +361,13 @@ def save_items(session: Session, form: Form, settings: list[dict]) -> list[FormI
             input_type=input_type, label=(raw.get("label") or "").strip() or None,
             position=raw.get("position"),
         )  # fmt: skip
-        if item.hidden or item.required is not None or item.input_type or item.label or (
+        if added:
+            if item.hidden:
+                continue  # 사용을 끄면 입력 칸에서 뺀다 (서식 글자로 돌아간다)
+            if not item.label:
+                raise ValueError(f"입력 칸으로 바꾼 칸({key})은 이름을 적는다")
+            rows.append(item)
+        elif item.hidden or item.required is not None or item.input_type or item.label or (
             item.position is not None
         ):
             rows.append(item)
@@ -330,9 +404,10 @@ def layout(version: FormVersion, store: FileStore) -> list[dict]:
 
     스키마의 격자는 병합을 펼친 텍스트라 칸 크기를 모른다. 그래서 템플릿을 직접 읽는다.
     """
-    key = version.template_key
+    path = store.local_path(version.template_key)
+    key = str(path)  # 저장소가 다르면(테스트·다른 서버) 같은 템플릿 키라도 다른 파일이다
     if key not in _LAYOUTS:
-        doc = HwpxDocument.open(store.local_path(key))
+        doc = HwpxDocument.open(path)
         _LAYOUTS[key] = [
             {
                 "index": t.index,

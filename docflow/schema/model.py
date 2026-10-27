@@ -20,7 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 #: 서식 번호가 붙은 변형 이름 (`1-02호`)
 _NUMBERED_RE = re.compile(r"^\d+-\d+호$")
@@ -61,7 +61,9 @@ class SlotSpec(BaseModel):
     label: str = Field(default="", description="같은 행 왼쪽 / 같은 열 위쪽에서 찾은 항목명")
     placeholder: str = Field(default="", description="서식에 박혀 있던 원래 텍스트")
     #: placeholder 자리표시자가 있던 칸 / empty 항목명만 있는 빈 칸
-    origin: Literal["placeholder", "empty"] = "placeholder"
+    #: template 제출 문장 (`… 20○○년 ○○월 ○○일 … ○ ○ ○ (날인)`): 문장을 두고 날짜·이름만 고친다
+    #: example 관리자가 입력 칸으로 바꾼 칸. 서식에 예시 값이 적혀 있다 (비우면 지운다)
+    origin: Literal["placeholder", "empty", "template", "example"] = "placeholder"
     input_type: InputType = "text"
     role: Role = "input"
     required: bool = Field(

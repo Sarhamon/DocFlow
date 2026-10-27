@@ -24,7 +24,7 @@ from typing import Any
 
 from docflow.convert import ConversionJob, ConversionResult, Converter
 from docflow.generate import GenerateResult, generate
-from docflow.schema.model import FormSchema, RepeatColumn, RepeatSpec
+from docflow.schema.model import FormSchema, RepeatColumn, RepeatSpec, SlotSpec
 from docflow.schema.rules import is_placeholder
 from docflow.validate import DEFAULT_CONFIG, FormInput, Issue, ValidationConfig, validate
 
@@ -143,7 +143,13 @@ def skeleton(schema: FormSchema, variant: int | None = None) -> dict[str, Any]:
         + (f" 예: {' '.join(s.placeholder.split())}" if s.placeholder else "")
         for s in slots
     }
-    out["cells"] = {s.id: default(s.placeholder) for s in slots}
+    def cell_default(s: SlotSpec) -> str:
+        """제출 문장은 문장째 두고(날짜·이름만 고친다), 관리자가 바꾼 칸은 예시를 지운다."""
+        if s.origin == "template":
+            return s.placeholder
+        return "" if s.origin == "example" else default(s.placeholder)
+
+    out["cells"] = {s.id: cell_default(s) for s in slots}
     def column_key(rep: RepeatSpec, col: RepeatColumn) -> str:
         """열 이름이 겹치면(`사업추진일정 0월` 여러 개) 이름으로 못 찾으므로 열 번호를 쓴다."""
         try:

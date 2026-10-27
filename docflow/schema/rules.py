@@ -139,7 +139,36 @@ _APPROVAL_FIELD_RE = re.compile(r"^apb\d+_")
 
 def is_approval_title(text: str) -> bool:
     """결재란 머리의 직위 이름인지. 약한 신호라 같은 행에 둘 이상일 때만 결재란으로 본다."""
-    return bool(_APPROVAL_TITLE_RE.match(text.replace(" ", "")))
+    return bool(_APPROVAL_TITLE_RE.match("".join(text.split())))  # `결⏎재` 처럼 줄을 바꿔 쓴다
+
+
+def is_approval_head(text: str) -> bool:
+    """결재란 머리의 `결재` 칸. 이 칸이 있는 행의 직위는 모두 결재선이다(`담당교수`)."""
+    return "".join(text.split()) in {"결재", "전결", "대결", "협조"}
+
+
+#: 제출 문장 속의 날짜·이름 자리: `20○○년 ○○월 ○○일`, `2000년 00월 00일`, `○ ○ ○`, `O O O`
+_STATEMENT_DATE_RE = re.compile(r"(?:20|19)?[0○O]{2}\s*년\s*[0○O]{1,2}\s*월\s*[0○O]{1,2}\s*일")
+_STATEMENT_NAME_RE = re.compile(r"(?:[○OＯ]\s*){2,4}(?=\s*(?:\(|$|\n))")
+#: 날짜·이름 자리를 빼고 남은 글이 이만큼은 돼야 문장이다
+_STATEMENT_MIN = 10
+
+
+def is_statement(text: str) -> bool:
+    """`상기와 같이 … 제출합니다. 20○○년 ○○월 ○○일 사업담당자 : ○ ○ ○ (날인)` 같은 제출 문장.
+
+    문장은 그대로 두고 날짜·이름만 고치는 칸이다. 통째로 자리표시자로 보면 입력 화면이 빈 칸을
+    보여 주고, 비워 두면 문장째 사라진다.
+    """
+    found = _STATEMENT_DATE_RE.search(text) or _STATEMENT_NAME_RE.search(text)
+    rest = _STATEMENT_NAME_RE.sub("", _STATEMENT_DATE_RE.sub("", text))
+    rest = " ".join(rest.split())
+    return bool(found) and len(rest) >= _STATEMENT_MIN and not is_placeholder(rest)
+
+
+def has_fill_marks(text: str) -> bool:
+    """값에 아직 채우지 않은 자리(○, `2000년 00월 00일`, `O O O`)가 남았는지."""
+    return "○" in text or bool(_STATEMENT_DATE_RE.search(text) or _STATEMENT_NAME_RE.search(text))
 
 
 def is_approval_placeholder(text: str) -> bool:

@@ -16,6 +16,7 @@
   let fieldsMeta; // 누름틀 목록 (한글 이름·필수)
   let draftTargets = new Map(); // 본문 초안을 쓸 수 있는 칸: where -> 이름
   let checklist = 0;            // 정성 판정 물음 수 (관리자가 정한다)
+  let converter = true;         // 한컴 변환기가 있나. 없으면 HWPX 만 만든다 (운영 서버)
   let raw;        // 입력값
   const prefill = new Map(); // 반복영역 id -> 새 행 기본값 {열번호: 값}
   let issues = [];
@@ -847,7 +848,8 @@
   }
 
   async function generateGo() {
-    const formats = [...document.querySelectorAll("#gen-dialog input[name=fmt]:checked")].map((x) => x.value);
+    // 변환기가 없으면 HWPX 만 (변환 실패로 문서가 작성 중에 남지 않게)
+    const formats = converter ? [...document.querySelectorAll("#gen-dialog input[name=fmt]:checked")].map((x) => x.value) : [];
     const btn = $("gen-go");
     btn.disabled = true;
     btn.textContent = "만드는 중…";
@@ -923,6 +925,10 @@
     fieldsMeta = f.fields;
     draftTargets = new Map((f.draft_targets || []).map((t) => [t.where, t.label]));
     checklist = f.checklist || 0;
+    converter = f.converter !== false;
+    $("gen-formats").classList.toggle("hidden", !converter);
+    $("gen-hwpx").classList.toggle("hidden", converter);
+    $("roster-file").accept = converter ? ".hwp,.hwpx" : ".hwpx";
     raw = normalize(d.input, f.skeleton);
     if (DF.choices(schema).length) {
       const sel = $("variant");

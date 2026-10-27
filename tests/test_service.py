@@ -234,7 +234,7 @@ def test_만들면_산출물을_저장하고_완료된다(env, session):
     event = svc.history(doc.id)[-1]
     assert (event.kind, event.note) == ("generated", "1판")
     # 줄인 교통비 서식에는 날짜 칸이 없다. 입금액 열이 금액이라 금액 형식 규칙이 붙는다
-    assert json.loads(event.rules_json) == ["AMOUNT_INVALID", "REQUIRED_EMPTY"]
+    assert json.loads(event.rules_json) == ["AMOUNT_INVALID", "FILL_LEFT", "REQUIRED_EMPTY"]
     assert json.loads(event.input_json) == fx.traffic_input()
 
 

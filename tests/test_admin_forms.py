@@ -375,3 +375,80 @@ def test_LLM_상태는_모델이_받아져_있는지_본다(monkeypatch):
     assert system.llm_status("http://llm:11434/", "exaone3.5:7.8b")["ok"] is True
     missing = system.llm_status("http://llm:11434", "exaone3.5:2.4b")
     assert (missing["ok"], missing["reachable"]) == (False, True)
+
+
+# ------------------------------------------------------------ 입력 칸으로 바꾸기 (AD_09)
+def place_form_bytes(tmp_path: Path) -> bytes:
+    """회의계획서처럼 장소 칸에 예시 값(본관2층)이 박혀 있어 추출이 입력 칸으로 못 잡는 서식."""
+    from tests.test_schema_extract import tbl
+
+    xml = hf.section(tbl(3, 2, (0, 0, "회의명"), (0, 1, "○○○ 회의"), (1, 0, "일시"),
+                         (1, 1, "2000.00.00"), (2, 0, "장소"), (2, 1, "본관2층")))  # fmt: skip
+    return hf.build(tmp_path / "place.hwpx", xml).read_bytes()
+
+
+def generated_xml(user, doc: int) -> str:
+    import io
+    import zipfile
+
+    data = user.get(f"/api/documents/{doc}/files/HWPX").content
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        return "".join(z.read(n).decode("utf-8") for n in z.namelist() if "section" in n)
+
+
+def test_예시_값이_박힌_칸을_입력_칸으로_바꾼다(admin, user, tmp_path):
+    [form] = upload(admin, place_form_bytes(tmp_path)).json()["forms"]
+    fid = form["id"]
+    admin.patch(f"/api/admin/forms/{fid}", json={"public": True})
+    before = admin.get(f"/api/admin/forms/{fid}/items").json()
+    assert [i["key"] for i in before["items"]] == ["t0.r0.c1", "t0.r1.c1"]  # 장소는 못 잡았다
+    assert "t0.r0.c1" in before["blocked"] and before["layout"][0]["rows"] == 3
+
+    add = {"kind": "cell", "key": "t0.r2.c1", "label": "회의장소", "required": True}
+    r = admin.put(f"/api/admin/forms/{fid}/items", json=[add])
+    assert r.status_code == 200, r.text
+    [added] = [i for i in r.json()["items"] if i["key"] == "t0.r2.c1"]
+    assert added["extracted"]["added"] and added["extracted"]["placeholder"] == "본관2층"
+    assert added["setting"]["label"] == "회의장소"
+
+    doc = user.post("/api/documents", json={"form_id": fid}).json()["id"]
+    form = user.get(f"/api/documents/{doc}/form").json()
+    slot = next(s for s in form["schema"]["slots"] if s["id"] == "t0.r2.c1")
+    assert (slot["label"], slot["origin"], slot["required"]) == ("회의장소", "example", True)
+    assert form["skeleton"]["cells"]["t0.r2.c1"] == ""  # 예시는 값이 아니라 보기다
+    issues = user.post(f"/api/documents/{doc}/check", json={"cells": {}}).json()["issues"]
+    assert "t0.r2.c1" in [i["where"] for i in issues if i["code"] == "REQUIRED_EMPTY"]
+
+    user.put(f"/api/documents/{doc}/input",
+             json={"cells": {"t0.r0.c1": "중간점검 회의", "t0.r1.c1": "2026.10.30",
+                             "t0.r2.c1": "공학관 301호"}})  # fmt: skip
+    out = user.post(f"/api/documents/{doc}/generate", json={"formats": []}).json()
+    assert out["document"]["status"] == "completed", out
+    xml = generated_xml(user, doc)
+    assert "공학관 301호" in xml and "본관2층" not in xml
+
+
+def test_비워_둔_추가_칸은_예시를_지우고_사용을_끄면_되돌린다(admin, user, tmp_path):
+    [form] = upload(admin, place_form_bytes(tmp_path)).json()["forms"]
+    fid = form["id"]
+    admin.patch(f"/api/admin/forms/{fid}", json={"public": True})
+    add = {"kind": "cell", "key": "t0.r2.c1", "label": "회의장소"}
+    assert admin.put(f"/api/admin/forms/{fid}/items", json=[add]).status_code == 200
+    doc = user.post("/api/documents", json={"form_id": fid}).json()["id"]
+    user.put(f"/api/documents/{doc}/input",
+             json={"cells": {"t0.r0.c1": "중간점검 회의", "t0.r1.c1": "2026.10.30"}})  # fmt: skip
+    user.post(f"/api/documents/{doc}/generate", json={"formats": []})
+    assert "본관2층" not in generated_xml(user, doc)  # 예시가 문서에 남지 않는다
+
+    r = admin.put(f"/api/admin/forms/{fid}/items", json=[{**add, "hidden": True}])
+    assert [i["key"] for i in r.json()["items"]] == ["t0.r0.c1", "t0.r1.c1"]
+
+
+def test_입력_칸으로_바꿀_때는_이름이_있어야_하고_고를_수_없는_자리는_400(admin, tmp_path):
+    [form] = upload(admin, place_form_bytes(tmp_path)).json()["forms"]
+    fid = form["id"]
+    bad = [[{"kind": "cell", "key": "t0.r2.c1"}],  # 이름 없음
+           [{"kind": "cell", "key": "t0.r5.c0", "label": "x"}],  # 표 밖
+           [{"kind": "cell", "key": "t0.r2", "label": "x"}]]  # fmt: skip
+    for body in bad:
+        assert admin.put(f"/api/admin/forms/{fid}/items", json=body).status_code == 400, body

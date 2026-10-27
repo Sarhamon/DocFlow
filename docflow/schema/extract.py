@@ -30,13 +30,16 @@ from docflow.schema.model import (
 )
 from docflow.schema.rules import (
     FormLocation,
+    column_concept,
     field_input_type,
     form_numbers,
     infer_input_type,
     is_approval_field,
+    is_approval_head,
     is_approval_placeholder,
     is_approval_title,
     is_placeholder,
+    is_statement,
     is_total_text,
     parse_form_name,
     parse_location,
@@ -277,7 +280,8 @@ def _make_repeat(
         for h in headers:
             head = layout.cover.get((h, cell.col))
             text = _norm(head.text) if head else ""
-            if text and text not in parts:
+            # 위로 병합된 머리 칸이 끌고 온 윗줄의 예시 값(`홍길동, 홍길은....`)은 열 이름이 아니다
+            if text and text not in parts and not is_placeholder(text):
                 parts.append(text)
         label = " ".join(parts)
         first_text = _norm(cell.text)
@@ -287,7 +291,8 @@ def _make_repeat(
             RepeatColumn(
                 col=cell.col,
                 label=label,
-                input_type=infer_input_type(first_text or second, label),
+                # 성명·학번·계좌 같은 열은 예시가 `000` 이어도 글자다 (숫자로 보면 형식 경고가 난다)
+                input_type=_column_type(first_text or second, label),
                 role="computed" if computed else "input",
                 prefilled=None if computed else _prefilled(first_text, second),
             )
@@ -311,6 +316,24 @@ def _make_repeat(
         example_rows=example_rows,
         columns=columns,
     )
+
+
+#: 예시가 숫자 모양이어도 글자로 받는 열의 뜻
+_TEXT_CONCEPTS = {"name", "rrn", "student_id", "account", "bank", "dept", "address", "phone"}
+#: 수를 세는 열 이름. 이런 이름이 아니면 `0000` 같은 예시는 숫자가 아니라 빈자리 표시다
+_COUNT_LABEL_RE = re.compile(r"수|인원|횟수|시간|일수|연번|번호|수량")
+
+
+def _column_type(example: str, label: str) -> str:
+    """명단 열의 입력 형식. 성명·학번·계좌 같은 열과, `0000`·`00` 처럼 0 만 적힌 예시는 글자다
+    (회의계획서의 산업체명·직위가 숫자가 돼 형식 경고가 났다)."""
+    if column_concept(label) in _TEXT_CONCEPTS:
+        return "text"
+    kind = infer_input_type(example, label)
+    zeros = example.strip() and set(example.strip()) <= {"0"}
+    if kind == "number" and zeros and not _COUNT_LABEL_RE.search(label.replace(" ", "")):
+        return "text"
+    return kind
 
 
 def _prefilled(first: str, second: str) -> str | None:
@@ -377,7 +400,9 @@ def find_slots(layout: _Layout, repeats: list[RepeatSpec]) -> list[SlotSpec]:
         if cell.row in skip_rows or cell.has_field:
             continue
         text = _norm(cell.text)
-        if is_placeholder(text):
+        if is_statement(text):
+            origin = "template"  # 문장은 두고 날짜·이름만 고친다
+        elif is_placeholder(text):
             origin = "placeholder"
         elif not text:
             origin = "empty"
@@ -396,6 +421,8 @@ def find_slots(layout: _Layout, repeats: list[RepeatSpec]) -> list[SlotSpec]:
         label = _norm(label_cell.text) if label_cell else ""
         if is_total_text(text):  # `합계 : 10,500원 × 00시간` 처럼 칸 자체가 합계다
             label = "합계"
+        if origin == "template":
+            label = "제출 문장"  # 위 칸(`붙임`)의 이름을 물려받지 않는다
         if origin == "empty" and not label:
             continue  # 항목명도 없는 빈 칸은 입력 지점으로 보기 어렵다
         approval = is_approval_placeholder(text) or any(
@@ -409,7 +436,10 @@ def find_slots(layout: _Layout, repeats: list[RepeatSpec]) -> list[SlotSpec]:
                 label=label,
                 placeholder=text,
                 origin=origin,
-                input_type=infer_input_type(text if origin == "placeholder" else "", label),
+                input_type=(
+                    "text" if origin == "template"
+                    else infer_input_type(text if origin == "placeholder" else "", label)
+                ),
                 role="approval" if approval else "input",
                 required=origin == "placeholder" and not approval,
             )
@@ -438,10 +468,16 @@ def _label_cells(layout: _Layout, cell: Cell) -> tuple[Cell | None, Cell | None]
 
 
 def _in_approval_row(layout: _Layout, label: Cell) -> bool:
-    """직위 이름이 같은 행에 둘 이상 있어야 결재란으로 본다 (항목명 '담당' 하나로는 부족하다)."""
+    """결재란 머리인가. `결재` 칸이 있는 행이면 직위 이름이 무엇이든 결재란이다(`담당교수`).
+
+    그 밖에는 직위 이름이 같은 행에 둘 이상 있어야 결재란으로 본다 ('담당' 하나로는 부족하다).
+    """
+    row = layout.by_row.get(label.row, [])
+    if any(is_approval_head(c.text) for c in row):
+        return True
     if not is_approval_title(label.text):
         return False
-    return sum(is_approval_title(c.text) for c in layout.by_row.get(label.row, [])) >= 2
+    return sum(is_approval_title(c.text) for c in row) >= 2
 
 
 # ---------------------------------------------------------------- 누름틀·변형

@@ -211,7 +211,14 @@ def _fill_cells(doc: HwpxDocument, schema: FormSchema, data: FormInput, variant:
     slots = {s.id: s for s in schema.slots}
     written = 0
     for slot in schema.slots:
-        if slot.role == "approval" and _in_variant(schema, slot.table, variant):
+        if not _in_variant(schema, slot.table, variant):
+            continue
+        # 결재란은 비운다. 관리자가 입력 칸으로 바꾼 칸(예시 값이 적힌 칸)을 비워 두면 예시가
+        # 문서에 남지 않게 지운다
+        unwritten_example = (
+            slot.role == "input" and slot.origin == "example" and slot.id not in data.cells
+        )
+        if slot.role == "approval" or unwritten_example:
             doc.set_cell(slot.table, slot.row, slot.col, "")
             written += 1
     for key, value in data.cells.items():

@@ -23,6 +23,7 @@ from docflow.validate import (
     AMOUNT_TOTAL_MISMATCH,
     DATE_INVALID,
     DATE_ORDER,
+    FILL_LEFT,
     REQUIRED_EMPTY,
     ROW_DUPLICATE,
     RRN_INVALID,
@@ -49,6 +50,8 @@ EXPECTED_APPLICABLE = {
     # 예금주 열이 성명과 따로 있는 서식은 없어 HOLDER_MISMATCH 는 0 이다
     ACCOUNT_INVALID: 23,
     RRN_INVALID: 12,
+    # 2026-10-27: 글 칸이 하나라도 있으면 남은 자리표시자를 본다 (체크박스 칸만 있는 1개 제외)
+    FILL_LEFT: 182,
 }
 
 #: 입력 유형별 올바른 값

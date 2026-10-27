@@ -561,6 +561,8 @@ def create_app(
             "fields": fields_meta(schema),
             # 본문 초안을 만들 수 있는 칸 (변형과 상관없이 모두. 화면이 보이는 칸에만 단추를 단다)
             "draft_targets": [{"where": t.key, "label": t.label} for t in draft.targets(schema)],
+            # 변환기(한컴)가 없으면 HWPX 만 만들고 명단 가져오기는 HWPX 만 받는다
+            "converter": svc.converter is not None,
             # 정성 판정 물음 수. 없으면 화면이 [정성 판정] 단추를 숨긴다
             "checklist": len(review.items_for(svc.session, doc.form_version.form_id)),
         }

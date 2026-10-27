@@ -138,6 +138,8 @@ def _useless(t: Target, value: str, *, example: bool = True) -> bool:
 
 #: 칸 이름의 최대 길이 (행 제목 / 열 제목)
 _LABEL_LIMIT = 60
+#: 머리줄로 보는 최소 제목 수
+_HEADER_MIN = 3
 
 
 def context_label(schema: FormSchema, slot: SlotSpec, inputs: set[tuple[int, int, int]]) -> str:
@@ -164,7 +166,10 @@ def context_label(schema: FormSchema, slot: SlotSpec, inputs: set[tuple[int, int
     for r in range(slot.row - 1, -1, -1):
         if (slot.table, r, slot.col) in inputs:
             continue
-        col = header(r, slot.col)
+        # 열 제목은 머리줄(제목이 셋 이상)에서만. `학과 | 연성학과` 같은 2열 표의 윗줄 값은
+        # 제목이 아니다(실측: 일시 칸이 `일 시 / 연성학과` 가 됐다)
+        heads = {h for c in range(len(grid[r]) if r < len(grid) else 0) if (h := header(r, c))}
+        col = header(r, slot.col) if len(heads) >= _HEADER_MIN else ""
         break
     parts = [x[:_LABEL_LIMIT] for x in dict.fromkeys((row, col)) if x]
     return " / ".join(parts) or slot.id
@@ -191,7 +196,8 @@ def plan(schema: FormSchema, variant: int | None = None) -> Plan:
     inputs = {(s.table, s.row, s.col) for s in schema.input_slots()}
     by_table: dict[int, list[Target]] = {}
     for s in schema.input_slots():
-        if not mine(s.table) or _preset(s.placeholder):
+        # 제출 문장은 날짜·이름만 고치는 칸이라 LLM 에 묻지 않는다 (문장째 다시 쓰게 된다)
+        if not mine(s.table) or s.origin == "template" or _preset(s.placeholder):
             continue
         own = _one_line(s.label)
         if is_approval_title("".join(own.split())):

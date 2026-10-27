@@ -17,6 +17,7 @@
 | ACCOUNT_INVALID | 계좌번호가 숫자·하이픈 10~14자리인가 (경고) |
 | RRN_INVALID | 주민등록번호가 생년월일-성별자리-6자리 모양인가 (경고) |
 | HOLDER_MISMATCH | 명단의 예금주와 성명이 같은가 (경고) |
+| FILL_LEFT | 값에 채우지 않은 자리(○, 2000년 00월 00일, ○ ○ ○)가 남았는가 (경고) |
 
 호출 방식은 두 가지이고 같은 규칙을 쓴다.
 
@@ -33,7 +34,7 @@ from datetime import date
 from typing import Literal
 
 from docflow.schema.model import FieldSpec, FormSchema, RepeatColumn, RepeatSpec, SlotSpec
-from docflow.schema.rules import column_concept, is_placeholder, is_total_text
+from docflow.schema.rules import column_concept, has_fill_marks, is_placeholder, is_total_text
 
 REQUIRED_EMPTY = "REQUIRED_EMPTY"
 AMOUNT_TOTAL_MISMATCH = "AMOUNT_TOTAL_MISMATCH"
@@ -44,9 +45,10 @@ ROW_DUPLICATE = "ROW_DUPLICATE"
 ACCOUNT_INVALID = "ACCOUNT_INVALID"
 RRN_INVALID = "RRN_INVALID"
 HOLDER_MISMATCH = "HOLDER_MISMATCH"
+FILL_LEFT = "FILL_LEFT"
 RULES = (
     REQUIRED_EMPTY, AMOUNT_TOTAL_MISMATCH, DATE_INVALID, DATE_ORDER, AMOUNT_INVALID, ROW_DUPLICATE,
-    ACCOUNT_INVALID, RRN_INVALID, HOLDER_MISMATCH,
+    ACCOUNT_INVALID, RRN_INVALID, HOLDER_MISMATCH, FILL_LEFT,
 )  # fmt: skip
 #: 관리자 화면의 규칙 이름과 설명 (AD_15)
 RULE_INFO: dict[str, tuple[str, str]] = {
@@ -59,11 +61,13 @@ RULE_INFO: dict[str, tuple[str, str]] = {
     ACCOUNT_INVALID: ("계좌번호 형식", "계좌번호가 숫자·하이픈 10~14자리인가 (경고)"),
     RRN_INVALID: ("주민등록번호 형식", "생년월일 6자리-성별 자리-6자리 모양인가 (경고)"),
     HOLDER_MISMATCH: ("예금주·성명", "명단에서 예금주와 성명이 같은가 (경고)"),
+    FILL_LEFT: ("남은 자리표시자", "제출 문장의 날짜·이름 등 채우지 않은 자리가 남았는가 (경고)"),
 }
 #: 설정이 따로 주지 않을 때의 심각도. 형식·중복은 입력을 막지 않는 경고다 (명세 F3)
 DEFAULT_SEVERITY: dict[str, Severity] = {
     code: "warning"
-    for code in (AMOUNT_INVALID, ROW_DUPLICATE, ACCOUNT_INVALID, RRN_INVALID, HOLDER_MISMATCH)
+    for code in (AMOUNT_INVALID, ROW_DUPLICATE, ACCOUNT_INVALID, RRN_INVALID, HOLDER_MISMATCH,
+                 FILL_LEFT)  # fmt: skip
 }
 #: 중복을 보는 명단 열 (학번). 같은 이름은 동명이인이 있어 보지 않는다
 _DUPLICATE_COLUMN_RE = re.compile(r"학번")
@@ -413,7 +417,16 @@ def _real_birthday(yy: str, mm: str, dd: str) -> bool:
     return True
 
 
-_CELL_RULES = (_required, _date, _amount, _identity)
+def _fill_left(t: _Target, value: str) -> list[tuple[str, str, str]]:
+    """제출 문장(`… 20○○년 ○○월 ○○일 … ○ ○ ○ (날인)`)은 문장째 미리 채워 두므로 날짜·이름을
+    고치지 않고 내기 쉽다. 체크박스는 □ 가 정상이라 보지 않는다."""
+    if t.input_type == "checkbox" or not value.strip() or not has_fill_marks(value):
+        return []
+    return [(FILL_LEFT, f"{t.name}에 채우지 않은 자리가 남아 있습니다",
+             "○ 나 00 으로 된 날짜·이름 자리를 실제 값으로 고치세요")]  # fmt: skip
+
+
+_CELL_RULES = (_required, _date, _amount, _identity, _fill_left)
 
 
 def _severity(config: RuleConfig, code: str) -> Severity:
@@ -664,6 +677,8 @@ def applicable_rules(schema: FormSchema, config: ValidationConfig = DEFAULT_CONF
             found.add(AMOUNT_INVALID)
         if kind := _identity_kind(t):
             found.add(ACCOUNT_INVALID if kind == "account" else RRN_INVALID)
+        if t.input_type != "checkbox":
+            found.add(FILL_LEFT)
     if any(s.role == "input" and is_total_text(s.label) for s in schema.slots):
         found.add(AMOUNT_TOTAL_MISMATCH)
     if any(_duplicate_columns(r) for r in schema.repeats):

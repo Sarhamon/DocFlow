@@ -105,6 +105,15 @@ def items_view(form: Form) -> list[dict[str, Any]]:
         for s in schema.slots
         if s.role == "input" and mine(s.table)
     ]
+    # 관리자가 입력 칸으로 바꾼 칸 (서식에서는 고정 글자였다)
+    known = {s.id for s in schema.slots}
+    out += [
+        row("cell", x.id, "", x.input_type, False, placeholder=x.placeholder, table=x.table,
+            added=True)  # fmt: skip
+        for i in form.items
+        if i.kind == "cell" and i.key not in known
+        and (x := catalog.added_slot(schema, i)) is not None and mine(x.table)
+    ]
     out += [
         row("column", catalog.column_key(r, c), c.label, c.input_type, False, table=r.table,
             repeat=r.id)  # fmt: skip
@@ -242,7 +251,19 @@ def mount(
     def form_items(form_id: int, s: Session = Depends(session)) -> dict[str, Any]:
         """입력폼 항목 (AD_09~12, AD_14): 추출한 값과 관리자 설정을 나란히 준다."""
         form = catalog.get_form(s, form_id, public_only=False)
-        return {"items": items_view(form), "input_types": list(catalog.INPUT_TYPES)}
+        return items_reply(form)
+
+    def items_reply(form: Form) -> dict[str, Any]:
+        """입력폼 항목과, 표에서 칸을 고르는 데 쓰는 표 배치·고를 수 없는 자리."""
+        schema = catalog.load_schema(form.latest, raw=True)
+        return {
+            "items": items_view(form),
+            "input_types": list(catalog.INPUT_TYPES),
+            "layout": catalog.layout(form.latest, store),
+            "blocked": [f"t{t}.r{r}.c{c}" for t, r, c in sorted(catalog.blocked_cells(schema))],
+            "variant": schema.variant,
+            "variants": [v.model_dump() for v in schema.variants],
+        }
 
     @app.put(f"{API}/forms/{{form_id}}/items")
     def save_form_items(
@@ -253,9 +274,11 @@ def mount(
     ) -> dict[str, Any]:
         """입력폼 설정을 통째로 바꾼다. 개정해도 유지되고, 작성 중인 문서에도 바로 적용된다."""
         form = catalog.get_form(s, form_id, public_only=False)
-        saved = catalog.save_items(s, form, [b.model_dump() for b in body])
+        anchors = {(t["index"], c["row"], c["col"]) for t in catalog.layout(form.latest, store)
+                   for c in t["cells"]}  # fmt: skip
+        saved = catalog.save_items(s, form, [b.model_dump() for b in body], anchors)
         audit.record(s, actor, "form.items", audit.form_name(form), f"설정한 항목 {len(saved)}개")
-        return {"items": items_view(form), "input_types": list(catalog.INPUT_TYPES)}
+        return items_reply(form)
 
     # ------------------------------------------------------------ 카테고리 (AD_13)
     @app.get(f"{API}/categories", dependencies=admins)

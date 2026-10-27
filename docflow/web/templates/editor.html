@@ -131,11 +131,14 @@
 <dialog id="gen-dialog">
   <h2>문서 만들기</h2>
   <div id="gen-warn"></div>
-  <p>내려받을 형식을 고르세요. 한글 문서(HWPX)는 늘 함께 만듭니다.</p>
-  <div class="row" style="margin-bottom:16px">
-    <label class="row"><input type="checkbox" name="fmt" value="HWP" checked> HWP</label>
-    <label class="row"><input type="checkbox" name="fmt" value="PDF" checked> PDF</label>
+  <div id="gen-formats">
+    <p>내려받을 형식을 고르세요. 한글 문서(HWPX)는 늘 함께 만듭니다.</p>
+    <div class="row" style="margin-bottom:16px">
+      <label class="row"><input type="checkbox" name="fmt" value="HWP" checked> HWP</label>
+      <label class="row"><input type="checkbox" name="fmt" value="PDF" checked> PDF</label>
+    </div>
   </div>
+  <p class="hidden" id="gen-hwpx">한글 문서(HWPX)로 만듭니다. 한글에서 열어 고친 뒤 PDF 로 저장해 제출하세요.</p>
   <div class="row"><span class="spacer"></span>
     <button type="button" onclick="this.closest('dialog').close()">취소</button>
     <button type="button" class="primary" id="gen-go">만들기</button>

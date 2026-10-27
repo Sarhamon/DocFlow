@@ -46,7 +46,8 @@ def hwpx_upload(
     if fmt == "HWPX":
         return src, name
     if converter is None:
-        raise Unavailable("한컴오피스가 없어 HWP 를 바꿀 수 없다. HWPX 로 올린다")
+        # 운영 서버(리눅스)에는 한컴이 없다. 학생에게 HWPX 로 받기로 했다
+        raise Unavailable("HWP 파일은 읽을 수 없습니다. 한글에서 HWPX 로 저장해 올리세요")
     result = converter.convert(ConversionJob(source=src, formats=("HWPX",), out_dir=work))
     if not result.ok:
         raise ValueError(f"{name}: HWPX 로 바꾸지 못했다 ({result.errors.get('HWPX', '')})")

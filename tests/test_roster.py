@@ -158,3 +158,14 @@ def app_and_other(tmp_path):
                     files=[("files", upload(tmp_path, "b.hwpx", KIM))])  # fmt: skip
         assert r.status_code == 404
         yield me, other_doc
+
+
+def test_변환기가_없는_서버는_HWPX_만_만들고_완료한다(client):
+    """운영 서버(리눅스)에는 한컴이 없다. 사용자는 HWPX 를 한글에서 고쳐 PDF 로 제출한다."""
+    [form] = client.get("/api/forms", params={"q": "교통비"}).json()["items"]
+    doc = client.post("/api/documents", json={"form_id": form["id"]}).json()["id"]
+    assert client.get(f"/api/documents/{doc}/form").json()["converter"] is False
+    client.put(f"/api/documents/{doc}/input", json=fx.traffic_input())
+    out = client.post(f"/api/documents/{doc}/generate", json={"formats": []}).json()
+    assert out["document"]["status"] == "completed"
+    assert out["document"]["files"] == ["HWPX"] and out["conversion_errors"] == {}
