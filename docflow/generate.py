@@ -24,7 +24,7 @@ from typing import Literal
 
 from docflow.hwpx.document import Block, HwpxDocument, Recalc
 from docflow.schema.model import FormSchema, RepeatColumn, RepeatSpec
-from docflow.schema.rules import PLACEHOLDER_PATTERNS, is_date_placeholder
+from docflow.schema.rules import ISSUED_FIELDS, PLACEHOLDER_PATTERNS, is_date_placeholder
 from docflow.validate import FormInput
 
 #: 슬롯이 아닌 칸도 좌표(t0.r2.c10)로 쓸 수 있다. 스키마가 못 잡은 예시 값을 덮어쓸 때 쓴다.
@@ -204,6 +204,9 @@ def _fill_fields(doc: HwpxDocument, schema: FormSchema, data: FormInput) -> int:
             else:
                 doc.fill({spec.name: value})
             filled += 1
+        elif spec.name in ISSUED_FIELDS:
+            # 결재 시스템이 매긴다. 서식의 `○○○○처-000000` 을 남기지 않는다
+            doc.fill({spec.name: ""})
     return filled
 
 

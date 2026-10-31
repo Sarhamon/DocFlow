@@ -445,3 +445,67 @@ def test_프롬프트에_표_모양을_넣고_채울_자리를_키로_표시한�
                     "| ② 회의비 | {cells.t0.r2.c1} | {cells.t0.r2.c2} |")  # fmt: skip
     assert "[서식 모양]\n표 1:" in build_request(s, plan(s), "글", TODAY).prompt
     assert table_view(s, plan(s), budget=10) == ""  # 넘치면 넣지 않는다
+
+
+def test_칸_이름에서_끌려온_낱말과_정보_없음_표시는_걷어_낸다():
+    """실측: `[세부과제명] AID 워크숍`, `관인 생략: [text]`, `관인: [관인 생략]`, `미지정`."""
+    s = FormSchema(
+        title="정산서",
+        tables=[TableSpec(index=0, rows=6, cols=2)],
+        fields=[FieldSpec(name="seal_omit", type=""), FieldSpec(name="seal", type="")],
+        slots=[SlotSpec(table=0, row=0, col=1, label="[세부과제명] Activity명"),
+               SlotSpec(table=0, row=1, col=1, label="학과/부서명"),
+               SlotSpec(table=0, row=2, col=1, label="제목",
+                        placeholder="[20○○ AID] 세부과제명 운영 계획"),
+               SlotSpec(table=0, row=3, col=1, label="비고"),
+               SlotSpec(table=0, row=4, col=1, label="증감 사유"),
+               SlotSpec(table=0, row=5, col=1, label="진행 상태")],
+    )  # fmt: skip
+    text = "AID 워크숍 정산. 컴퓨터공학과. 진행은 미정"
+    raw, _ = read_answer(plan(s), {
+        "fields": {"seal_omit": "[text]", "seal": "[관인 생략]"},
+        "cells": {"t0.r0.c1": "[세부과제명] AID 워크숍", "t0.r1.c1": "컴퓨터공학과",
+                  "t0.r2.c1": "[2026 AID] 세부과제명 운영 계획", "t0.r3.c1": "기타",
+                  "t0.r4.c1": "추가 설명 필요", "t0.r5.c1": "미정"},
+    }, text)  # fmt: skip
+    assert raw["fields"] == {}
+    assert raw["cells"] == {
+        "t0.r0.c1": "AID 워크숍",
+        "t0.r1.c1": "컴퓨터공학과",  # 칸 이름의 `학과` 는 낱말째일 때만 지운다
+        "t0.r2.c1": "[2026 AID] 운영 계획",
+        "t0.r5.c1": "미정",  # 글에 있는 말은 값이다
+    }
+
+
+def test_글에서_다른_항목·다른_열의_금액은_맞는_칸으로_옮긴다():
+    """실측: 회의비 예산 칸에 집행 금액을, 다과비를 다른 행에 넣었다."""
+    table, slots = 정산표(items=("① 강사료", "② 회의비", "③ 다과비"))
+    s = FormSchema(title="정산서", tables=[table], slots=slots)
+    text = "강사료 예산 600,000원 중 600,000원 집행, 회의비 예산 200,000원 중 150,000원 집행."
+
+    def fill(cells: dict) -> tuple[dict, list[str]]:
+        out = prefill(s, text, FakeLlm({"cells": cells}), today=TODAY)
+        return out.input["cells"], [i.where for i in out.issues]
+
+    right = {"t0.r1.c1": "600,000", "t0.r1.c2": "600,000",
+             "t0.r2.c1": "200,000", "t0.r2.c2": "150,000"}  # fmt: skip
+    assert fill(right) == (right, [])
+    # 열이 바뀌었다 / 다른 행에 넣었다 -> 옮긴다
+    assert fill({**right, "t0.r2.c1": "150,000", "t0.r2.c2": "200,000"}) == (right, [])
+    assert fill({"t0.r3.c1": "200,000"}) == ({"t0.r2.c1": "200,000"}, [])
+    # 맞는 칸에 이미 있으면 사본을 버리고, 글에 없는 금액(지어낸 잔액)은 덮어쓴다
+    assert fill({"t0.r2.c2": "150,000", "t0.r3.c2": "150,000"})[0] == {"t0.r2.c2": "150,000"}
+    assert fill({"t0.r2.c2": "50,000", "t0.r2.c1": "150,000"})[0]["t0.r2.c2"] == "150,000"
+    # 옮길 칸이 하나로 정해지지 않으면(600,000 은 강사료의 예산이자 집행) 그대로 두고 경고한다.
+    # 그 칸으로 옮기려던 금액도 제자리에 둔다 (덮어쓰지 않는다)
+    moved = {"t0.r2.c2": "600,000", "t0.r1.c1": "150,000"}
+    assert fill(moved) == (moved, ["t0.r2.c2", "t0.r1.c1"])
+
+
+def test_다음_문장의_낱말로_열을_정하지_않는다():
+    table, slots = 정산표(items=("① 현장견학비", "② 다과비"))
+    s = FormSchema(title="정산서", tables=[table], slots=slots)
+    text = "현장견학비 예산 1,000,000원, 집행 820,000원. 다과비 예산 100,000원, 집행 95,000원."
+    cells = {"t0.r1.c1": "1,000,000", "t0.r1.c2": "820,000",
+             "t0.r2.c1": "100,000", "t0.r2.c2": "95,000"}  # fmt: skip
+    assert prefill(s, text, FakeLlm({"cells": cells}), today=TODAY).issues == []

@@ -631,6 +631,10 @@
         if (overwrite || !String(raw[part][k] ?? "").trim()) { raw[part][k] = v; applied.add(k); }
       }
     }
+    // 본문 초안으로 쓴 칸은 인용 근거(사용자의 글)를 같이 적어 이후 점검이 숫자를 계속 본다
+    for (const [k, basis] of Object.entries(out.drafted || {})) {
+      if (applied.has(k)) raw._drafted[k] = basis;
+    }
     // 명단이 아닌 반복영역(지출 내역 등): 덮어쓰면 바꾸고, 아니면 적어 둔 행 뒤에 붙인다
     const shift = {};
     for (const [rid, rows] of Object.entries(out.input.rows || {})) {
@@ -858,6 +862,7 @@
       $("gen-dialog").close();
       doc = out.document;
       showResult(out);
+      loadAttachments().catch(DF.fail);
       drawHead();
       DF.toast(doc.status === "completed" ? "문서를 만들었습니다." : "문서를 만들었지만 일부 변환에 실패했습니다.", doc.status === "completed" ? "" : "error");
     } catch (e) {
@@ -916,6 +921,74 @@
     }));
   }
 
+  // ---------------------------------------------------------------- 붙임 문서
+  async function loadAttachments() {
+    const out = await api("GET", `/api/documents/${docId}/attachments`);
+    $("attach-card").classList.toggle("hidden", !out.enabled);
+    if (!out.enabled) return;
+    const name = (d) => `${d.form.form_no} ${d.title}`;
+    // 붙이거나 빼면 본문의 붙임 줄도 바로 고친다 (남은 붙임이 없으면 본문은 그대로)
+    const run = async (fn, message) => {
+      try {
+        await fn();
+        const left = (await api("GET", `/api/documents/${docId}/attachments`)).attached.length;
+        if (left && "content_body" in raw.fields) await fillBody(false);
+        DF.toast(left ? `${message} 본문의 붙임 줄도 고쳤습니다.` : message);
+      } catch (e) { DF.fail(e); }
+      loadAttachments().catch(DF.fail);
+    };
+    $("attached").replaceChildren(...(out.attached.length ? out.attached.map((d, i) => h("div", { class: "row small", style: "margin-bottom:6px" },
+      h("span", {}, `${i + 1}. `), h("a", { href: `/documents/${d.id}`, target: "_blank" }, name(d)),
+      h("span", { class: "muted" }, ` · ${DF.STATUS[d.status] || d.status}`), h("span", { class: "spacer" }),
+      readonly() ? "" : h("button", { type: "button", class: "small", onclick: () => run(
+        () => api("DELETE", `/api/documents/${docId}/attachments/${d.id}`), "붙임에서 뺐습니다.") }, "빼기")))
+      : [h("div", { class: "muted small" }, "붙인 문서가 없습니다.")]));
+    // 함께 내려받기: 기안문과 붙임 문서의 마지막 판 파일을 zip 하나로
+    $("attach-bundle").replaceChildren(...(out.attached.length && doc.files.length ? [
+      h("span", { class: "small muted" }, "붙임까지 함께 받기: "),
+      ...doc.files.map((f) => h("button", { type: "button", class: "small", onclick: () => bundle(f).catch(DF.fail) }, `${f} (zip)`))] : []));
+    if (readonly()) { $("attach-add").replaceChildren(); return; }
+    if (out.attached.length && "content_body" in raw.fields) {
+      $("attach-bundle").prepend(h("button", { type: "button", class: "small",
+        onclick: () => fillBody(true).catch(DF.fail) }, "본문 붙임 줄 채우기"));
+    }
+    if (!out.candidates.length) {
+      $("attach-add").replaceChildren(h("div", { class: "muted small" }, "붙일 수 있는 내 문서가 없습니다. 계획서를 먼저 만들어 두세요."));
+      return;
+    }
+    const sel = h("select", { "aria-label": "붙일 문서", style: "flex:1;min-width:0" },
+      ...out.candidates.map((d) => h("option", { value: d.id },
+        `${name(d)} · ${DF.STATUS[d.status] || d.status} · ${DF.fmtTime(d.updated_at)}`)));
+    $("attach-add").replaceChildren(sel, h("button", { type: "button", class: "small", onclick: () => run(
+      () => api("POST", `/api/documents/${docId}/attachments`, { document_id: Number(sel.value) }), "붙였습니다.") }, "붙이기"));
+  }
+
+  /** 본문의 붙임 줄을 붙인 문서로 다시 쓴다 (화면의 본문 칸만 고친다. 저장은 자동 저장이 한다). */
+  async function fillBody(toast) {
+    const out = await api("POST", `/api/documents/${docId}/attachments/body`, payload());
+    if (raw.fields[out.field] === out.text) { if (toast) DF.toast("본문의 붙임 줄이 이미 맞습니다."); return; }
+    raw.fields[out.field] = out.text;
+    redraw(); changed(); check();
+    if (toast) DF.toast("본문의 붙임 줄을 붙인 문서로 고쳤습니다.");
+  }
+
+  /** 붙임까지 zip 으로 받는다. 붙임에 그 형식 파일이 없으면 받지 않고 이유를 알린다. */
+  async function bundle(fmt) {
+    const res = await fetch(`/api/documents/${docId}/bundle/${fmt}`);
+    if (!res.ok) {
+      let data = null;
+      try { data = await res.json(); } catch { data = null; }
+      throw new DF.ApiError(res.status, data);
+    }
+    const m = /filename\*=UTF-8''([^;]+)/.exec(res.headers.get("Content-Disposition") || "");
+    const url = URL.createObjectURL(await res.blob());
+    const a = h("a", { href: url, download: m ? decodeURIComponent(m[1]) : `문서_${docId}.zip` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   // ---------------------------------------------------------------- 시작
   async function load() {
     const [d, f] = await Promise.all([api("GET", `/api/documents/${docId}`), api("GET", `/api/documents/${docId}/form`)]);
@@ -942,6 +1015,7 @@
     setSaveState(`저장됨 ${DF.fmtTime(doc.updated_at).slice(11)}`);
     if (!readonly()) check();
     loadLinks().catch(DF.fail);
+    loadAttachments().catch(DF.fail);
   }
 
   $("title").addEventListener("change", async (ev) => {

@@ -34,7 +34,13 @@ from datetime import date
 from typing import Literal
 
 from docflow.schema.model import FieldSpec, FormSchema, RepeatColumn, RepeatSpec, SlotSpec
-from docflow.schema.rules import column_concept, has_fill_marks, is_placeholder, is_total_text
+from docflow.schema.rules import (
+    ISSUED_FIELDS,
+    column_concept,
+    has_fill_marks,
+    is_placeholder,
+    is_total_text,
+)
 
 REQUIRED_EMPTY = "REQUIRED_EMPTY"
 AMOUNT_TOTAL_MISMATCH = "AMOUNT_TOTAL_MISMATCH"
@@ -248,11 +254,14 @@ def _in_variant(schema: FormSchema, table: int, variant: int | None) -> bool:
 def field_required(spec: FieldSpec) -> bool:
     """누름틀이 필수인가. 관리자가 정했으면 그대로, 아니면 자리표시자가 있으면 필수다.
 
-    주소·공개여부처럼 서식에 이미 값이 박혀 있는 누름틀은 채울 곳이 아니다.
+    주소·공개여부처럼 서식에 이미 값이 박혀 있는 누름틀은 채울 곳이 아니다. 문서번호처럼 결재
+    시스템이 매기는 누름틀은 비어도 된다(관리자가 필수로 정하면 필수).
     """
     if spec.role != "input":
         return False
-    return spec.required if spec.required is not None else is_placeholder(spec.placeholder)
+    if spec.required is not None:
+        return spec.required
+    return spec.name not in ISSUED_FIELDS and is_placeholder(spec.placeholder)
 
 
 def _slot_target(slot: SlotSpec, ex: Exclusions) -> _Target | None:

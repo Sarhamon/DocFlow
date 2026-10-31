@@ -194,6 +194,22 @@ class DocumentLink(Base):
     linked_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
 
 
+class DocumentAttachment(Base):
+    """기안문에 붙인 문서 (사업 계획서 등). 본문의 `붙임 … 1부.` 가 가리키는 문서다.
+
+    기안문은 계획서를 따로 만들어 함께 올린다. 계획서는 다른 서식이라 같은 파일에 없다.
+    """
+
+    __tablename__ = "document_attachments"
+    __table_args__ = (UniqueConstraint("document_id", "attachment_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
+    attachment_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
+    #: 붙임 순서 (1부터)
+    position: Mapped[int] = mapped_column(default=1)
+
+
 class FormVersion(Base):
     __tablename__ = "form_versions"
     __table_args__ = (UniqueConstraint("form_id", "version"),)

@@ -97,6 +97,15 @@ def test_결재란의_템플릿_잔여값을_비운다(draft, tmp_path):
     assert out.tables()[0].grid()[1] == ["", ""]
 
 
+def test_비운_문서번호는_자리표시자를_남기지_않는다(draft, tmp_path):
+    """문서번호는 결재 시스템이 매긴다. 비우고 만들어도 `○○처-000000` 이 남지 않고 경고도 없다."""
+    schema, template = draft
+    result = generate(schema, FormInput(), template, tmp_path / "o.hwpx")
+    out = HwpxDocument.open(result.path)
+    assert {f.name: f.value for f in out.fields()}["docnumber"] == ""
+    assert [x for x in result.leftovers if "000000" in x.text] == []
+
+
 def test_결재란_칸에는_쓰지_않는다(draft, tmp_path):
     schema, template = draft
     with pytest.raises(GenerateError, match="approval"):

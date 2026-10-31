@@ -138,6 +138,8 @@ class Table:
     #: 표 안에 표가 들어있는 경우의 중첩 깊이 (0 = 최상위)
     depth: int
     cells: list[Cell]
+    #: 중첩 표가 든 바깥 표의 칸: (표 번호, 행, 열). 최상위 표는 None
+    host: tuple[int, int, int] | None = None
 
     def grid(self) -> list[list[str]]:
         """병합을 펼친 rows x cols 텍스트 격자. 검토·디버깅용."""
@@ -231,6 +233,16 @@ class HwpxDocument:
 
     def tables(self) -> list[Table]:
         """문서 전체의 표를 등장 순서대로 반환한다 (중첩 표 포함)."""
+        elements = self._table_elements()
+        index = {id(el): i for i, (_, el, _) in enumerate(elements)}
+        hosts: dict[int, tuple[int, int, int]] = {}
+        for i, (_, el, _) in enumerate(elements):
+            for tr in el.findall(TR):
+                for tc in tr.findall(TC):
+                    cell = _read_cell(tc, text=False)
+                    # 바깥 표부터 보므로 더 깊은 표는 나중에 바로 위 표의 칸으로 덮인다
+                    for child, _ in _walk_tables(tc):
+                        hosts[index[id(child)]] = (i, cell.row, cell.col)
         return [
             Table(
                 index=i,
@@ -239,8 +251,9 @@ class HwpxDocument:
                 cols=int(el.get("colCnt", 0)),
                 depth=depth,
                 cells=[_read_cell(tc) for tr in el.findall(TR) for tc in tr.findall(TC)],
+                host=hosts.get(i),
             )
-            for i, (section, el, depth) in enumerate(self._table_elements())
+            for i, (section, el, depth) in enumerate(elements)
         ]
 
     def outline(self) -> list[tuple[str, int | str]]:

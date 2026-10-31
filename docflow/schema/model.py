@@ -20,7 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 #: 서식 번호가 붙은 변형 이름 (`1-02호`)
 _NUMBERED_RE = re.compile(r"^\d+-\d+호$")

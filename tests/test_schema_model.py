@@ -216,4 +216,4 @@ def test_저장된_JSON에는_id와_수용_행수가_들어있다():
 
 
 def test_스키마_버전이_기록된다():
-    assert 교통비_스키마().schema_version == SCHEMA_VERSION == 4
+    assert 교통비_스키마().schema_version == SCHEMA_VERSION == 5

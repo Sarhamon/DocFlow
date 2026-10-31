@@ -209,9 +209,17 @@ def test_누름틀을_채우면_통과():
 
 
 def test_누름틀이_비면_잡는다():
-    assert codes(validate(기안문(), 기안문_입력(docnumber=""))) == [
-        (REQUIRED_EMPTY, "docnumber")
-    ]
+    s = 기안문()
+    s.fields.append(FieldSpec(name="title", type="CLICK_HERE", placeholder="○○○ 회의"))
+    assert codes(validate(s, 기안문_입력(title=""))) == [(REQUIRED_EMPTY, "title")]
+
+
+def test_결재_시스템이_매기는_문서번호·시행일자는_비어도_된다():
+    """문서번호는 시행할 때 결재 시스템이 매긴다. 비었다고 문서를 못 만들면 안 된다."""
+    assert validate(기안문(), 기안문_입력(docnumber="", enforcedate="")) == []
+    s = 기안문()
+    s.fields[0] = s.fields[0].model_copy(update={"required": True})  # 관리자가 필수로 정하면 필수
+    assert codes(validate(s, 기안문_입력(docnumber=""))) == [(REQUIRED_EMPTY, "docnumber")]
 
 
 def test_이미_값이_박힌_누름틀은_필수가_아니다():

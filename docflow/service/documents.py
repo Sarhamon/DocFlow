@@ -15,10 +15,12 @@ owner_id 가 None 이면 계정 구분 없이 모든 문서를 본다(로그인 
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import tempfile
 import threading
+import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +32,7 @@ from docflow.convert import ConversionJob, ConversionResult, Converter
 from docflow.generate import Leftover
 from docflow.pipeline import ParsedInput, make_document, parse_input
 from docflow.schema.model import FormSchema
-from docflow.service import crosscheck, crypto, draft
+from docflow.service import attachments, crosscheck, crypto, draft
 from docflow.service.catalog import NotFound, get_form, load_schema
 from docflow.service.db import Artifact, Document, DocumentEvent, now
 from docflow.service.rules import config_for
@@ -191,7 +193,10 @@ class DocumentService:
         return doc
 
     def copy(self, doc_id: int, owner_id: int | None = None) -> Document:
-        """재수정(복제, MY_06). 같은 서식 버전·입력값으로 새 작성 중 문서를 만든다."""
+        """재수정(복제, MY_06). 같은 서식 버전·입력값으로 새 작성 중 문서를 만든다.
+
+        붙임 문서와 대조용 연결 문서도 그대로 잇는다.
+        """
         src = self.get(doc_id, owner_id)
         doc = Document(
             owner_id=src.owner_id if owner_id is None else owner_id,
@@ -201,6 +206,8 @@ class DocumentService:
         )
         self.session.add(doc)
         self.session.flush()
+        attachments.copy_all(self.session, src, doc)
+        crosscheck.copy_links(self.session, src, doc)
         self._event(doc, "copied", input_json=src.input_json, note=f"문서 {src.id} 에서 복제")
         self.session.commit()
         return doc
@@ -209,6 +216,7 @@ class DocumentService:
         """작성 중 문서 삭제 (MY_03). 완료 문서는 이력이라 지우지 않는다."""
         doc = self._draft(doc_id, owner_id)
         crosscheck.unlink_all(self.session, doc)
+        attachments.unlink_all(self.session, doc)
         self.store.delete_prefix(f"documents/{doc.id}")
         self.session.delete(doc)
         self.session.commit()
@@ -236,8 +244,9 @@ class DocumentService:
         return (
             validate(schema, data, self.rules_of(doc))
             + crosscheck.check(self.session, doc, schema, data)
-            + draft.check(schema, raw, data)
-        )
+            + draft.check(schema, raw, data,
+                          extra=draft.attachment_facts(attachments.titles(self.session, doc)))
+        )  # fmt: skip
 
     def generate(
         self,
@@ -318,6 +327,30 @@ class DocumentService:
                 data = crypto.current().read_file(self.store.local_path(a.file_key))
                 return data, Path(a.file_key).name
         raise NotFound(f"문서 {doc_id} 의 {revision}판 {fmt} 파일이 없다")
+
+    def bundle(self, doc_id: int, fmt: str, owner_id: int | None = None) -> tuple[bytes, str]:
+        """기안문과 붙임 문서의 마지막 판 파일을 zip 하나로 (붙임 순서대로 `붙임1_…`).
+
+        붙임 가운데 그 형식 파일이 없는 문서가 있으면 빠뜨린 채 주지 않고 알린다.
+        """
+        doc = self.get(doc_id, owner_id)
+        main, name = self.artifact(doc_id, fmt, owner_id)
+        others = attachments.attached(self.session, doc)
+        if not others:
+            raise ValueError("붙인 문서가 없습니다. 기안문만 받으려면 그냥 내려받으세요")
+        missing = [f"붙임{i} '{d.title}'" for i, d in enumerate(others, 1)
+                   if not any(a.revision == d.revision and a.format == fmt.upper()
+                              for a in d.artifacts)]  # fmt: skip
+        if missing:
+            raise Conflict(f"{', '.join(missing)} 에 {fmt.upper()} 파일이 없습니다. "
+                           "그 문서를 먼저 만드세요")  # fmt: skip
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(name, main)
+            for i, d in enumerate(others, 1):
+                data, other_name = self.artifact(d.id, fmt, d.owner_id)
+                z.writestr(f"붙임{i}_{other_name}", data)
+        return buffer.getvalue(), f"{Path(name).stem}_붙임포함.zip"
 
     # ------------------------------------------------------------ 내부
     def _draft(self, doc_id: int, owner_id: int | None) -> Document:

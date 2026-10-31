@@ -133,6 +133,10 @@ _APPROVAL_TITLE_RE = re.compile(
 )
 #: 결재 날짜 자리 — `00/00`, `전결 00/00`
 _APPROVAL_DATE_RE = re.compile(r"^(?:(?:전결|대결)\s*)?[0O]{2}\s*/\s*[0O]{2}$")
+#: 시행할 때 결재 시스템이 매기는 누름틀 (문서번호·시행일자·접수번호·접수일자). 작성할 때는 몰라도
+#: 되므로 필수가 아니고, 비워 두면 산출물에서 서식의 자리표시자(`○○○○처-000000`)를 지운다
+ISSUED_FIELDS = frozenset({"docnumber", "enforcedate", "receipt_docnumber", "receiptdate"})
+
 #: 결재선 누름틀 — apb1_type, apb8_sign …
 _APPROVAL_FIELD_RE = re.compile(r"^apb\d+_")
 

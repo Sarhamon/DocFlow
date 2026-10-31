@@ -19,7 +19,7 @@ import json
 import os
 import tempfile
 from collections.abc import Callable, Iterator
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -38,12 +38,14 @@ from docflow.pipeline import InputError, skeleton
 from docflow.schema.labels import field_label
 from docflow.schema.model import FormSchema
 from docflow.service import (
+    attachments,
     audit,
     catalog,
     crosscheck,
     crypto,
     draft,
     prefill,
+    profile,
     review,
     roster,
     system,
@@ -546,17 +548,22 @@ def create_app(
 
     @app.get(f"{API}/documents/{{doc_id}}/form")
     def document_form(
-        doc_id: int, svc: DocumentService = Depends(service), me=Depends(owner)
+        doc_id: int, svc: DocumentService = Depends(service), user: User = Depends(current_user)
     ) -> dict[str, Any]:
-        """문서가 묶인 서식 버전의 스키마와 입력 틀. 입력 화면이 쓴다."""
-        doc = svc.get(doc_id, me)
+        """문서가 묶인 서식 버전의 스키마와 입력 틀. 입력 화면이 쓴다.
+
+        입력 틀의 빈 칸 가운데 부서·전화·팩스·전자우편 칸은 작성자의 계정 정보로 채워 둔다
+        (새 문서는 틀로 시작한다). 글로 채우기가 지어내지 않는 값이라 계정에서 가져온다.
+        """
+        doc = svc.get(doc_id, user.id)
         schema = svc.schema_of(doc)
         variant = svc.raw_input(doc).get("variant")
         index = next((v.index for v in schema.choices if variant in (v.label, v.index)), None)
+        mine = profile.defaults(schema, user)
         return {
             "schema": schema.model_dump(),
             "summary": catalog.summarize(schema),
-            "skeleton": skeleton(schema, index),
+            "skeleton": profile.fill_blanks(skeleton(schema, index), mine),
             "layout": catalog.layout(doc.form_version, store),
             "fields": fields_meta(schema),
             # 본문 초안을 만들 수 있는 칸 (변형과 상관없이 모두. 화면이 보이는 칸에만 단추를 단다)
@@ -627,6 +634,14 @@ def create_app(
         me=Depends(owner),
     ) -> Response:
         data, name = svc.artifact(doc_id, fmt, me, revision=revision)
+        return download_response(data, name)
+
+    @app.get(f"{API}/documents/{{doc_id}}/bundle/{{fmt}}")
+    def download_bundle(
+        doc_id: int, fmt: str, svc: DocumentService = Depends(service), me=Depends(owner)
+    ) -> Response:
+        """함께 내려받기: 기안문과 붙임 문서의 마지막 판 파일을 zip 하나로."""
+        data, name = svc.bundle(doc_id, fmt, me)
         return download_response(data, name)
 
     @app.post(f"{API}/documents/{{doc_id}}/copy", status_code=201)
@@ -704,12 +719,23 @@ def create_app(
 
         화면이 결과를 미리 보여 주고, 사용자가 넣으면 임시저장으로 저장된다. 명단·계좌·주민등록번호
         칸은 LLM 에 넘기지 않는다. 채운 금액·날짜가 글에 없으면 LLM_UNCITED 경고를 함께 준다.
+        본문·목적 같은 서술형 칸은 이어서 본문 초안으로 쓴다. 넣을 때 화면이 `drafted` 를
+        입력값의 `_drafted` 에 적는다.
         """
         doc = svc.get(doc_id, me)
         try:
-            out = prefill.prefill(svc.schema_of(doc), body.prompt, client, variant=body.variant)
+            names = attachments.titles(svc.session, doc)
+            out = draft.prefill_with_drafts(svc.schema_of(doc), body.prompt, client,
+                                            variant=body.variant,
+                                            extra=draft.attachment_facts(names))  # fmt: skip
         except LlmError as exc:
             raise Unavailable(f"{exc}. 잠시 뒤 다시 하거나 칸을 직접 채우세요") from exc
+        # 본문의 붙임 줄은 LLM 이 어림하지 않게 붙인 문서로 다시 쓴다 (실측: `붙임 참조`)
+        if names and (text := out.input["fields"].get("content_body")):
+            fixed = attachments.fill_body(text, names)
+            out.input["fields"]["content_body"] = fixed
+            out.filled = [replace(f, value=fixed) if f.target.key == "content_body" else f
+                          for f in out.filled]  # fmt: skip
         return {
             "input": out.input,
             "filled": [
@@ -719,6 +745,7 @@ def create_app(
             ],  # fmt: skip
             "issues": [issue_dict(i) for i in out.issues],
             "skipped": out.skipped,
+            "drafted": out.drafted,
             "model": out.model,
             "elapsed": round(out.elapsed, 1),
         }
@@ -738,14 +765,19 @@ def create_app(
         """
         doc = svc.get(doc_id, me)
         try:
+            names = attachments.titles(svc.session, doc)
             out = draft.draft(svc.schema_of(doc), body.input, body.target, client,
-                              instruction=body.instruction, retry=body.retry)  # fmt: skip
+                              instruction=body.instruction, retry=body.retry,
+                              extra=draft.attachment_facts(names))  # fmt: skip
         except LlmError as exc:
             raise Unavailable(f"{exc}. 잠시 뒤 다시 하거나 직접 쓰세요") from exc
+        text = out.text
+        if names and out.target.key == "content_body":
+            text = attachments.fill_body(text, names)  # 붙임 줄은 붙인 문서로 다시 쓴다
         return {
             "target": out.target.key,
             "label": out.target.label,
-            "text": out.text,
+            "text": text,
             "cited": [{"key": f.key, "label": f.label, "value": f.value} for f in out.cited],
             "issues": [issue_dict(i) for i in out.issues],
             # 채택할 때 입력값의 _drafted[칸] 에 적는다 (고쳐 쓰기 전의 글도 인용 근거)
@@ -816,6 +848,60 @@ def create_app(
         """문서를 잇거나(document_id) 끊는다(null). 내가 쓴 상대 서식 문서만 잇는다."""
         crosscheck.link(svc.session, svc.get(doc_id, me), rule_id, body.document_id)
         return {"rule_id": rule_id, "document_id": body.document_id}
+
+    # ------------------------------------------------------------ 붙임 문서
+    def attachment_dict(d: Document) -> dict[str, Any]:
+        return {**link_dict(d), "form": form_summary(d.form_version.form)}
+
+    @app.get(f"{API}/documents/{{doc_id}}/attachments")
+    def document_attachments(
+        doc_id: int, svc: DocumentService = Depends(service), me=Depends(owner)
+    ) -> dict[str, Any]:
+        """붙임 문서: 붙인 문서(순서대로)와 붙일 수 있는 내 문서. 기안문·지출품의서만 받는다."""
+        doc = svc.get(doc_id, me)
+        if not attachments.enabled(svc.schema_of(doc)):
+            return {"enabled": False, "attached": [], "candidates": []}
+        s = svc.session
+        return {
+            "enabled": True,
+            "attached": [attachment_dict(d) for d in attachments.attached(s, doc)],
+            "candidates": [attachment_dict(d) for d in attachments.candidates(s, doc)],
+        }
+
+    @app.post(f"{API}/documents/{{doc_id}}/attachments", status_code=201)
+    def add_attachment(
+        doc_id: int, body: LinkRequest, svc: DocumentService = Depends(service), me=Depends(owner)
+    ) -> dict[str, Any]:
+        """문서를 붙임 맨 뒤에 붙인다. 내가 쓴 다른 문서만 붙인다."""
+        doc = svc.get(doc_id, me)
+        if body.document_id is None:
+            raise ValueError("붙일 문서를 고르세요")
+        if not attachments.enabled(svc.schema_of(doc)):
+            raise ValueError("이 서식은 붙임 문서를 받지 않습니다")
+        attachments.attach(svc.session, doc, body.document_id)
+        return {"document_id": body.document_id}
+
+    @app.post(f"{API}/documents/{{doc_id}}/attachments/body")
+    def attachment_body(
+        doc_id: int,
+        raw: dict[str, Any] = Body(...),
+        svc: DocumentService = Depends(service),
+        me=Depends(owner),
+    ) -> dict[str, Any]:
+        """본문의 붙임 줄을 붙인 문서로 바꾼 글 (저장하지 않는다). 화면이 본문 칸에 넣는다."""
+        doc = svc.get(doc_id, me)
+        if not attachments.enabled(svc.schema_of(doc)):
+            raise ValueError("이 서식은 붙임 문서를 받지 않습니다")
+        body = str((raw.get("fields") or {}).get("content_body") or "")
+        names = attachments.titles(svc.session, doc)
+        return {"field": "content_body", "text": attachments.fill_body(body, names),
+                "attachments": names}  # fmt: skip
+
+    @app.delete(f"{API}/documents/{{doc_id}}/attachments/{{other_id}}", status_code=204)
+    def remove_attachment(
+        doc_id: int, other_id: int, svc: DocumentService = Depends(service), me=Depends(owner)
+    ) -> None:
+        attachments.detach(svc.session, svc.get(doc_id, me), other_id)
 
     @app.get(f"{API}/documents/{{doc_id}}/history")
     def document_history(

@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from docflow.config import Settings
-from docflow.llm import LlmError
+from docflow.llm import LlmError, LlmResult
 from docflow.pipeline import parse_input
 from docflow.schema.model import (
     FieldSpec,
@@ -90,6 +90,21 @@ def test_입력값은_채운_칸과_내역이고_명단은_인원·합계만():
     }
     text = str(facts)
     assert "김철수" not in text and "110-123" not in text and "123-45" not in text
+
+
+def test_연락처_칸은_입력값에서_뺀다():
+    """실측: 전화·팩스를 넘기자 본문 끝에 `문의 : 031-441-0000 | 웹사이트 : …` 를 붙였다."""
+    s = 기안()
+    s.fields += [
+        FieldSpec(name="telephone", type="", placeholder="031-441-0000"),
+        FieldSpec(name="email", type="", placeholder="000000@yeonsung.ac.kr"),
+    ]
+    s.slots.append(SlotSpec(table=0, row=4, col=1, label="전화"))
+    raw = {**RAW, "fields": {**RAW["fields"], "telephone": "031-441-1234", "email": "a@b.kr"},
+           "cells": {**RAW["cells"], "t0.r4.c1": "031-441-1234"}}  # fmt: skip
+    keys = [f.key for f in dr.facts(s, parse_input(s, raw).data, "content_body")]
+    assert "telephone" not in keys and "email" not in keys and "t0.r4.c1" not in keys
+    assert "t0.r0.c1" in keys  # 사업명은 그대로
 
 
 def test_초안을_쓸_칸은_입력값에서_뺀다():
@@ -236,3 +251,116 @@ def test_고쳐_쓰기_전의_글도_인용_근거다():
     assert dr.check(기안(), adopted, data_of(adopted), TODAY) == []
     old = {**adopted, "_drafted": ["content_body"]}
     assert len(dr.check(기안(), old, data_of(old), TODAY)) == 1
+
+
+# ---------------------------------------------------------------- 글로 채우기 + 초안
+class SeqLlm:
+    """정해 둔 답을 차례로 돌려준다. 답이 예외면 던진다."""
+
+    def __init__(self, *answers: dict | Exception) -> None:
+        self.answers = list(answers)
+        self.requests = []
+
+    def complete(self, request):
+        self.requests.append(request)
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return LlmResult(answer, "fake", 0.5)
+
+
+PROMPT = "캡스톤 디자인 회의를 2026. 10. 30. 에 연다. 다과비 50,000원. 문서번호 산학협력단-2026001"
+EXTRACTED = {
+    "fields": {"docnumber": "산학협력단-2026001"},
+    "cells": {"t0.r0.c1": "캡스톤 디자인", "t0.r2.c1": "2026. 10. 30."},
+    "rows": {},
+}
+
+
+def test_글로_채우면_서술형_칸은_묻지_않고_초안이_쓴다():
+    """실측: 옮겨 적기 요청이 본문을 빈 칸으로 두거나 글 전체를 그대로 넣었다."""
+    body = "캡스톤 디자인 회의를 열고 다과비 50,000원을 집행하고자 함."
+    llm = SeqLlm(EXTRACTED, {"text": body}, {"text": "회의 운영 70,000원"})
+    out = dr.prefill_with_drafts(기안(), PROMPT, llm, today=TODAY)
+    props = llm.requests[0].schema["properties"]
+    assert "content_body" not in props["fields"]["properties"]
+    assert "t0.r1.c1" not in props["cells"]["properties"]
+    # 초안은 채운 값을 입력값으로, 사용자의 글을 요청으로 받는다
+    assert "- 사업명: 캡스톤 디자인" in llm.requests[1].prompt
+    assert llm.requests[1].prompt.endswith(f"요청:\n{PROMPT}")
+    assert out.input["fields"]["content_body"] == body
+    assert out.input["cells"]["t0.r1.c1"] == "회의 운영 70,000원"
+    assert out.drafted == {"content_body": PROMPT, "t0.r1.c1": PROMPT}
+    assert [f.target.key for f in out.filled][-2:] == ["content_body", "t0.r1.c1"]
+    # 50,000원은 글에 있어 괜찮고, 70,000원은 어디에도 없다
+    assert [(i.code, i.location.id) for i in out.issues] == [(dr.DRAFT_UNCITED, "t0.r1.c1")]
+    assert out.elapsed == 1.5
+
+
+def test_초안_하나가_실패하면_그_칸만_비운다():
+    llm = SeqLlm(EXTRACTED, LlmError("시간 초과"), {"text": "회의 목적"})
+    out = dr.prefill_with_drafts(기안(), PROMPT, llm, today=TODAY)
+    assert "content_body" not in out.input["fields"]
+    assert out.input["cells"]["t0.r1.c1"] == "회의 목적"
+    assert out.drafted == {"t0.r1.c1": PROMPT}
+
+
+def test_서술형_칸만_있으면_글로_바로_초안을_쓴다():
+    s = FormSchema(title="기안", fields=[FieldSpec(name="content_body", type="")])
+    llm = SeqLlm({"text": "회의를 열고자 함."})
+    out = dr.prefill_with_drafts(s, "회의를 연다", llm, today=TODAY)
+    assert len(llm.requests) == 1 and llm.requests[0].prompt.endswith("요청:\n회의를 연다")
+    assert out.input["fields"] == {"content_body": "회의를 열고자 함."}
+
+
+def test_글로_채우기_API_는_초안_칸과_근거를_돌려준다(client):
+    [form] = client.get("/api/forms", params={"q": "사업 계획서"}).json()["items"]
+    doc = client.post("/api/documents", json={"form_id": form["id"]}).json()["id"]
+    prompt = "캡스톤 사업, 총 사업비 300,000원"
+    r = client.post(f"/api/documents/{doc}/prefill", json={"prompt": prompt})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["drafted"] == {"t0.r1.c1": prompt}
+    assert out["input"]["cells"]["t0.r1.c1"].startswith("캡스톤 사업의")
+    assert out["issues"] == []  # 300,000원은 글에 있다
+
+
+def test_행마다_적는_사유_칸은_초안을_쓰지_않고_옮겨_적는다():
+    """실측: 정산서 집행항목마다의 `증감 사유` 11칸에 지어낸 긴 글을 썼다."""
+    s = FormSchema(
+        title="정산서",
+        tables=[TableSpec(index=0, rows=3, cols=4)],
+        slots=[SlotSpec(table=0, row=0, col=1, label="추진 목적"),
+               SlotSpec(table=0, row=1, col=3, label="증감 사유"),
+               SlotSpec(table=0, row=2, col=3, label="증감 사유")],
+    )  # fmt: skip
+    extracted = {"fields": {}, "cells": {"t0.r1.c3": "강사 변경"}, "rows": {}}
+    llm = SeqLlm(extracted, {"text": "교육과정 개편을 위함."})
+    out = dr.prefill_with_drafts(s, "강사료는 강사 변경으로 줄었다", llm, today=TODAY)
+    asked = llm.requests[0].schema["properties"]["cells"]["properties"]
+    assert set(asked) == {"t0.r1.c3", "t0.r2.c3"}
+    assert len(llm.requests) == 2  # 초안은 추진 목적 하나
+    assert out.input["cells"] == {"t0.r1.c3": "강사 변경", "t0.r0.c1": "교육과정 개편을 위함."}
+    assert out.drafted == {"t0.r0.c1": "강사료는 강사 변경으로 줄었다"}
+    # 편집 화면의 [초안 쓰기] 는 그대로 쓸 수 있다
+    assert [t.key for t in dr.targets(s)] == ["t0.r0.c1", "t0.r1.c3", "t0.r2.c3"]
+
+
+def test_적지_않은_붙임은_경고한다():
+    """실측: 글에 없는 `붙임 : 개선 과제 운영 계획서 1부.` 를 지어냈다."""
+    text = "캡스톤 디자인 회의를 열고자 함.\n\n붙임 : 회의 계획서 1부.  끝."
+    out = dr.draft(기안(), RAW, "content_body", FakeLlm({"text": text}), today=TODAY)
+    assert "붙임" in out.issues[0].message
+    asked = dr.draft(기안(), RAW, "content_body", FakeLlm({"text": text}),
+                     instruction="회의 계획서를 첨부함", today=TODAY)  # fmt: skip
+    assert asked.issues == []
+
+
+def test_붙인_문서를_초안에_넘기고_붙임의_근거로_본다():
+    text = "캡스톤 디자인 회의를 열고자 함.\n\n붙임  사업 계획서 1부.  끝."
+    llm = FakeLlm({"text": text})
+    extra = dr.attachment_facts(["사업 계획서"])
+    out = dr.draft(기안(), RAW, "content_body", llm, today=TODAY, extra=extra)
+    assert "- 붙임 문서: 붙임 1. 사업 계획서 1부" in llm.requests[0].prompt
+    assert out.issues == []
+    assert dr.attachment_facts([]) == []

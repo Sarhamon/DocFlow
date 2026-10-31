@@ -12,10 +12,14 @@
    고쳐 쓰기 전의 글도 인용 근거로 인정한다.
 
 저장하지 않는다. 화면이 초안을 보여 주고 사용자가 채택·수정·재생성한다 (DR_06~08).
+
+자연어 일괄 입력은 서술형 칸을 묻지 않고, 채운 값과 사용자의 글로 이 초안을 이어서 쓴다
+(`prefill_with_drafts`). 글이 요청이자 인용 근거다.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -29,24 +33,38 @@ from docflow.service.prefill import (
     COUNT_RE,
     PRIVATE,
     ROSTER,
+    Filled,
+    Prefill,
     Source,
     counts_in,
     money_in,
+    narrative,
     plan,
+    prefill,
+    story_keys,
 )
 from docflow.validate import FormInput, Issue, Location, find_dates, item_amount
+
+log = logging.getLogger(__name__)
 
 DRAFT_UNCITED = "DRAFT_UNCITED"
 #: 입력값에서 채택한 초안 칸을 적어 두는 키. `_` 로 시작해 서식 입력으로는 읽히지 않는다
 DRAFTED = "_drafted"
 #: 추가 요청의 최대 길이
 MAX_INSTRUCTION = 1000
+#: 문서 아래쪽 연락처 누름틀. 본문 내용이 아니라 넘기지 않는다
+#: (실측: 넘기자 본문 끝에 `문의 : 031-441-0000 | 웹사이트 : …` 줄을 지어 붙였다)
+_CONTACT_FIELDS = frozenset(
+    {"zipcode", "address", "homeurl", "telephone", "fax", "email", "publication"}
+)
+#: 연락처 표 칸의 이름
+_CONTACT_LABEL_RE = re.compile(
+    r"전화|연락처|팩스|전송|FAX|전자우편|이메일|E-?mail|주소|우편번호|홈페이지", re.I
+)
+#: 붙임(첨부 문서)을 가리키는 말
+_ATTACHMENT_RE = re.compile(r"붙\s*임|첨\s*부")
 #: 서식 예시(형식 참고)를 넘기는 최대 길이
 _EXAMPLE_LIMIT = 600
-#: 서술형 칸의 이름
-_NARRATIVE_RE = re.compile(
-    r"본문|목적|배경|필요성|개요|기대\s*효과|추진\s*(?:계획|방법|내용)|사유|요약|성과|내용"
-)
 
 SYSTEM = """\
 너는 대학 산학협력단의 공문을 쓰는 담당자다. 주어진 입력값으로 서식의 한 칸에 들어갈 글을 쓴다.
@@ -56,6 +74,8 @@ SYSTEM = """\
   모르는 항목(예: 예산이 없으면 예산 줄)은 줄째 뺀다.
   '0,000,000원', '○○' 같은 빈칸 표시도 쓰지 않는다.
 - 서식 예시가 있으면 그 형식(번호 붙이기 등)을 따른다. 예시의 내용은 옮기지 않는다.
+- 붙임(첨부 문서)은 입력값이나 요청에 붙임·첨부가 있을 때만 쓴다.
+  없으면 붙임 줄과 '붙임 참조'를 뺀다.
 - 이 칸에 들어갈 글만 쓴다. 서식 제목, 문서번호, 연락처, '끝.' 은 쓰지 않는다.
 - 꾸밈말 없이 간결하게 쓴다.
 """
@@ -82,7 +102,7 @@ def targets(schema: FormSchema, variant: int | None = None) -> list[DraftTarget]
         DraftTarget(t.kind, t.key, t.label, examples.get(t.key, "").strip()[:_EXAMPLE_LIMIT],
                     t.location())  # fmt: skip
         for t in p.fields + p.cells
-        if t.input_type == "text" and (t.key == "content_body" or _NARRATIVE_RE.search(t.label))
+        if narrative(t)
     ]
 
 
@@ -99,12 +119,14 @@ def _one_line(text: str) -> str:
 
 
 def facts(schema: FormSchema, data: FormInput, exclude: str = "") -> list[Fact]:
-    """LLM 에 넘기는 입력값. exclude 칸(초안을 쓸 칸)은 뺀다."""
+    """LLM 에 넘기는 입력값. exclude 칸(초안을 쓸 칸)과 연락처 칸은 뺀다."""
     p = plan(schema, data.variant)
+    fields = [t for t in p.fields if t.key not in _CONTACT_FIELDS]
+    cells = [t for t in p.cells if not _CONTACT_LABEL_RE.search(t.label)]
     out = [
         Fact(t.key, t.label, _one_line(v))
-        for t, v in [(t, data.fields.get(t.key, "")) for t in p.fields]
-        + [(t, data.cells.get(t.key, "")) for t in p.cells]
+        for t, v in [(t, data.fields.get(t.key, "")) for t in fields]
+        + [(t, data.cells.get(t.key, "")) for t in cells]
         if t.key != exclude and v.strip()
     ]
     for rep in schema.repeats:
@@ -145,13 +167,17 @@ def facts(schema: FormSchema, data: FormInput, exclude: str = "") -> list[Fact]:
 # ---------------------------------------------------------------- 인용 검사 (DR_05, ED_05)
 def mismatches(text: str, source: list[Fact], today: date) -> list[str]:
     """글의 금액·인원·날짜 가운데 입력값에 없는 것 (보이는 모양으로)."""
-    src = Source.of("\n".join(f.value for f in source))
+    joined = "\n".join(f.value for f in source)
+    src = Source.of(joined)
     # 0원은 늘 경고한다: `0,000,000원` 은 모델이 남긴 빈칸 표시다(실측)
     missing = [f"{n:,}원" for n in sorted(money_in(text)) if n == 0 or n not in src.amounts]
     missing += [m.group().strip() for m in COUNT_RE.finditer(text)
                 if int(m.group(1).replace(",", "")) not in src.amounts]  # fmt: skip
     missing += [f"{d:%Y. %m. %d.}" for d in find_dates(text)
                 if d is not None and not src.has_date(d, today)]  # fmt: skip
+    # 붙임: 적지 않은 첨부 문서를 지어냈다(실측: `붙임 : 개선 과제 운영 계획서 1부.`)
+    if _ATTACHMENT_RE.search(text) and not _ATTACHMENT_RE.search(joined):
+        missing.append("붙임")
     return list(dict.fromkeys(missing))
 
 
@@ -182,6 +208,17 @@ def _basis_fact(basis: str) -> list[Fact]:
     return [Fact("_basis", "고쳐 쓰기 전의 글", basis)] if basis.strip() else []
 
 
+def attachment_facts(names: list[str]) -> list[Fact]:
+    """붙인 문서 (`service.attachments`).
+
+    초안이 붙임 줄을 맞게 쓰고, 인용 검사가 붙임을 근거로 본다.
+    """
+    if not names:
+        return []
+    listed = ", ".join(f"{i}. {name} 1부" for i, name in enumerate(names, 1))
+    return [Fact("_attachments", "붙임 문서", f"붙임 {listed}")]
+
+
 def drafted_of(raw: dict[str, Any]) -> dict[str, str]:
     """입력값의 `_drafted`: 칸 -> 근거. 예전 모양(칸 목록)도 읽는다."""
     drafted = raw.get(DRAFTED)
@@ -192,9 +229,18 @@ def drafted_of(raw: dict[str, Any]) -> dict[str, str]:
     return {}
 
 
-def check(schema: FormSchema, raw: dict[str, Any], data: FormInput,
-          today: date | None = None) -> list[Issue]:  # fmt: skip
-    """채택한 초안 칸(`_drafted`)이 입력값과 어긋나는가 (ED_05). LLM 을 부르지 않는다."""
+def check(
+    schema: FormSchema,
+    raw: dict[str, Any],
+    data: FormInput,
+    today: date | None = None,
+    *,
+    extra: list[Fact] | None = None,
+) -> list[Issue]:
+    """채택한 초안 칸(`_drafted`)이 입력값과 어긋나는가 (ED_05). LLM 을 부르지 않는다.
+
+    extra 는 입력값 밖의 근거(붙인 문서)다.
+    """
     drafted = drafted_of(raw)
     if not drafted:
         return []
@@ -204,7 +250,7 @@ def check(schema: FormSchema, raw: dict[str, Any], data: FormInput,
         if t.key not in drafted:
             continue
         text = (data.fields if t.kind == "field" else data.cells).get(t.key, "")
-        source = facts(schema, data, t.key) + _basis_fact(drafted[t.key])
+        source = facts(schema, data, t.key) + (extra or []) + _basis_fact(drafted[t.key])
         if text.strip() and (missing := mismatches(text, source, today)):
             issues.append(_issue(t, missing))
     return issues
@@ -257,18 +303,29 @@ def draft(
     instruction: str = "",
     retry: bool = False,
     today: date | None = None,
+    extra: list[Fact] | None = None,
 ) -> Draft:
-    """raw(저장하지 않은 입력값 포함)로 key 칸의 초안을 쓴다. LLM 을 못 쓰면 `LlmError`."""
+    """raw(저장하지 않은 입력값 포함)로 key 칸의 초안을 쓴다. LLM 을 못 쓰면 `LlmError`.
+
+    extra 는 입력값 밖의 근거(붙인 문서)다. LLM 에 입력값과 함께 넘긴다.
+    """
     if len(instruction) > MAX_INSTRUCTION:
         raise ValueError(f"요청은 {MAX_INSTRUCTION:,}자까지 적습니다")
-    today = today or date.today()
     data = parse_input(schema, raw).data
     t = next((x for x in targets(schema, data.variant) if x.key == key), None)
     if t is None:
         raise ValueError(f"{key} 은(는) 초안을 만드는 칸이 아닙니다")
-    source = facts(schema, data, key)
+    return _write(schema, data, t, client, instruction, retry, today or date.today(), extra)
+
+
+def _write(
+    schema: FormSchema, data: FormInput, t: DraftTarget, client: LlmClient,
+    instruction: str, retry: bool, today: date, extra: list[Fact] | None = None,
+) -> Draft:  # fmt: skip
+    key = t.key
+    source = facts(schema, data, key) + (extra or [])
     current = (data.fields if t.kind == "field" else data.cells).get(key, "")
-    if not source and not current.strip():
+    if not source and not current.strip() and not instruction.strip():
         raise ValueError("채운 칸이 없습니다. 사업명·기간·금액 같은 칸을 먼저 채우세요")
     request = build_request(schema, t, source, current, instruction, today, retry=retry)
     result = client.complete(request)
@@ -280,3 +337,44 @@ def draft(
     missing = mismatches(text, source + _basis_fact(basis), today)
     return Draft(t, text, cited(text, source), [_issue(t, missing)] if missing else [], basis,
                  result.model, result.elapsed)  # fmt: skip
+
+
+# ---------------------------------------------------------------- 글로 채우기 + 초안 (F2-c)
+def prefill_with_drafts(
+    schema: FormSchema,
+    text: str,
+    client: LlmClient,
+    *,
+    variant: Any = None,
+    today: date | None = None,
+    extra: list[Fact] | None = None,
+) -> Prefill:
+    """자연어 일괄 입력에 이어 서술형 칸마다 본문 초안을 쓴다. 사용자의 글이 요청이자 인용 근거다.
+
+    초안 하나가 실패하면 그 칸만 비워 둔다(편집 화면의 [초안 쓰기]로 다시 쓴다).
+    """
+    today = today or date.today()
+    out = prefill(schema, text, client, variant=variant, today=today)
+    raw: dict[str, Any] = {part: dict(out.input.get(part) or {}) for part in ("fields", "cells")}
+    raw["rows"] = out.input.get("rows") or {}
+    if variant is not None:
+        raw["variant"] = variant
+    data = parse_input(schema, raw).data
+    p = plan(schema, data.variant)
+    by_key = {x.key: x for x in p.fields + p.cells}
+    stories = story_keys(p)
+    for t in targets(schema, data.variant):
+        if t.key not in stories:
+            continue  # 행마다 적는 사유 칸은 일괄 입력이 옮겨 적었다
+        try:
+            d = _write(schema, data, t, client, text.strip(), False, today, extra)
+        except LlmError as exc:
+            log.warning("초안을 쓰지 못했다 (%s): %s", t.key, exc)
+            continue
+        out.input["fields" if t.kind == "field" else "cells"][t.key] = d.text
+        out.filled.append(Filled(by_key[t.key], d.text))
+        out.issues += d.issues
+        out.drafted[t.key] = d.basis
+        out.elapsed += d.elapsed
+        out.model = out.model or d.model
+    return out

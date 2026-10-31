@@ -131,7 +131,8 @@ def test_수직_슬라이스_서식을_끝까지_만든다(name, tmp_path):
     [
         ("교통비_지급_내역서", "t0.r2.c5", "2026.02.30", DATE_INVALID),
         ("정산서", "t0.r1.c1", "", REQUIRED_EMPTY),
-        ("일반기안문_1-03호", "docnumber", "", REQUIRED_EMPTY),
+        # 문서번호는 결재 시스템이 매겨 비어도 된다. 필수인 제목 칸을 비운다
+        ("일반기안문_1-03호", "t32.r4.c1", "", REQUIRED_EMPTY),
     ],
 )
 def test_일부러_넣은_오류는_만들기_전에_잡는다(name, where, value, code, tmp_path):

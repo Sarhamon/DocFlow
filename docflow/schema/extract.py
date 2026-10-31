@@ -72,6 +72,7 @@ def extract(
         found = find_repeats(layout)
         repeats.extend(found)
         slots.extend(find_slots(layout, found))
+    _name_nested_slots(slots, layouts)
     _type_formula_operands(formulas, layouts, slots, repeats)
 
     return FormSchema(
@@ -92,6 +93,25 @@ def extract(
         formulas=formulas,
         repeats=repeats,
     )
+
+
+def _name_nested_slots(slots: list[SlotSpec], layouts: list[_Layout]) -> None:
+    """이름 없는 칸이 중첩 표 안에 있으면 그 표를 담은 바깥 칸의 이름을 쓴다.
+
+    기안문 결재란은 `담당`·`PM 과장`·`처장` 칸 옆 칸에 `○○○` 하나짜리 표를 넣어 두었다.
+    표마다 따로 보면 이름이 없어 입력 화면에 설명 없는 `○○○` 칸으로 남았다(실측).
+    """
+    for s in slots:
+        host = layouts[s.table].table.host
+        if s.label or host is None:
+            continue
+        parent = layouts[host[0]]
+        cell = parent.cover.get((host[1], host[2]))
+        if cell is None:
+            continue
+        left, above = _label_cells(parent, cell)
+        if (label_cell := left or above) is not None:
+            s.label = _norm(label_cell.text)
 
 
 def _type_formula_operands(

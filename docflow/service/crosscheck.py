@@ -122,12 +122,17 @@ def sides_of(session: Session, doc: Document) -> list[Side]:
 
 
 def linked(session: Session, doc: Document, rule: CrossRule) -> Document | None:
-    """이 규칙에 이어 둔 상대 문서. 어느 쪽에서 이었든 찾는다."""
+    """이 규칙에 이어 둔 상대 문서. 어느 쪽에서 이었든 찾는다.
+
+    상대를 복제하면 연결이 둘이 된다(원본·복제본). 가장 나중에 이은 것(복제본)을 본다.
+    """
     link = session.scalar(
-        select(DocumentLink).where(
+        select(DocumentLink)
+        .where(
             DocumentLink.rule_id == rule.id,
             or_(DocumentLink.document_id == doc.id, DocumentLink.linked_id == doc.id),
         )
+        .order_by(DocumentLink.id.desc())
     )
     if link is None:
         return None
@@ -165,6 +170,20 @@ def link(session: Session, doc: Document, rule_id: int, other_id: int | None) ->
             raise ValueError("이을 수 없는 문서다 (내가 쓴 상대 서식 문서만 잇는다)")
         session.add(DocumentLink(document_id=doc.id, rule_id=rule_id, linked_id=other_id))
     session.commit()
+
+
+def copy_links(session: Session, src: Document, dst: Document) -> None:
+    """복제한 문서를 원본과 같은 상대 문서에 잇는다 (커밋은 부르는 쪽이 한다).
+
+    원본의 연결은 그대로 둔다(완료 문서의 이력). 상대 쪽에서는 나중에 이은 복제본을 본다.
+    """
+    for row in session.scalars(
+        select(DocumentLink).where(
+            or_(DocumentLink.document_id == src.id, DocumentLink.linked_id == src.id)
+        )
+    ):
+        other = row.linked_id if row.document_id == src.id else row.document_id
+        session.add(DocumentLink(document_id=dst.id, rule_id=row.rule_id, linked_id=other))
 
 
 def unlink_all(session: Session, doc: Document) -> None:

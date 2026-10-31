@@ -295,6 +295,20 @@ def test_누름틀을_이름별로_묶고_역할과_유형을_정한다(tmp_path
     }
 
 
+def test_중첩_표의_이름_없는_칸은_바깥_칸의_이름을_쓴다(tmp_path):
+    """실측: 기안문 결재란은 `담당`·`PM 과장` 옆 칸에 `○○○` 하나짜리 표를 넣었다.
+    표마다 따로 보면 이름이 없어 입력 화면에 설명 없는 칸으로 남았다."""
+    inner = tbl(1, 1, (0, 0, "○○○"))
+    outer = tbl(1, 4, (0, 0, "담당"), (0, 1, inner), (0, 2, "PM 과장"), (0, 3, inner))
+    s = schema_of(tmp_path, outer)
+    assert [t.depth for t in s.tables] == [0, 1, 1]
+    nested = [x for x in s.slots if x.table > 0]
+    assert [(x.table, x.label, x.placeholder) for x in nested] == [
+        (1, "담당", "○○○"),
+        (2, "PM 과장", "○○○"),
+    ]
+
+
 # ------------------------------------------------------------------ 변형
 def _기안문_변형(i: int) -> str:
     """본문 표 -> content_body -> 머리 표 -> docnumber -> 결재선 누름틀 -> 직인 표."""

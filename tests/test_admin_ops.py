@@ -241,6 +241,28 @@ def test_남의_문서는_이을_수_없고_지우면_연결도_사라진다(app
     assert user.put(url, json={"document_id": None}).status_code == 200
 
 
+def test_복제하면_연결_문서도_넘어가고_상대는_복제본을_본다(admin, user, pair):
+    plan_form, settle_form = pair
+    rule = admin.post("/api/admin/cross-rules", json=rule_body(pair)).json()
+    plan = new_doc(user, plan_form, "1,000,000")
+    settle = new_doc(user, settle_form, "1,200,000")
+    user.put(f"/api/documents/{settle}/links/{rule['id']}", json={"document_id": plan})
+    assert user.post(f"/api/documents/{settle}/generate", json={"formats": []}).status_code == 200
+
+    def linked(doc: int) -> int | None:
+        [link] = user.get(f"/api/documents/{doc}/links").json()
+        return link["linked"]["id"] if link["linked"] else None
+
+    copy = user.post(f"/api/documents/{settle}/copy").json()["id"]
+    assert linked(copy) == plan
+    assert len(cross(user, copy)) == 1  # 복제본도 바로 금액을 견준다
+    assert linked(plan) == copy  # 계획서 쪽에서는 나중에 이은 복제본을 본다
+    assert linked(settle) == plan  # 원본(완료 문서)의 연결은 그대로
+
+    assert user.delete(f"/api/documents/{copy}").status_code == 204
+    assert linked(plan) == settle  # 복제본을 지우면 원본으로 돌아간다
+
+
 def test_대조_규칙을_끄거나_지우면_보지_않는다(admin, user, pair):
     plan_form, settle_form = pair
     rule = admin.post("/api/admin/cross-rules", json=rule_body(pair)).json()
