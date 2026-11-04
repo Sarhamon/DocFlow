@@ -161,7 +161,8 @@
     const ul = $("issues");
     const shown = list.filter((i) => !severity || i.severity === severity);
     if (!list.length) {
-      ul.replaceChildren(h("li", { class: "msg ok", style: "cursor:default" }, note || "걸린 것이 없습니다."));
+      // 실시간 점검은 형식만 본다. 걸린 게 없다고 알리면 내용까지 맞다고 오해한다
+      ul.replaceChildren(...(note ? [h("li", { class: "msg ok", style: "cursor:default" }, note)] : []));
       return;
     }
     // 오류 목록 (ER_01~03): 항목, 사유, 조치, 이동 (ED_01)
@@ -189,7 +190,7 @@
   }
 
   function markCells() {
-    document.querySelectorAll(".cell-icon").forEach((x) => x.remove());
+    document.querySelectorAll(".cell-icon, .cell-msg").forEach((x) => x.remove());
     document.querySelectorAll(".has-issue, .has-warning").forEach((x) => x.classList.remove("has-issue", "has-warning"));
     for (const i of issues) {
       const el = cellOf(i.where);
@@ -199,6 +200,9 @@
       if (!box.querySelector(".cell-icon")) {
         box.append(h("span", { class: `cell-icon ${i.severity}`, title: `${i.message}\n${i.action || ""}` }, "!"));
       }
+      // 테두리만으로는 왜 걸렸는지 모른다: 사유와 조치를 칸 바로 아래에 쓴다
+      box.append(h("div", { class: `cell-msg ${i.severity}` }, i.message,
+        i.action ? h("div", { class: "action" }, `→ ${i.action}`) : null));
     }
   }
 
@@ -229,7 +233,10 @@
       const box = checkbox(where, value, placeholder, set);
       if (box) return box;
     }
-    const hint = placeholder ? placeholder.replace(/\s+/g, " ").trim() : (HINT[type] || "");
+    // 여러 줄 칸은 서식 예시의 줄바꿈을 그대로 보여 준다
+    const hint = placeholder
+      ? (multiline ? placeholder.trim() : placeholder.replace(/\s+/g, " ").trim())
+      : (HINT[type] || "");
     const attrs = {
       dataset: { where }, value: value || "", placeholder: hint, title: hint ? `예: ${hint}` : null,
       class: type === "amount" ? "amount" : "",
@@ -244,8 +251,41 @@
         scheduleCheck();
       },
     };
-    if (multiline) return h("textarea", { ...attrs, rows: 3 });
-    return h("input", attrs);
+    if (multiline) return h("textarea", { ...attrs, rows: Math.min(Math.max(hint.split("\n").length, 3), 10) });
+    const field = h("input", attrs);
+    return type === "date" ? withCalendar(field, placeholder, set) : field;
+  }
+
+  /** 날짜 칸 옆 달력 단추. 고른 날을 서식 형식(`2026.10.12`, 요일을 붙이는 서식이면 `(월)`)으로 쓴다. */
+  function withCalendar(field, placeholder, set) {
+    const weekday = /\d\s*\(/.test(placeholder || ""); // `2000.00.00(금)`
+    const pick = h("input", {
+      type: "date", class: "date-pick", tabindex: -1, "aria-hidden": "true",
+      onchange: (ev) => {
+        if (!ev.target.value) return;
+        const [y, m, d] = ev.target.value.split("-");
+        const day = "일월화수목금토"[new Date(Number(y), Number(m) - 1, Number(d)).getDay()];
+        const text = `${y}.${m}.${d}${weekday ? `(${day})` : ""}`;
+        field.value = text; set(text); changed(); scheduleCheck();
+      },
+    });
+    const open = () => {
+      const cur = field.value.match(/(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/);
+      pick.value = cur ? `${cur[1]}-${cur[2].padStart(2, "0")}-${cur[3].padStart(2, "0")}` : "";
+      try { pick.showPicker(); } catch { pick.click(); }
+    };
+    const btn = h("button", { type: "button", class: "date-btn", title: "달력에서 고르기", "aria-label": "달력에서 고르기", onclick: open }, "📅");
+    return h("span", { class: "date-wrap" }, field, pick, btn);
+  }
+
+  /** 관인 생략: 서식에는 글자(`관인생략`)로 들어가지만 사용자는 체크만 한다. */
+  function sealOmit(name) {
+    const cb = h("input", {
+      type: "checkbox", checked: !!(raw.fields[name] || "").trim(),
+      onchange: (ev) => { raw.fields[name] = ev.target.checked ? "관인생략" : ""; changed(); scheduleCheck(); },
+    });
+    return h("div", { class: "checks", dataset: { where: name } },
+      h("label", {}, cb, "관인 생략"), h("span", { class: "hint" }, "체크하면 서식에 '관인생략'이 들어갑니다"));
   }
 
   /** □가 붙은 선택지 칸 (`□현장견학 □현장체험 □기타( )`). 선택지가 없으면 null. */
@@ -284,7 +324,9 @@
       grid.append(
         h("div", { class: `lab${f.required ? " required" : ""}` }, f.label, f.label !== f.name ? h("div", { class: "hint" }, f.name) : null),
         h("div", { class: "input-wrap" },
-          input(f.name, f.input_type, raw.fields[f.name], f.placeholder, (v) => { raw.fields[f.name] = v; }, { multiline }),
+          f.name === "seal_omit"
+            ? sealOmit(f.name)
+            : input(f.name, f.input_type, raw.fields[f.name], f.placeholder, (v) => { raw.fields[f.name] = v; }, { multiline }),
           draftButton(f.name),
           f.placeholder && f.required ? h("div", { class: "hint" }, `서식 예시: ${f.placeholder.split("\n")[0].slice(0, 80)}`) : null),
       );
@@ -829,7 +871,7 @@
     const errors = r.issues.filter((i) => i.severity === "error").length;
     const notes = [...liveNotes(), ...reviewIssues()];
     const warns = r.issues.length + notes.length;
-    const note = errors ? `오류 ${errors}건을 고쳐야 문서를 만들 수 있습니다.` : warns ? `오류는 없고 경고 ${warns}건이 있습니다. 확인 후 만들 수 있습니다.` : "검증을 통과했습니다. 문서를 만들 수 있습니다.";
+    const note = errors ? `오류 ${errors}건을 고쳐야 문서를 만들 수 있습니다.` : warns ? `오류는 없고 경고 ${warns}건이 있습니다. 확인 후 만들 수 있습니다.` : "필수 항목·형식 검사에서 오류가 없습니다. 내용이 맞는지 직접 확인한 뒤 문서를 만드세요.";
     showIssues([...r.issues, ...notes], note);
     return r;
   }

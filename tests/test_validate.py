@@ -25,6 +25,7 @@ from docflow.validate import (
     AMOUNT_TOTAL_MISMATCH,
     DATE_INVALID,
     DATE_ORDER,
+    EXAMPLE_LEFT,
     FILL_LEFT,
     REQUIRED_EMPTY,
     ROW_DUPLICATE,
@@ -437,9 +438,11 @@ def test_없는_자리를_가리키면_KeyError():
 def test_서식에_적용되는_규칙을_알려준다():
     assert applicable_rules(교통비()) == {
         REQUIRED_EMPTY, DATE_INVALID, DATE_ORDER, AMOUNT_TOTAL_MISMATCH, AMOUNT_INVALID,
-        ROW_DUPLICATE, FILL_LEFT,
+        ROW_DUPLICATE, FILL_LEFT, EXAMPLE_LEFT,
     }  # fmt: skip
-    assert applicable_rules(정산서()) == {REQUIRED_EMPTY, AMOUNT_TOTAL_MISMATCH, FILL_LEFT}
+    assert applicable_rules(정산서()) == {
+        REQUIRED_EMPTY, AMOUNT_TOTAL_MISMATCH, FILL_LEFT, EXAMPLE_LEFT,
+    }  # fmt: skip
 
 
 # ------------------------------------------------------------------ 금액 형식 (IN_15)

@@ -52,9 +52,11 @@ ACCOUNT_INVALID = "ACCOUNT_INVALID"
 RRN_INVALID = "RRN_INVALID"
 HOLDER_MISMATCH = "HOLDER_MISMATCH"
 FILL_LEFT = "FILL_LEFT"
+EXAMPLE_LEFT = "EXAMPLE_LEFT"
+CONTACT_INVALID = "CONTACT_INVALID"
 RULES = (
     REQUIRED_EMPTY, AMOUNT_TOTAL_MISMATCH, DATE_INVALID, DATE_ORDER, AMOUNT_INVALID, ROW_DUPLICATE,
-    ACCOUNT_INVALID, RRN_INVALID, HOLDER_MISMATCH, FILL_LEFT,
+    ACCOUNT_INVALID, RRN_INVALID, HOLDER_MISMATCH, FILL_LEFT, EXAMPLE_LEFT, CONTACT_INVALID,
 )  # fmt: skip
 #: 관리자 화면의 규칙 이름과 설명 (AD_15)
 RULE_INFO: dict[str, tuple[str, str]] = {
@@ -68,12 +70,15 @@ RULE_INFO: dict[str, tuple[str, str]] = {
     RRN_INVALID: ("주민등록번호 형식", "생년월일 6자리-성별 자리-6자리 모양인가 (경고)"),
     HOLDER_MISMATCH: ("예금주·성명", "명단에서 예금주와 성명이 같은가 (경고)"),
     FILL_LEFT: ("남은 자리표시자", "제출 문장의 날짜·이름 등 채우지 않은 자리가 남았는가 (경고)"),
+    EXAMPLE_LEFT: ("서식 예시 그대로", "칸 값이 서식 예시(0,000,000원 등)와 똑같은가 (경고)"),
+    CONTACT_INVALID: ("연락처·이메일 형식",
+                      "전화·팩스·연락처 칸이 전화번호, 전자우편 칸이 이메일 모양인가 (경고)"),
 }
 #: 설정이 따로 주지 않을 때의 심각도. 형식·중복은 입력을 막지 않는 경고다 (명세 F3)
 DEFAULT_SEVERITY: dict[str, Severity] = {
     code: "warning"
     for code in (AMOUNT_INVALID, ROW_DUPLICATE, ACCOUNT_INVALID, RRN_INVALID, HOLDER_MISMATCH,
-                 FILL_LEFT)  # fmt: skip
+                 FILL_LEFT, EXAMPLE_LEFT, CONTACT_INVALID)  # fmt: skip
 }
 #: 중복을 보는 명단 열 (학번). 같은 이름은 동명이인이 있어 보지 않는다
 _DUPLICATE_COLUMN_RE = re.compile(r"학번")
@@ -435,7 +440,87 @@ def _fill_left(t: _Target, value: str) -> list[tuple[str, str, str]]:
              "○ 나 00 으로 된 날짜·이름 자리를 실제 값으로 고치세요")]  # fmt: skip
 
 
-_CELL_RULES = (_required, _date, _amount, _identity, _fill_left)
+def _bare(text: str) -> str:
+    """예시와 견줄 모양: 공백을 빼고 끝의 '원'을 뗀다 (`0,000,000 원` = `0,000,000`)."""
+    return re.sub(r"\s", "", text).removesuffix("원")
+
+
+#: 누가 봐도 가짜인 예시: ○·OOO·ㅇㅇ·홍길동, 또는 0 이 네 개 이상 이어진 자리(`031-441-0000`)
+_DUMMY_RE = re.compile(r"[○◯〇●]|[OＯ]{3,}|[ㅇㆍ]{2,}|홍\s*길\s*[동서남북]|0{4,}")
+
+
+def is_dummy_example(text: str) -> bool:
+    """예시가 실제로 쓸 리 없는 값인가. `1,000,000` 처럼 그럴듯한 예시는 사용자가 정말 그 값을
+    적을 수 있어 아니다. 숫자가 모두 0(`0,000,000원`, `00명`)이면 가짜다."""
+    digits = re.sub(r"\D", "", text)
+    return bool(_DUMMY_RE.search(text)) or (bool(digits) and set(digits) == {"0"})
+
+
+def _example_left(t: _Target, value: str) -> list[tuple[str, str, str]]:
+    """칸 값이 서식 예시와 똑같은가. `0,000,000원` 은 금액 모양이라 금액 규칙을 통과한다.
+
+    예시가 가짜 값일 때만 본다: 주소·누리집처럼 학교 값이 박힌 누름틀이나 `1,000,000` 같은
+    그럴듯한 예시는 그대로 적는 게 정상일 수 있다.
+    날짜(`2000.00.00`)는 날짜 규칙이, ○ 가 남은 값은 FILL_LEFT 가 이미 잡는다.
+    """
+    raw = _one_line(value)
+    if not raw or t.input_type in ("date", "checkbox") or not is_dummy_example(t.placeholder):
+        return []
+    if has_fill_marks(raw) or _bare(raw) != _bare(t.placeholder):
+        return []
+    return [(EXAMPLE_LEFT, f"'{t.name}' 이(가) 서식 예시 그대로입니다: {raw}",
+             "예시를 실제 값으로 바꾸세요.")]  # fmt: skip
+
+
+#: 전화·팩스 번호 하나: 숫자·하이픈·괄호·공백·+ 만, 숫자 8~12자리 (`1588-0000` ~ `+82-10-…`)
+_PHONE_RE = re.compile(r"^[\d\s\-().+]+$")
+_PHONE_DIGITS = range(8, 13)
+#: `(내선 123)` 은 번호 뒤에 붙여 쓴다
+_EXTENSION_RE = re.compile(r"\(?\s*내선\s*\d+\s*\)?")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s.]+$")
+#: 연락처를 여러 개 적을 때 나누는 기호
+_CONTACT_SPLIT_RE = re.compile(r"\s*[,·]\s*")
+_EMAIL_LABEL_RE = re.compile(r"이메일|전자우편|e-?mail", re.IGNORECASE)
+_FAX_LABEL_RE = re.compile(r"팩스|fax", re.IGNORECASE)
+#: 기안문의 연락처 누름틀
+_PHONE_FIELDS = frozenset({"telephone", "fax"})
+
+
+def contact_kind(label: str, input_type: str, field: str = "") -> str | None:
+    """전화(phone)·이메일(email) 칸인가. 누름틀은 이름(field)으로, 표 칸·명단 열은 항목명으로."""
+    if input_type != "text":
+        return None
+    if field == "email" or _EMAIL_LABEL_RE.search(label):
+        return "email"
+    if field in _PHONE_FIELDS or _FAX_LABEL_RE.search(label) or column_concept(label) == "phone":
+        return "phone"
+    return None
+
+
+def _contact_kind(t: _Target) -> str | None:
+    return contact_kind(t.name, t.input_type, t.location.key if t.location.kind == "field" else "")
+
+
+def _contact(t: _Target, value: str) -> list[tuple[str, str, str]]:
+    """전화번호·이메일 모양. 회신을 못 받는 일을 막으려고 본다 (경고). 여러 개면 하나씩 본다."""
+    raw = _one_line(value)
+    kind = _contact_kind(t)
+    if not raw or kind is None:
+        return []
+    parts = [p for p in _CONTACT_SPLIT_RE.split(raw) if p]
+    if kind == "email":
+        if all(_EMAIL_RE.match(p) for p in parts):
+            return []
+        return [(CONTACT_INVALID, f"'{t.name}' 이(가) 이메일 모양이 아닙니다: {raw}",
+                 "name@yeonsung.ac.kr 처럼 @ 와 도메인까지 적으세요.")]  # fmt: skip
+    numbers = [_EXTENSION_RE.sub("", p).strip() for p in parts]
+    if all(_PHONE_RE.match(n) and len(re.sub(r"\D", "", n)) in _PHONE_DIGITS for n in numbers):
+        return []
+    return [(CONTACT_INVALID, f"'{t.name}' 이(가) 전화번호 모양이 아닙니다: {raw}",
+             "031-441-1234 처럼 숫자와 하이픈으로 적으세요.")]  # fmt: skip
+
+
+_CELL_RULES = (_required, _date, _amount, _identity, _fill_left, _example_left, _contact)
 
 
 def _severity(config: RuleConfig, code: str) -> Severity:
@@ -688,6 +773,10 @@ def applicable_rules(schema: FormSchema, config: ValidationConfig = DEFAULT_CONF
             found.add(ACCOUNT_INVALID if kind == "account" else RRN_INVALID)
         if t.input_type != "checkbox":
             found.add(FILL_LEFT)
+        if t.input_type not in ("date", "checkbox") and is_dummy_example(t.placeholder):
+            found.add(EXAMPLE_LEFT)
+        if _contact_kind(t):
+            found.add(CONTACT_INVALID)
     if any(s.role == "input" and is_total_text(s.label) for s in schema.slots):
         found.add(AMOUNT_TOTAL_MISMATCH)
     if any(_duplicate_columns(r) for r in schema.repeats):

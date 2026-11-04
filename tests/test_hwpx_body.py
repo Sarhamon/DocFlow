@@ -38,6 +38,13 @@ def body_doc(tmp_path):
 
 
 # ------------------------------------------------------------ 여러 문단 누름틀
+def test_여러_문단_누름틀의_값은_문단마다_줄을_나눠_읽는다(body_doc):
+    [field] = [f for f in body_doc.fields() if f.name == "content_body"]
+    assert field.value.split("\n") == [
+        "1. 관련", "  가. 20○○년도 사업계획서", "  나. 장 소 : 강의실", "", "붙임 1부.  끝."
+    ]  # fmt: skip
+
+
 def test_줄마다_문단_하나로_쓴다(body_doc):
     body_doc.fill_text("content_body", "1. 목적\n  가. 첫째\n  나. 둘째\n붙임 계획서 1부.  끝.")
     assert top_texts(body_doc) == [
@@ -73,7 +80,7 @@ def test_누름틀_짝과_이름은_그대로다(body_doc, tmp_path):
     again = reopen(body_doc, tmp_path)
     [field] = again.fields()
     assert field.name == "content_body"
-    assert field.value == "가나다"  # 문단을 넘는 값은 이어 붙여 읽힌다
+    assert field.value == "가\n나\n다"  # 문단을 넘는 값은 문단마다 줄을 나눠 읽힌다
     assert top_texts(again)[1:4] == ["가", "나", "다결재란"]
 
 

@@ -129,6 +129,17 @@ def test_키워드와_사업으로_찾는다(session):
     assert catalog.search_forms(session, q="없는서식") == ([], 0)
 
 
+def test_서식_번호로_찾으면_그_번호만_나온다(session):
+    # 묶음 파일 이름(`7-01~10`)이 경로에 있어도 다른 번호의 서식은 걸리지 않는다
+    other = session.get(Form, form_id(session, "교통비 지급 내역서"))
+    other.key = "AID/7-01~10.hwpx#7-02호"
+    other.form_no = "7-02"
+    session.commit()
+    for q in ("7-01", "7-1", "7-01호"):
+        items, _ = catalog.search_forms(session, q=q)
+        assert [f.title for f in items] == ["회의계획서"], q
+
+
 def test_비공개_서식은_보이지_않는다(session):
     form = session.get(Form, form_id(session, "회의계획서"))
     form.public = False
@@ -234,7 +245,9 @@ def test_만들면_산출물을_저장하고_완료된다(env, session):
     event = svc.history(doc.id)[-1]
     assert (event.kind, event.note) == ("generated", "1판")
     # 줄인 교통비 서식에는 날짜 칸이 없다. 입금액 열이 금액이라 금액 형식 규칙이 붙는다
-    assert json.loads(event.rules_json) == ["AMOUNT_INVALID", "FILL_LEFT", "REQUIRED_EMPTY"]
+    assert json.loads(event.rules_json) == [
+        "AMOUNT_INVALID", "EXAMPLE_LEFT", "FILL_LEFT", "REQUIRED_EMPTY"
+    ]  # fmt: skip
     assert json.loads(event.input_json) == fx.traffic_input()
 
 

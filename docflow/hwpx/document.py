@@ -203,14 +203,16 @@ class HwpxDocument:
         found: list[Field] = []
         seen: dict[str, int] = {}
         for section in self.section_names:
-            for name, ftype, texts in _walk_fields(self._root(section)):
+            root = self._root(section)
+            parents = {child: p for p in root.iter() for child in p}
+            for name, ftype, texts in _walk_fields(root):
                 occurrence = seen.get(name, 0)
                 seen[name] = occurrence + 1
                 found.append(
                     Field(
                         name=name,
                         type=ftype,
-                        value="".join(t.text or "" for t in texts),
+                        value=_joined_by_paragraph(texts, parents),
                         section=section,
                         occurrence=occurrence,
                     )
@@ -772,6 +774,26 @@ def _replace_in_nodes(nodes: list[ET.Element], replacements: dict[str, str]) -> 
             count += 1
             start = i + len(new)
     return count
+
+
+def _joined_by_paragraph(texts: list[ET.Element], parents: dict[ET.Element, ET.Element]) -> str:
+    """누름틀의 글자들. 여러 문단에 걸쳐 있으면 문단마다 줄을 나눈다 (빈 문단은 빈 줄)."""
+    if not texts:
+        return ""
+    paras = [_paragraph_of(t, parents) for t in texts]
+    first = paras[0]
+    last = paras[-1]
+    if first is last:
+        return "".join(t.text or "" for t in texts)
+    # 글자가 없는 사이 문단도 줄로 친다: 텍스트 노드만 보면 빈 문단이 사라진다
+    container = parents[first]
+    siblings = list(container)
+    span = siblings[siblings.index(first) : siblings.index(last) + 1] if last in siblings else []
+    by_para: dict[ET.Element, list[str]] = {p: [] for p in span}
+    for t, p in zip(texts, paras, strict=True):
+        by_para.setdefault(p, []).append(t.text or "")
+    # 앞뒤 빈 문단은 뺀다: fill() 로 쓰면 첫 문단에 모이고 나머지 문단은 비어 남는다
+    return "\n".join("".join(parts) for parts in by_para.values()).strip("\n")
 
 
 def _paragraph_of(el: ET.Element, parents: dict[ET.Element, ET.Element]) -> ET.Element:

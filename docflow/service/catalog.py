@@ -31,6 +31,17 @@ from docflow.service.db import Document, Form, FormItem, FormVersion
 from docflow.service.storage import FileStore
 
 SORTS = ("form", "title", "recent")
+#: 서식 번호 모양의 검색어 (`1-01`, `1-1`, `1-01호`)
+_FORM_NO_RE = re.compile(r"^(\d+)-(\d+)호?$")
+
+
+def form_no_query(word: str) -> str | None:
+    """검색어가 서식 번호 모양이면 저장된 형태(`1-01`)로, 아니면 None.
+
+    번호는 정확히 맞춰야 한다. 부분 일치면 `1-01` 이 묶음 파일 경로(`1-01~10`)나 `11-01` 에 걸린다.
+    """
+    m = _FORM_NO_RE.match(word)
+    return f"{m[1]}-{int(m[2]):02d}" if m else None
 
 
 class NotFound(LookupError):
@@ -494,6 +505,9 @@ def search_forms(
     if archived is not None:
         query = query.where(Form.archived.is_(archived))
     for word in (q or "").split():
+        if no := form_no_query(word):
+            query = query.where(Form.form_no == no)
+            continue
         like = f"%{word}%"
         # 경로(key)도 본다: 묶음에서 떼어 낸 서식을 원래 파일 이름(`일반기안문(샘플)`)으로 찾는다
         query = query.where(

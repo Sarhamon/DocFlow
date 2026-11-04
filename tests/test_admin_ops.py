@@ -68,6 +68,14 @@ def test_문서_목록은_작성자와_마지막_검증만_주고_입력값은_�
     assert data["counts"] == {"total": 1, "draft": 1, "completed": 0}
 
 
+def test_문서_목록을_서식_번호로_찾으면_그_서식의_문서만_나온다(admin, user):
+    doc = traffic_doc(user)  # 5-05 교통비
+    [form] = user.get("/api/forms", params={"q": "회의계획서"}).json()["items"]
+    user.post("/api/documents", json={"form_id": form["id"], "title": "5-05 회의 건"})  # 7-01
+    found = admin.get("/api/admin/documents", params={"q": "5-5"}).json()["items"]
+    assert [r["id"] for r in found] == [doc]
+
+
 def test_문서_열람은_사유가_있어야_하고_감사_로그에_남는다(admin, user):
     doc = traffic_doc(user, {"cells": {"t0.r0.c1": "컴퓨터과"}})
     url = f"/api/admin/documents/{doc}/open"

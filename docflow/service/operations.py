@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from docflow.service.catalog import form_no_query
 from docflow.service.db import Document, DocumentEvent, Form, FormVersion, LoginHistory, User, now
 from docflow.validate import RULE_INFO
 
@@ -55,6 +56,9 @@ def documents(
     if form_id is not None:
         query = query.where(Form.id == form_id)
     for word in (q or "").split():
+        if no := form_no_query(word):
+            query = query.where(Form.form_no == no)
+            continue
         like = f"%{word}%"
         query = query.where(
             or_(Document.title.like(like), Form.title.like(like), Form.form_no.like(like),

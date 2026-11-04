@@ -224,6 +224,16 @@ table.form tr.over td { background: var(--warn-soft); }
 .cell-icon.error { background: var(--danger); color: #fff; }
 .cell-icon.warning { background: var(--warn); color: #fff; }
 .input-wrap { position: relative; }
+.cell-msg { font-size: 12px; line-height: 1.4; padding: 2px 6px 4px; text-align: left; white-space: normal; }
+.cell-msg.error { color: var(--danger); }
+.cell-msg.warning { color: var(--warn); }
+.cell-msg .action { color: var(--muted); }
+
+/* 날짜 칸 달력 */
+.date-wrap { position: relative; display: flex; align-items: center; }
+.date-wrap > input:first-child { flex: 1; min-width: 0; }
+.date-pick { position: absolute; right: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.date-btn { border: 0; background: transparent; padding: 0 4px; min-height: 0; cursor: pointer; font-size: 14px; }
 
 /* 체크박스 칸 */
 .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px; }

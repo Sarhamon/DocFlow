@@ -151,6 +151,11 @@ def _norm(text: str) -> str:
     return " ".join(text.split())
 
 
+def _norm_lines(text: str) -> str:
+    """여러 문단 누름틀의 예시: 줄은 살리고 줄 안의 공백만 줄인다. 빈 줄은 뺀다."""
+    return "\n".join(line for line in map(_norm, text.split("\n")) if line)
+
+
 class _Layout:
     """표 하나의 칸 배치. 병합을 고려해 (행, 열) 을 덮는 칸을 찾는다."""
 
@@ -508,11 +513,11 @@ def find_fields(doc: HwpxDocument) -> list[FieldSpec]:
             continue  # 수식은 formulas 로
         spec = grouped.get(f.name)
         if spec is None:
-            grouped[f.name] = FieldSpec(name=f.name, type=f.type, placeholder=_norm(f.value))
+            grouped[f.name] = FieldSpec(name=f.name, type=f.type, placeholder=_norm_lines(f.value))
         else:
             spec.occurrences += 1
             if not spec.placeholder:
-                spec.placeholder = _norm(f.value)
+                spec.placeholder = _norm_lines(f.value)
     for spec in grouped.values():
         if is_approval_field(spec.name):
             spec.role = "approval"

@@ -21,14 +21,17 @@ from docflow.validate import (
     ACCOUNT_INVALID,
     AMOUNT_INVALID,
     AMOUNT_TOTAL_MISMATCH,
+    CONTACT_INVALID,
     DATE_INVALID,
     DATE_ORDER,
+    EXAMPLE_LEFT,
     FILL_LEFT,
     REQUIRED_EMPTY,
     ROW_DUPLICATE,
     RRN_INVALID,
     FormInput,
     applicable_rules,
+    contact_kind,
     validate,
 )
 from tools.extract_schema import extract_file, is_form
@@ -52,6 +55,11 @@ EXPECTED_APPLICABLE = {
     RRN_INVALID: 12,
     # 2026-10-27: 글 칸이 하나라도 있으면 남은 자리표시자를 본다 (체크박스 칸만 있는 1개 제외)
     FILL_LEFT: 182,
+    # 2026-11-04: 예시가 가짜 값(○·0000·모두 0)인 글·금액·숫자 칸이 있으면 예시 그대로를 본다.
+    # `1,000,000` 같은 그럴듯한 예시는 빼서 154 다.
+    # 연락처는 기안문 누름틀(전화·팩스·전자우편)·`전화` 칸·명단 `연락처` 열이다
+    EXAMPLE_LEFT: 154,
+    CONTACT_INVALID: 18,
 }
 
 #: 입력 유형별 올바른 값
@@ -73,10 +81,12 @@ def schemas() -> dict[str, FormSchema]:
     return {str(f.relative_to(settings.templates)): extract_file(f, settings) for f in files}
 
 
-def identity_value(label: str, input_type: str) -> str:
-    """계좌번호·주민등록번호 칸에는 그 모양의 값을, 나머지는 유형대로."""
+def identity_value(label: str, input_type: str, field: str = "") -> str:
+    """계좌번호·주민등록번호·연락처·이메일 칸에는 그 모양의 값을, 나머지는 유형대로."""
     kind = column_concept(label) if input_type == "text" else None
-    return {"account": "123-456-789012", "rrn": "900101-1234567"}.get(kind, VALID[input_type])
+    kind = contact_kind(label, input_type, field) or kind
+    return {"account": "123-456-789012", "rrn": "900101-1234567", "phone": "031-441-1234",
+            "email": "kim@yeonsung.ac.kr"}.get(kind, VALID[input_type])  # fmt: skip
 
 
 def valid_input(schema: FormSchema) -> FormInput:
@@ -89,7 +99,7 @@ def valid_input(schema: FormSchema) -> FormInput:
     data = FormInput()
     for f in schema.fields:
         if f.role == "input":
-            data.fields[f.name] = VALID[f.input_type]
+            data.fields[f.name] = identity_value(f.label or f.name, f.input_type, f.name)
     inputs = [s for s in schema.slots if s.role == "input"]
     totals = [s for s in inputs if is_total_text(s.label)]
     for s in inputs:

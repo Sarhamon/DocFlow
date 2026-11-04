@@ -20,7 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6  # 6: 여러 문단 누름틀의 예시를 문단마다 줄을 나눠 담는다
 
 #: 서식 번호가 붙은 변형 이름 (`1-02호`)
 _NUMBERED_RE = re.compile(r"^\d+-\d+호$")
