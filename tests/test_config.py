@@ -60,6 +60,18 @@ def test_환경변수가_없으면_저장소_루트를_쓴다(monkeypatch):
     assert (s.root / "docflow").is_dir()
 
 
+def test_DB주소는_기본으로_data_아래_SQLite다(tmp_path, monkeypatch):
+    monkeypatch.delenv("DOCFLOW_DATABASE_URL", raising=False)
+    s = make(tmp_path)
+    assert s.database_url == f"sqlite:///{(tmp_path.resolve() / 'data' / 'docflow.db').as_posix()}"
+
+
+def test_DB주소는_환경변수가_우선한다(tmp_path, monkeypatch):
+    url = "postgresql+psycopg://docflow:pw@db.example:5432/docflow"
+    monkeypatch.setenv("DOCFLOW_DATABASE_URL", url)
+    assert make(tmp_path).database_url == url
+
+
 def test_로그레벨을_문자열로_지정한다():
     setup_logging("debug")
     assert logging.getLogger().level == logging.DEBUG

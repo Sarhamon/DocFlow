@@ -45,7 +45,9 @@ class Settings:
 
     @property
     def database_url(self) -> str:
-        return f"sqlite:///{(self.data / 'docflow.db').as_posix()}"
+        """DB 주소. 환경변수 DOCFLOW_DATABASE_URL 이 우선한다 (RDS 등). 없으면 data/ 아래 SQLite."""
+        override = os.environ.get("DOCFLOW_DATABASE_URL")
+        return override or f"sqlite:///{(self.data / 'docflow.db').as_posix()}"
 
     def mirror(self, src: Path, *, kind: str) -> Path:
         """forms/ 아래 원본 경로를 templates/ 또는 schemas/ 의 같은 경로로 옮긴다.
