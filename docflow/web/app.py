@@ -60,7 +60,7 @@ from docflow.service.documents import (
     ValidationFailed,
     issue_dict,
 )
-from docflow.service.storage import FileStore, LocalFileStore
+from docflow.service.storage import FileStore, open_store
 from docflow.validate import field_required
 from docflow.web import admin_api, admin_ops, pages
 from docflow.web.files import download_response, hwpx_upload
@@ -273,7 +273,7 @@ def create_app(
     settings.data.mkdir(parents=True, exist_ok=True)
     crypto.use(crypto.Cipher(crypto.load_key(settings)))
     sessions: sessionmaker = connect(database_url or settings.database_url)
-    store = store or LocalFileStore(settings.data / "files")
+    store = store or open_store(settings)
     if converter == "auto":
         from docflow.adapters.hancom import HancomConverter, available
 

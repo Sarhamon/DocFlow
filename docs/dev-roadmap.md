@@ -282,7 +282,17 @@ M10 의 LLM 부분(자연어 일괄 입력·본문 초안·정성 판정)은 GPU
   (산출은 HWPX 다운로드, 서식 등록·명단 가져오기는 `.hwpx` 업로드). Windows 인스턴스가 필요 없다.
 - **완료**: 로컬과 동일한 시나리오가 AWS에서 한컴 변환 없이(HWPX 만) 통과한다.
   → 진행 중 (2026-11-08 기준). LLM(EXAONE 3.5)을 EC2(GPU)에 배포 완료.
-  남은 것: 웹 앱 컨테이너화(ECR·Fargate), DB 이전(RDS PostgreSQL), 파일 저장 이전(S3).
+  - DB: `DOCFLOW_DATABASE_URL` 로 주소를 바꾼다(없으면 `data/docflow.db`). Alembic 도입(`docflow/migrations`) —
+    0001 기준점(M11 까지의 표), 0002 `documents.owner_id` 외래 키. 앱이 시작할 때 head 로 올리고,
+    Alembic 도입 전 DB 는 기준점으로 표시한 뒤 올린다. 테스트 전체가 PostgreSQL 16 에서도 통과
+    (`DOCFLOW_TEST_DATABASE_URL`, 713개).
+  - 아직: `documents.owner_id` NOT NULL, `document_events.actor_id` — 서비스가 owner_id=None 을
+    "모든 문서"로 쓰고 있어 마이그레이션만으로는 안 된다(M7 에서 미룬 것).
+  - 파일: `DOCFLOW_S3_BUCKET`(+ `DOCFLOW_S3_PREFIX`)를 주면 S3 (`S3FileStore`), 없으면 `data/files`.
+    읽을 때는 `data/s3-cache` 에 ETag 별로 내려받는다. 앱과 `tools/sync_forms.py` 가 같은 저장소를 고른다
+    (`open_store`). 저장소 약속과 문서 서비스 흐름을 S3(moto)에서도 테스트한다.
+  남은 것: 웹 앱 컨테이너화(ECR·Fargate), RDS·S3 연결, 서식 적재(`tools/sync_forms.py`)·
+  루트 계정(`tools/manage_users.py`) — 목표는 주소에 들어가 로그인만 하면 쓰는 상태.
 
 ---
 

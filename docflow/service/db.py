@@ -1,4 +1,7 @@
-"""서비스 DB 모델 (SQLAlchemy). 지금은 SQLite, 클라우드로 옮길 때(M12) RDS 로 바꾼다.
+"""서비스 DB 모델 (SQLAlchemy).
+
+로컬은 SQLite, 클라우드(M12)는 RDS PostgreSQL (DOCFLOW_DATABASE_URL). 표를 바꾸면
+마이그레이션을 같이 만든다: `alembic revision --autogenerate -m "…"` (docflow/migrations).
 
 * 서식(forms)과 서식 버전(form_versions): 템플릿이 바뀌면 새 버전을 쌓는다. 버전마다 템플릿
   파일과 스키마를 따로 보관해서, 이미 쓴 문서는 작성 당시 버전으로 계속 만들 수 있다.
@@ -20,7 +23,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint, create_engine, event
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import (
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    event,
+    inspect,
+)
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.types import TypeDecorator
@@ -231,7 +245,9 @@ class Document(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     #: 작성자 계정. 로그인(M7) 전에는 비어 있다
-    owner_id: Mapped[int | None] = mapped_column(default=None, index=True)
+    owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", name="fk_documents_owner_id_users"), default=None, index=True
+    )
     form_version_id: Mapped[int] = mapped_column(ForeignKey("form_versions.id"))
     title: Mapped[str] = mapped_column(String(300))
     #: draft 작성 중 / completed 산출물을 만들었다
@@ -359,15 +375,48 @@ class LoginHistory(Base):
 
 
 def connect(url: str) -> sessionmaker:
-    """DB 에 연결하고 표를 만든다. 세션 팩토리를 돌려준다."""
+    """DB 에 연결하고 스키마를 최신(Alembic head)으로 맞춘다. 세션 팩토리를 돌려준다."""
     sqlite = url.startswith("sqlite")
     if sqlite and (path := make_url(url).database) and path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(url, connect_args={"check_same_thread": False} if sqlite else {})
     if sqlite:
         event.listen(engine, "connect", _sqlite_pragmas)
-    Base.metadata.create_all(engine)
+    if sqlite and make_url(url).database in (None, "", ":memory:"):
+        Base.metadata.create_all(engine)  # 메모리 DB 는 연결마다 새 DB 라 마이그레이션할 것이 없다
+    else:
+        migrate(url)
     return sessionmaker(engine, expire_on_commit=False)
+
+
+#: Alembic 도입 전(create_all) DB 가 해당하는 기준점
+BASELINE = "0001"
+
+
+def migrate(url: str) -> None:
+    """스키마를 head 로 올린다.
+
+    * 빈 DB: 모델대로 표를 만들고 head 로 표시한다 (마이그레이션을 하나씩 도는 것보다 빠르다).
+    * Alembic 도입 전 DB (표는 있고 alembic_version 이 없다): 기준점으로 표시한 뒤 올린다.
+      도입 전에도 create_all 이 빠진 표를 만들어 왔으니 같은 일을 먼저 한다.
+    * 그 밖: 올린다.
+    """
+    cfg = Config()
+    cfg.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+    engine = create_engine(url)  # 외래 키 검사 없이 (SQLite batch)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        if not tables:
+            Base.metadata.create_all(engine)
+            command.stamp(cfg, "head")
+            return
+        if "alembic_version" not in tables:
+            Base.metadata.create_all(engine)
+            command.stamp(cfg, BASELINE)
+        command.upgrade(cfg, "head")
+    finally:
+        engine.dispose()
 
 
 def _sqlite_pragmas(dbapi_connection, _record) -> None:

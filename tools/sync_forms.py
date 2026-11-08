@@ -17,7 +17,7 @@ from docflow.config import get_settings  # noqa: E402
 from docflow.log import setup_logging  # noqa: E402
 from docflow.service.catalog import sync_templates  # noqa: E402
 from docflow.service.db import connect  # noqa: E402
-from docflow.service.storage import LocalFileStore  # noqa: E402
+from docflow.service.storage import open_store  # noqa: E402
 
 log = logging.getLogger("sync_forms")
 
@@ -28,7 +28,7 @@ def main() -> int:
     settings.data.mkdir(parents=True, exist_ok=True)
     sessions = connect(settings.database_url)
     with sessions() as session:
-        report = sync_templates(session, LocalFileStore(settings.data / "files"), settings)
+        report = sync_templates(session, open_store(settings), settings)
     log.info(
         "새 서식 %d / 개정 %d / 그대로 %d / 숨김 %d / 실패 %d",
         len(report.added), len(report.updated), report.unchanged, len(report.hidden),

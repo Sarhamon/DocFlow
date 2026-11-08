@@ -4,29 +4,46 @@ from __future__ import annotations
 
 import json
 
+import boto3
 import pytest
+from moto import mock_aws
 
 from docflow.config import Settings
 from docflow.pipeline import InputError
 from docflow.service import catalog
 from docflow.service.catalog import NotFound, sync_templates
-from docflow.service.db import Form, connect
+from docflow.service.db import Form, User, connect
 from docflow.service.documents import Conflict, DocumentService, ValidationFailed, safe_name
-from docflow.service.storage import LocalFileStore
+from docflow.service.storage import LocalFileStore, S3FileStore
 from docflow.validate import REQUIRED_EMPTY
 from tests import hwpx_factory as hf
 from tests import service_fixtures as fx
 
 
-@pytest.fixture
-def env(tmp_path):
+@pytest.fixture(params=["local", "s3"])
+def env(request, tmp_path, monkeypatch):
+    """서비스 흐름을 로컬 폴더와 S3(moto) 저장소에서 모두 돌린다."""
     settings = Settings.from_root(tmp_path)
     fx.write_templates(settings)
     sessions = connect(f"sqlite:///{(tmp_path / 'db.sqlite').as_posix()}")
-    store = LocalFileStore(tmp_path / "files")
-    with sessions() as s:
-        sync_templates(s, store, settings)
-    return settings, sessions, store
+    if request.param == "local":
+        store = LocalFileStore(tmp_path / "files")
+        with sessions() as s:
+            sync_templates(s, store, settings)
+        yield settings, sessions, store
+        return
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-2")
+    with mock_aws():
+        boto3.client("s3").create_bucket(
+            Bucket="docflow-test",
+            CreateBucketConfiguration={"LocationConstraint": "ap-northeast-2"},
+        )
+        store = S3FileStore("docflow-test", cache=tmp_path / "s3-cache")
+        with sessions() as s:
+            sync_templates(s, store, settings)
+        yield settings, sessions, store
 
 
 @pytest.fixture
@@ -304,11 +321,16 @@ def test_작성_중_문서를_지우면_파일도_지운다(env, session):
 
 def test_남의_문서는_없는_것으로_다룬다(env, session):
     svc = service(env, session)
-    mine = svc.create(form_id(session, "교통비 지급 내역서"), owner_id=1)
+    me, other = User(login_id="me", password_hash="x", name="나"), User(
+        login_id="other", password_hash="x", name="남"
+    )
+    session.add_all([me, other])
+    session.flush()
+    mine = svc.create(form_id(session, "교통비 지급 내역서"), owner_id=me.id)
     with pytest.raises(NotFound):
-        svc.get(mine.id, owner_id=2)
-    assert svc.list(owner_id=2) == ([], 0)
-    assert svc.list(owner_id=1)[1] == 1
+        svc.get(mine.id, owner_id=other.id)
+    assert svc.list(owner_id=other.id) == ([], 0)
+    assert svc.list(owner_id=me.id)[1] == 1
 
 
 def test_내_문서함은_상태로_거른다(env, session):

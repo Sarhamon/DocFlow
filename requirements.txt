@@ -5,6 +5,9 @@ uvicorn[standard]>=0.32
 jinja2>=3.1
 python-multipart>=0.0.9
 sqlalchemy>=2.0
+alembic>=1.13          # DB 마이그레이션 (docflow/migrations)
+psycopg[binary]>=3.2   # PostgreSQL (RDS) 드라이버. DOCFLOW_DATABASE_URL=postgresql+psycopg://…
+boto3>=1.34            # S3 파일 저장소. DOCFLOW_S3_BUCKET 을 주면 쓴다
 cryptography>=43       # 주민등록번호 등 개인정보 암호화 (AES-GCM)
 
 # 분석 전용 (원본 .hwp 읽기)
@@ -16,4 +19,5 @@ pywin32>=306; sys_platform == "win32"
 # 개발 전용 (테스트·린트)
 pytest>=8.0
 httpx>=0.27            # FastAPI TestClient
+moto[s3]>=5.0          # S3 저장소 테스트 (AWS 없이)
 ruff>=0.6
