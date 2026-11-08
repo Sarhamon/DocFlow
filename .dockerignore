@@ -1,0 +1,18 @@
+# 이미지에는 코드만. 내부 서식·파생물·DB·암호 키는 절대 넣지 않는다
+forms/
+templates/
+schemas/
+data/
+secrets/
+out/
+examples/
+.venv/
+.git/
+tests/
+docs/
+**/__pycache__/
+*.pyc
+*.xlsx
+*.hwp
+*.hwpx
+*.pdf

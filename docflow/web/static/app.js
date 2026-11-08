@@ -140,7 +140,35 @@ DF.session = {
 
 document.addEventListener("input", () => { DF.session.lastInput = Date.now(); }, true);
 
+// ---------------------------------------------------------------- 테마 (시스템 / 라이트 / 다크)
+// 고른 값은 이 브라우저에만 둔다. 첫 적용은 base.html <head> 가 그리기 전에 한다.
+DF.theme = {
+  KEY: "df-theme",
+  get() {
+    try { return localStorage.getItem(this.KEY) || "system"; } catch { return "system"; }
+  },
+  set(mode) {
+    try {
+      if (mode === "system") localStorage.removeItem(this.KEY);
+      else localStorage.setItem(this.KEY, mode);
+    } catch { /* 저장하지 못해도 이 화면에는 적용한다 */ }
+    if (mode === "system") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = mode;
+    this.mark(mode);
+  },
+  mark(mode) {
+    for (const b of document.querySelectorAll("[data-theme-set]")) {
+      b.setAttribute("aria-checked", String(b.dataset.themeSet === mode));
+    }
+  },
+};
+
 document.addEventListener("DOMContentLoaded", () => {
+  DF.theme.mark(DF.theme.get());
+  for (const b of document.querySelectorAll("[data-theme-set]")) {
+    b.addEventListener("click", () => DF.theme.set(b.dataset.themeSet));
+  }
+
   const timer = document.getElementById("timer");
   if (timer) {
     DF.session.load().catch(DF.fail);

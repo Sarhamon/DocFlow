@@ -291,7 +291,11 @@ M10 의 LLM 부분(자연어 일괄 입력·본문 초안·정성 판정)은 GPU
   - 파일: `DOCFLOW_S3_BUCKET`(+ `DOCFLOW_S3_PREFIX`)를 주면 S3 (`S3FileStore`), 없으면 `data/files`.
     읽을 때는 `data/s3-cache` 에 ETag 별로 내려받는다. 앱과 `tools/sync_forms.py` 가 같은 저장소를 고른다
     (`open_store`). 저장소 약속과 문서 서비스 흐름을 S3(moto)에서도 테스트한다.
-  남은 것: 웹 앱 컨테이너화(ECR·Fargate), RDS·S3 연결, 서식 적재(`tools/sync_forms.py`)·
+  - 컨테이너: `Dockerfile`(코드만, 서식·DB·키는 넣지 않음, `.dockerignore`), 개발 의존성은
+    `requirements-dev.txt`. 로컬 Docker 에서 PostgreSQL·S3 호환 서버(moto)에 붙여 확인(2026-11-08):
+    서식 234종 적재 → 컨테이너로 루트 계정 → 사용자 발급·로그인 → 문서 생성 → HWPX 다운로드, 파일은 S3 에.
+    암호 키(`DOCFLOW_DATA_KEY`)가 없으면 시작하지 않는다.
+  남은 것: ECR·Fargate 배포, RDS·S3 연결, 서식 적재(`tools/sync_forms.py`)·
   루트 계정(`tools/manage_users.py`) — 목표는 주소에 들어가 로그인만 하면 쓰는 상태.
 
 ---

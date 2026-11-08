@@ -1,20 +1,37 @@
 {% extends "base.html" %}
+{% from "_theme.html" import theme_switch %}
 {% block title %}로그인{% endblock %}
+{% block main_class %}bare{% endblock %}
 {% block content %}
-<div class="auth-box">
-  <h1>DocFlow</h1>
-  <p class="muted">서식 기반 문서 작성·검증</p>
-  <div class="card">
-    <div id="msg" class="msg hidden"></div>
-    <form id="login">
-      <label class="field"><span>아이디</span>
-        <input name="login_id" autocomplete="username" required autofocus></label>
-      <label class="field"><span>비밀번호</span>
-        <input name="password" type="password" autocomplete="current-password" required></label>
-      <button class="primary" style="width:100%">로그인</button>
-    </form>
-    <p class="small muted" style="margin:12px 0 0">계정은 관리자가 발급합니다. 비밀번호를 잊었거나 계정이 잠겼으면 관리자에게 문의하세요.</p>
-  </div>
+<div class="auth-split">
+  <section class="auth-brand">
+    <div class="wordmark">DocFlow</div>
+    <div>
+      <h1>서식은 그대로,<br>작성과 검증은 빠르게</h1>
+      <p>지원사업 HWP 서식에 맞춰 문서를 만들고, 제출 전에 누락과 오류를 확인합니다.</p>
+    </div>
+    <ul class="points">
+      <li><b>원본 서식 유지</b><span>표와 칸 배치를 바꾸지 않고 입력값만 채워 HWPX로 내려받습니다.</span></li>
+      <li><b>제출 전 검증</b><span>필수 항목, 날짜, 금액, 합계를 확인하고 고칠 칸을 바로 짚어 줍니다.</span></li>
+      <li><b>개인정보 보호</b><span>명단·계좌·주민등록번호는 AI에 넘기지 않고 암호화해 저장합니다.</span></li>
+    </ul>
+  </section>
+  <section class="auth-main">
+    {{ theme_switch() }}
+    <div class="auth-box">
+      <h2>로그인</h2>
+      <p>발급받은 계정으로 로그인하세요.</p>
+      <div id="msg" class="msg hidden"></div>
+      <form id="login">
+        <label class="field"><span>아이디</span>
+          <input name="login_id" autocomplete="username" required autofocus></label>
+        <label class="field"><span>비밀번호</span>
+          <input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary">로그인</button>
+      </form>
+      <p class="small muted" style="margin:16px 0 0">계정은 관리자가 발급합니다. 비밀번호를 잊었거나 계정이 잠겼으면 관리자에게 문의하세요.</p>
+    </div>
+  </section>
 </div>
 {% endblock %}
 {% block scripts %}

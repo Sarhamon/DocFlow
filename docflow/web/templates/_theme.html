@@ -1,0 +1,8 @@
+{# 테마 전환 (시스템 / 라이트 / 다크). 동작은 app.js DF.theme #}
+{% macro theme_switch() %}
+<div class="theme-switch" role="radiogroup" aria-label="화면 테마">
+  <button type="button" role="radio" data-theme-set="system">시스템</button>
+  <button type="button" role="radio" data-theme-set="light">라이트</button>
+  <button type="button" role="radio" data-theme-set="dark">다크</button>
+</div>
+{% endmacro %}

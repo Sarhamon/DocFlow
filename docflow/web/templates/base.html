@@ -4,30 +4,48 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}DocFlow{% endblock %} · DocFlow</title>
+  {# 고른 테마를 그리기 전에 붙인다 (깜빡임 없음). 저장소를 못 쓰면 시스템 설정을 따른다 #}
+  <script>try { const t = localStorage.getItem("df-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js"></script>
 </head>
 <body>
+{% from "_theme.html" import theme_switch %}
 {% if me %}
-<header class="top">
-  <a class="brand" href="/forms">DocFlow</a>
-  <nav class="nav">
-    <a href="/forms" class="{{ 'on' if nav == 'forms' }}">서식 선택</a>
-    <a href="/documents" class="{{ 'on' if nav == 'documents' }}">내 문서함</a>
-    {% if me.admin %}<a href="/admin" class="{{ 'on' if nav == 'admin' }}">관리자</a>{% endif %}
-  </nav>
-  <div class="who">
-    <span class="name">{{ me.name }} ({{ me.login_id }})</span>
-    <span class="timer" id="timer" title="남은 로그인 시간">--:--</span>
-    <button class="small" id="extend" type="button">연장</button>
-    <a href="/password" class="small">비밀번호</a>
-    <button class="small" id="logout" type="button">로그아웃</button>
-  </div>
-</header>
-{% endif %}
-<main class="{% block main_class %}{% endblock %}">
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="/forms"><b>DocFlow</b><span>서식 문서 작성·검증</span></a>
+    <nav class="side-nav" aria-label="주 메뉴">
+      <a href="/forms" class="{{ 'on' if nav == 'forms' }}">서식 선택</a>
+      <a href="/documents" class="{{ 'on' if nav == 'documents' }}">내 문서함</a>
+      {% if me.admin %}<a href="/admin" class="{{ 'on' if nav == 'admin' }}">관리자</a>{% endif %}
+    </nav>
+    <div class="side-foot">
+      {{ theme_switch() }}
+      <div class="user-box">
+        <div class="name">{{ me.name }}<small>{{ me.login_id }}</small></div>
+        <div class="session">
+          <span><span class="label">남은 시간 </span><span class="timer" id="timer" title="남은 로그인 시간">--:--</span></span>
+          <button class="small" id="extend" type="button">연장</button>
+        </div>
+        <div class="links">
+          <a href="/password" class="btn small">비밀번호</a>
+          <button class="small" id="logout" type="button">로그아웃</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+  <main class="{% block main_class %}{% endblock %}">
 {% block content %}{% endblock %}
+  </main>
+</div>
+{% else %}
+<main class="{{ self.main_class() }}">
+{{ self.content() }}
 </main>
+{% endif %}
 <script>window.DF.params = {{ (params or {}) | tojson }}; window.DF.me = {{ me | tojson }};</script>
 {% block scripts %}{% endblock %}
 </body>

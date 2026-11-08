@@ -401,7 +401,7 @@
           // 합계 행 수식: 입력한 행의 합을 미리 보여 준다 (IN_18). 실제 값은 문서를 만들 때 다시 계산한다
           const rep = totalRows.get(c.row);
           const sum = rep ? sumColumn(rep, c.col) : null;
-          return { node: h("span", { title: `수식 ${formula.formula} — 문서를 만들 때 계산합니다` }, sum !== null ? sum.toLocaleString("ko-KR") : "자동 계산"), cls: "computed" };
+          return { node: h("span", { title: `수식 ${formula.formula}: 문서를 만들 때 계산합니다` }, sum !== null ? sum.toLocaleString("ko-KR") : "자동 계산"), cls: "computed" };
         }
         return null;
       },
@@ -514,7 +514,7 @@
     const cols = out.mapping.filter((m) => m.concept);
     const missing = out.mapping.filter((m) => m.concept && !m.found).map((m) => m.label);
     $("roster-map").replaceChildren("채울 열: ", cols.map((m) => m.label).join(", ") || "(없음)",
-      missing.length ? h("span", { class: "muted" }, ` — 확인서에 없어 비워 둘 열: ${missing.join(", ")}`) : "");
+      missing.length ? h("span", { class: "muted" }, ` (확인서에 없어 비워 둘 열: ${missing.join(", ")})`) : "");
     $("roster-rows").replaceChildren(
       h("thead", {}, h("tr", {}, ...cols.map((m) => h("th", {}, m.label)))),
       h("tbody", {}, ...out.rows.map((r) => h("tr", {}, ...cols.map((m) => h("td", {}, r[String(m.col)] || ""))))));
@@ -725,7 +725,7 @@
   function openDraft(where) {
     draftWhere = where;
     lastDraft = null;
-    $("draft-title").textContent = `본문 초안 — ${draftTargets.get(where)}`;
+    $("draft-title").textContent = `본문 초안: ${draftTargets.get(where)}`;
     $("draft-result").classList.add("hidden");
     $("draft-note").replaceChildren();
     $("draft-text").value = "";
@@ -958,7 +958,7 @@
       ...l.candidates.map((d) => h("option", { value: d.id, selected: l.linked && l.linked.id === d.id },
         `${d.title} · ${DF.STATUS[d.status] || d.status} · ${DF.fmtTime(d.updated_at)}`)));
       return h("div", { style: "margin-bottom:10px" },
-        h("div", { class: "small" }, h("b", {}, l.name), ` — ${other}`),
+        h("div", { class: "small" }, h("b", {}, l.name), `: ${other}`),
         l.candidates.length ? sel : h("div", { class: "muted small" }, `내 문서함에 ${other} 문서가 없습니다.`));
     }));
   }

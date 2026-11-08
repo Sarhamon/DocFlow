@@ -231,7 +231,7 @@ DocFlow/
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt   # 운영만이면 requirements.txt
 
 # forms/ 를 로컬에 배치한 뒤
 .\.venv\Scripts\python.exe -u tools\convert_templates.py "forms/<서식 폴더>"

@@ -95,7 +95,7 @@
     editing = r;
     const f = document.getElementById("edit-form");
     f.reset();
-    document.getElementById("edit-title").textContent = r ? `대조 규칙 — ${r.name}` : "대조 규칙 추가";
+    document.getElementById("edit-title").textContent = r ? `대조 규칙: ${r.name}` : "대조 규칙 추가";
     for (const side of ["source", "target"]) {
       picked[side] = r ? { form: r[side].form, keys: new Set(r[side].keys.map((k) => k.key)) } : { form: null, keys: new Set() };
     }

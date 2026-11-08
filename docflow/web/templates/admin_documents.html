@@ -87,7 +87,7 @@
   function askReason(d) {
     opening = d;
     document.getElementById("reason-form").reset();
-    document.getElementById("reason-target").textContent = `${d.title} — 작성자 ${d.owner ? d.owner.login_id : "-"}`;
+    document.getElementById("reason-target").textContent = `${d.title} (작성자 ${d.owner ? d.owner.login_id : "-"})`;
     document.getElementById("reason-box").showModal();
   }
 

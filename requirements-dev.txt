@@ -1,0 +1,6 @@
+# 개발 전용 (테스트·린트). 운영 이미지(Dockerfile)에는 넣지 않는다
+-r requirements.txt
+pytest>=8.0
+httpx>=0.27            # FastAPI TestClient
+moto[s3]>=5.0          # S3 저장소 테스트 (AWS 없이)
+ruff>=0.6

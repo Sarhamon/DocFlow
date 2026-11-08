@@ -73,7 +73,7 @@
     editing = u;
     const f = document.getElementById("edit-form");
     f.reset();
-    document.getElementById("edit-title").textContent = u ? `계정 정보 — ${u.login_id}` : "계정 발급";
+    document.getElementById("edit-title").textContent = u ? `계정 정보: ${u.login_id}` : "계정 발급";
     f.login_id.disabled = !!u;
     // 관리자 계정 발급은 루트만 한다
     document.getElementById("role-field").classList.toggle("hidden", !!u || !isRoot);

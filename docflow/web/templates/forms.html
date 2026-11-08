@@ -2,12 +2,11 @@
 {% set nav = "forms" %}
 {% block title %}서식 선택{% endblock %}
 {% block content %}
+<div class="page-head">
+  <div><h1>서식 선택</h1><p>작성할 서식을 고르면 새 문서를 만들 수 있습니다.</p></div>
+</div>
 <div class="forms-layout">
-  <aside class="card facets">
-    <h3>사업·카테고리</h3>
-    <ul id="facets"><li class="muted small">불러오는 중…</li></ul>
-  </aside>
-  <section>
+  <div class="filter-bar">
     <form class="search" id="search">
       <input type="search" name="q" placeholder="서식 이름, 번호, 카테고리로 찾기" aria-label="검색어">
       <select name="sort" aria-label="정렬">
@@ -18,56 +17,53 @@
       <label class="row small"><input type="checkbox" name="archived"> 지난 학년도 서식 포함</label>
       <button class="primary">찾기</button>
     </form>
-    <div class="card" style="padding:0">
-      <div class="list-wrap">
-        <table class="list">
-          <thead><tr><th>서식 번호</th><th>서식 이름</th><th>사업</th><th>카테고리</th><th>버전</th></tr></thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
-      <div id="empty" class="empty hidden"></div>
-    </div>
-    <div class="pager" id="pager"></div>
-  </section>
+    <div class="chips" id="programs" aria-label="사업"><span class="muted small">불러오는 중…</span></div>
+    <div class="chips sub hidden" id="categories" aria-label="카테고리"></div>
+  </div>
+  <div class="result-count" id="count"></div>
+  <div class="form-cards" id="cards"></div>
+  <div id="empty" class="empty card hidden"></div>
+  <div class="pager" id="pager"></div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 (() => {
   const { h, api } = DF;
-  const state = { q: "", program: "", category: "", sort: "form", archived: "exclude", page: 1, size: 20 };
+  const state = { q: "", program: "", category: "", sort: "form", archived: "exclude", page: 1, size: 24 };
   const form = document.getElementById("search");
 
   async function loadFacets() {
     const data = await api("GET", "/api/forms/facets");
-    const ul = document.getElementById("facets");
-    ul.replaceChildren();
-    const item = (label, count, program, category, sub) => {
+    const chip = (label, count, program, category) => {
       const on = state.program === program && state.category === category;
-      return h("li", { class: sub ? "sub" : "" },
-        h("button", { type: "button", class: on ? "on" : "", onclick: () => {
-          Object.assign(state, { program, category, page: 1 }); loadFacets(); loadForms();
-        } }, h("span", {}, label), h("span", { class: "muted small" }, count)));
+      return h("button", { type: "button", class: on ? "chip on" : "chip", "aria-pressed": String(on), onclick: () => {
+        Object.assign(state, { program, category, page: 1 }); loadFacets(); loadForms();
+      } }, label, " ", h("span", { class: "count" }, count));
     };
     const total = data.reduce((n, p) => n + p.count, 0);
-    ul.append(item("전체", total, "", "", false));
-    for (const p of data) {
-      ul.append(item(p.program || "(사업 없음)", p.count, p.program, "", false));
-      if (state.program === p.program) {
-        for (const c of p.categories) ul.append(item(`${c.no ?? ""} ${c.name || "(기타)"}`.trim(), c.count, p.program, c.name, true));
-      }
-    }
+    document.getElementById("programs").replaceChildren(
+      chip("전체", total, "", ""),
+      ...data.map((p) => chip(p.program || "(사업 없음)", p.count, p.program, "")));
+    const cats = document.getElementById("categories");
+    const picked = data.find((p) => state.program && p.program === state.program);
+    cats.classList.toggle("hidden", !picked);
+    cats.replaceChildren(...(picked ? [chip("전체 카테고리", picked.count, picked.program, ""),
+      ...picked.categories.map((c) => chip(`${c.no ?? ""} ${c.name || "(기타)"}`.trim(), c.count, picked.program, c.name))] : []));
   }
 
   async function loadForms() {
     const params = new URLSearchParams({ sort: state.sort, archived: state.archived, page: state.page, size: state.size });
     for (const k of ["q", "program", "category"]) if (state[k]) params.set(k, state[k]);
     const data = await api("GET", `/api/forms?${params}`);
-    const rows = document.getElementById("rows");
-    rows.replaceChildren(...data.items.map((f) => h("tr", { class: "click", onclick: () => { location.href = `/forms/${f.id}`; } },
-      h("td", {}, f.form_no || "-"),
-      h("td", {}, h("a", { href: `/forms/${f.id}` }, f.title), f.archived ? h("span", { class: "badge", style: "margin-left:6px" }, "지난 학년도") : null),
-      h("td", {}, f.program), h("td", {}, f.category), h("td", {}, `v${f.version}`))));
+    document.getElementById("cards").replaceChildren(...data.items.map((f) => h("a", { class: "form-card", href: `/forms/${f.id}` },
+      h("span", { class: "no" }, f.form_no || "번호 없음"),
+      h("span", { class: "title" }, f.title),
+      h("span", { class: "meta" }, [f.program, f.category].filter(Boolean).join(" · "),
+        h("span", { class: "spacer" }),
+        f.archived ? h("span", { class: "badge" }, "지난 학년도") : null,
+        h("span", { class: "badge" }, `v${f.version}`)))));
+    document.getElementById("count").textContent = data.total ? `서식 ${data.total}종` : "";
     const empty = document.getElementById("empty");
     empty.classList.toggle("hidden", data.total > 0);
     // 결과 없음 안내 (FM_06)

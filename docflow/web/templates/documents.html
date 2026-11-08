@@ -43,7 +43,7 @@
 
   async function showHistory(d) {
     const events = await api("GET", `/api/documents/${d.id}/history`);
-    document.getElementById("history-title").textContent = `이력 — ${d.title}`;
+    document.getElementById("history-title").textContent = `이력: ${d.title}`;
     // 검증 결과·수정 기록 (MY_07·MY_08)
     document.getElementById("history-rows").replaceChildren(...events.slice().reverse().map((e) => {
       const errors = (e.issues || []).filter((i) => i.severity === "error").length;
