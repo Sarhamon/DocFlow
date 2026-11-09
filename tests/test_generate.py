@@ -7,7 +7,13 @@ from __future__ import annotations
 
 import pytest
 
-from docflow.generate import GenerateError, Leftover, assign_variants, generate
+from docflow.generate import (
+    GenerateError,
+    Leftover,
+    assign_variants,
+    body_placeholders,
+    generate,
+)
 from docflow.hwpx.document import Block, HwpxDocument
 from docflow.schema.extract import extract
 from docflow.schema.model import FormSchema, SlotSpec, TableSpec, Variant
@@ -263,3 +269,18 @@ def test_변형_이름이_없으면_빈_문단_다음_글부터_뒤_변형이다
     tables = {0: [0], 6: [1]}
     blocks = [Block("s", i, tables.get(i, []), t) for i, t in enumerate(texts)]
     assert assign_variants(blocks, schema) == [0, 0, 0, 0, 1, 1, 1]
+
+
+def test_본문_자리표시자를_미리_알려준다(tmp_path):
+    """작성일·서명란처럼 표 밖 본문에 박힌 자리표시자 (입력 화면이 단추로 보인다)."""
+    xml = hf.body(
+        hf.para("상기와 같이 제출합니다."),
+        hf.para("20○○년 ○○월 ○○일"),
+        hf.para("사업담당자 : ○ ○ ○  (날인)"),
+        hf.para("20○○년 ○○월 ○○일"),
+    )
+    schema, path = make(tmp_path, xml)
+    assert body_placeholders(HwpxDocument.open(path), schema, None) == [
+        "20○○년 ○○월 ○○일",
+        "사업담당자 : ○ ○ ○  (날인)",
+    ]

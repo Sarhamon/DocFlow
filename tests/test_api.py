@@ -173,3 +173,11 @@ def test_문서_이름_바꾸기와_입력_화면용_서식(client):
     form = client.get(f"/api/documents/{doc['id']}/form").json()
     assert form["summary"]["repeats"] == 1
     assert form["skeleton"]["cells"] == {"t0.r0.c1": ""}
+    assert form["placeholders"] == []  # 시험 서식 본문에는 자리표시자가 없다
+
+
+def test_변환기를_끄면_HWPX_만_만든다(tmp_path, monkeypatch):
+    """한컴이 있는 PC 에서도 DOCFLOW_CONVERTER=none 이면 변환하지 않는다 (시연·운영과 같게)."""
+    monkeypatch.setenv("DOCFLOW_CONVERTER", "none")
+    app = create_app(Settings.from_root(tmp_path), converter="auto", llm=None)
+    assert TestClient(app).get("/api/health").json() == {"ok": True, "converter": False}

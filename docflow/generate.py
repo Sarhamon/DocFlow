@@ -286,6 +286,24 @@ def _fill_repeat(doc: HwpxDocument, rep: RepeatSpec, rows: list[dict[int, str]])
 
 
 # ---------------------------------------------------------------- 남은 자리표시자
+def body_placeholders(
+    template: HwpxDocument, schema: FormSchema, variant: int | None
+) -> list[str]:
+    """서식 표 밖 본문에 박힌 자리표시자 문단 (작성일·서명란 등). 입력 화면이 미리 보여 준다.
+
+    입력 칸이 아니라서 '본문 문구 바꾸기'로만 고칠 수 있는 글이다. 같은 글은 한 번만.
+    """
+    blocks = template.blocks()
+    found: list[str] = []
+    for b, owner in zip(blocks, assign_variants(blocks, schema), strict=True):
+        if variant is not None and owner is not None and owner != variant:
+            continue
+        text = b.text.strip()
+        if text and is_leftover(text) and text not in found:
+            found.append(text)
+    return found
+
+
 def find_leftovers(
     doc: HwpxDocument,
     schema: FormSchema,

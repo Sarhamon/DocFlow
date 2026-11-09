@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from docflow.config import Settings, get_settings
 from docflow.convert import Converter
-from docflow.generate import GenerateError
+from docflow.generate import GenerateError, body_placeholders
 from docflow.hwpx.document import HwpxDocument
 from docflow.llm import LlmClient, LlmError
 from docflow.pipeline import InputError, skeleton
@@ -266,6 +266,7 @@ def create_app(
     llm: LlmClient | None | str = "auto",
 ) -> FastAPI:
     """앱을 만든다. converter 가 "auto" 면 한컴오피스가 있을 때만 한컴 변환기를 쓴다.
+    환경변수 DOCFLOW_CONVERTER=none 이면 한컴이 있어도 쓰지 않는다(HWPX 만 만든다).
 
     llm 이 "auto" 면 요청마다 시스템 설정의 주소·모델로 Ollama 를 부른다(관리자가 바꾸면 바로 적용).
     None 이면 자연어 일괄 입력을 쓸 수 없다(503).
@@ -278,6 +279,8 @@ def create_app(
     crypto.use(crypto.Cipher(crypto.load_key(settings)))
     sessions: sessionmaker = connect(database_url or settings.database_url)
     store = store or open_store(settings)
+    if converter == "auto" and os.environ.get("DOCFLOW_CONVERTER") == "none":
+        converter = None
     if converter == "auto":
         from docflow.adapters.hancom import HancomConverter, available
 
@@ -583,6 +586,10 @@ def create_app(
             "converter": svc.converter is not None,
             # 정성 판정 물음 수. 없으면 화면이 [정성 판정] 단추를 숨긴다
             "checklist": len(review.items_for(svc.session, doc.form_version.form_id)),
+            # 본문에 남는 자리표시자 (작성일·서명란). 화면이 '본문 문구 바꾸기'에 단추로 보인다
+            "placeholders": body_placeholders(
+                HwpxDocument.open(store.local_path(doc.form_version.template_key)), schema, index
+            ),
         }
 
     @app.put(f"{API}/documents/{{doc_id}}/input")

@@ -56,6 +56,33 @@ SETTINGS: dict[str, list[dict]] = {
     "3-04": [cell("t0.r1.c1", "학과")],
     "7-01": meeting(1) + meeting(3),
     "5-11": [cell("t0.r2.c9", "장소")],
+    # 8쪽짜리 계획서: 본문 칸이 `• • •` 빈칸·예시 글씨라 추출에서 빠졌다
+    "2-03": [
+        cell("t0.r0.c2", "영역 번호"),
+        cell("t0.r0.c4", "과제 번호"),
+        cell("t0.r0.c6", "세부과제 번호"),
+        cell("t0.r0.c8", "세세부과제 번호"),
+        cell("t1.r0.c0", "표지 제목"),
+        cell("t2.r0.c2", "대학중장기발전계획 번호"),
+        cell("t2.r4.c2", "안전관리책임자 성명"),
+        cell("t3.r0.c0", "본문 제목"),
+        cell("t6.r0.c0", "목적 및 필요성"),
+        cell("t8.r0.c0", "추진 내용 및 방법"),
+        cell("t10.r0.c1", "정량적 실적 및 성과"),
+        cell("t10.r1.c1", "정성적 실적 및 성과"),
+        off("cell", "t21.r0.c3"),  # 머리글(집행비율)이 입력 칸으로 잡혔다
+        cell("t21.r1.c3", "집행비율(D=B/A*100)"),
+        # 대응투자 비고의 예시(교비·RISE·대플)
+        cell("t19.r1.c4", "강사료 비고", required=False),
+        cell("t19.r2.c4", "전문가활용비 비고", required=False),
+        cell("t19.r3.c4", "식사비 비고", required=False),
+    ]
+    # 강사료 지급기준 표: 금액만 입력 칸으로 잡혀 예시 이름(이동일 등)이 남는다
+    + [
+        cell(f"t16.r{r}.c{c}", f"강사 {r} {name}", required=False)
+        for r in range(1, 5)
+        for c, name in enumerate(("성명", "강사구분", "지급구분", "지급 대상/기준"))
+    ],
     "9-02": [
         off("cell", "t1.r2.c0"),
         off("cell", "t1.r2.c1"),
