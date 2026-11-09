@@ -16,6 +16,7 @@ password_change_required, locked …).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from collections.abc import Callable, Iterator
@@ -27,6 +28,8 @@ from typing import Any, Literal
 from fastapi import Body, Depends, FastAPI, File, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from docflow.config import Settings, get_settings
@@ -66,6 +69,7 @@ from docflow.web import admin_api, admin_ops, pages
 from docflow.web.files import download_response, hwpx_upload
 
 API = "/api"
+log = logging.getLogger(__name__)
 #: 명단 가져오기에 한 번에 올리는 파일 수
 MAX_ROSTER_FILES = 100
 COOKIE = "docflow_session"
@@ -447,7 +451,14 @@ def create_app(
 
     # ------------------------------------------------------------ 서식
     @app.get(f"{API}/health")
-    def health() -> dict[str, Any]:
+    def health() -> Any:
+        """ALB 상태 확인. DB 에 닿지 않으면 503 (S3 는 시작할 때 open_store 가 확인한다)."""
+        try:
+            with sessions() as s:
+                s.execute(text("SELECT 1"))
+        except SQLAlchemyError:
+            log.exception("상태 확인: DB 에 닿지 않는다")
+            return JSONResponse({"ok": False, "db": False}, status_code=503)
         return {"ok": True, "converter": converter is not None}
 
     @app.get(f"{API}/forms", dependencies=signed_in)

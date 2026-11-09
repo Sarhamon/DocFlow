@@ -51,6 +51,16 @@ def test_키_파일이_없으면_만들고_다음에는_그것을_읽는다(tmp_
     assert crypto.load_key(settings) == b"e" * 32  # 환경변수가 우선한다
 
 
+def test_키도_없고_키_파일도_못_만들면_무엇을_할지_알린다(tmp_path, monkeypatch):
+    """컨테이너(쓸 수 없는 /app)에서 키 환경변수를 빠뜨린 경우."""
+    monkeypatch.delenv(crypto.KEY_ENV)
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")
+    monkeypatch.setenv("DOCFLOW_KEY_FILE", str(blocker / "data.key"))
+    with pytest.raises(RuntimeError, match=crypto.KEY_ENV):
+        crypto.load_key(Settings.from_root(tmp_path))
+
+
 def test_주민등록번호_뒷자리를_가린다():
     assert crypto.mask_rrn(f'{{"주민": "{RRN}"}}') == '{"주민": "900101-1******"}'
     assert crypto.mask_rrn("9001011234567") == "900101-1******"

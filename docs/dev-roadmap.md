@@ -281,7 +281,7 @@ M10 의 LLM 부분(자연어 일괄 입력·본문 초안·정성 판정)은 GPU
 - 웹/LLM 컴퓨팅 분리, 저장소·DB 이전. 한컴 COM 변환은 운영 서버에 두지 않고 **HWPX 만** 다룬다
   (산출은 HWPX 다운로드, 서식 등록·명단 가져오기는 `.hwpx` 업로드). Windows 인스턴스가 필요 없다.
 - **완료**: 로컬과 동일한 시나리오가 AWS에서 한컴 변환 없이(HWPX 만) 통과한다.
-  → 진행 중 (2026-11-08 기준). LLM(EXAONE 3.5)을 EC2(GPU)에 배포 완료.
+  → 진행 중 (2026-11-09 기준). LLM(EXAONE 3.5)을 EC2(GPU)에 배포 완료.
   - DB: `DOCFLOW_DATABASE_URL` 로 주소를 바꾼다(없으면 `data/docflow.db`). Alembic 도입(`docflow/migrations`) —
     0001 기준점(M11 까지의 표), 0002 `documents.owner_id` 외래 키. 앱이 시작할 때 head 로 올리고,
     Alembic 도입 전 DB 는 기준점으로 표시한 뒤 올린다. 테스트 전체가 PostgreSQL 16 에서도 통과
@@ -291,11 +291,21 @@ M10 의 LLM 부분(자연어 일괄 입력·본문 초안·정성 판정)은 GPU
   - 파일: `DOCFLOW_S3_BUCKET`(+ `DOCFLOW_S3_PREFIX`)를 주면 S3 (`S3FileStore`), 없으면 `data/files`.
     읽을 때는 `data/s3-cache` 에 ETag 별로 내려받는다. 앱과 `tools/sync_forms.py` 가 같은 저장소를 고른다
     (`open_store`). 저장소 약속과 문서 서비스 흐름을 S3(moto)에서도 테스트한다.
+    S3 버킷에 닿지 않으면(이름·IAM 권한) 앱과 `sync_forms` 가 시작할 때 멈춘다(2026-11-09). 전에는 health 는
+    통과하고 문서마다 '템플릿 파일 없음'으로 보였다.
+  - 서식 적재: Fargate 에는 `templates/` 를 붙일 곳이 없어 `tools/sync_forms.py --from-s3` 가
+    `s3://<버킷>/<DOCFLOW_S3_PREFIX>/templates/` 에서 받아 등록한다(먼저 `aws s3 sync templates/ …` 로 올림).
+    서식 키·스키마는 로컬 `templates/` 로 등록한 것과 같다. 등록은 그대로인데 저장소에 템플릿 파일이 없으면
+    (S3 설정 없이 sync 를 돌린 경우 등) 다시 올린다 — sync 를 한 번 더 돌리면 복구된다(2026-11-09).
   - 컨테이너: `Dockerfile`(코드만, 서식·DB·키는 넣지 않음, `.dockerignore`), 개발 의존성은
     `requirements-dev.txt`. 로컬 Docker 에서 PostgreSQL·S3 호환 서버(moto)에 붙여 확인(2026-11-08):
     서식 234종 적재 → 컨테이너로 루트 계정 → 사용자 발급·로그인 → 문서 생성 → HWPX 다운로드, 파일은 S3 에.
     암호 키(`DOCFLOW_DATA_KEY`)가 없으면 시작하지 않는다.
-  남은 것: ECR·Fargate 배포, RDS·S3 연결, 서식 적재(`tools/sync_forms.py`)·
+    2026-11-09 다른 PC 에서 다시 확인: 같은 구성(PostgreSQL 16 + moto 서버)으로 `--from-s3` 적재 → 서식 5종
+    (AID 3-05·7-01·3-04·5-11·9-02) 생성·내려받기, 앱 컨테이너를 새로 띄워도(캐시 없음) 기존 문서를 S3 에서 받음.
+    MinIO 는 공식 Docker 이미지를 더 받을 수 없어(Docker Hub 저장소 없음, quay.io 401) `motoserver/moto` 를 쓴다.
+    boto3 는 `AWS_ENDPOINT_URL` 로 S3 호환 서버를 가리킨다(코드 변경 없음, AWS 에서는 빼고 작업 역할로).
+  남은 것: ECR·Fargate 배포, RDS·S3 연결, 서식 적재(`sync_forms.py --from-s3`)·
   루트 계정(`tools/manage_users.py`) — 목표는 주소에 들어가 로그인만 하면 쓰는 상태.
 
 ---

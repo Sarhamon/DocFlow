@@ -44,8 +44,12 @@ SZ = f"{{{HP}}}sz"
 CELL_SZ = f"{{{HP}}}cellSz"
 LINESEG_ARRAY = f"{{{HP}}}linesegarray"
 SEC_PR = f"{{{HP}}}secPr"
+HH = "http://www.hancom.co.kr/hwpml/2011/head"
+HEADER = "Contents/header.xml"
 
 _SECTION_RE = re.compile(r"^Contents/section\d+\.xml$")
+#: 사람이 줄 앞에 직접 적는 번호·글머리 (`1.` `2)` `①` `-` `○` 등)
+_MANUAL_MARK_RE = re.compile(r"^\s*(\d{1,2}[.)]|\(\d{1,2}\)|[①-⑳]|[가-하][.)]|[-•·○●□■※▶])")
 #: XML 1.0 에 쓸 수 없는 문자. 들어가면 문서가 깨지므로 값을 쓰기 전에 걸러낸다.
 _XML_ILLEGAL_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
 
@@ -175,6 +179,8 @@ class HwpxDocument:
     _dirty: set[str] = dc_field(default_factory=set, repr=False)
     #: _table_elements() 결과. 트리를 통째로 바꿀 때(fill_rows 롤백)만 무효화한다.
     _tables_cache: list[tuple[str, ET.Element, int]] | None = dc_field(default=None, repr=False)
+    #: _header_variant() 가 만든 헤더 사본: (charPr/paraPr, 원래 id) -> 사본 id
+    _variants: dict[tuple[str, str], str] = dc_field(default_factory=dict, repr=False)
 
     # ---------------------------------------------------------------- 로딩
     @classmethod
@@ -422,6 +428,59 @@ class HwpxDocument:
         section, tc = self._anchor(table, row, col)
         _write_cell(tc, str(text))
         self._dirty.add(section)
+        self._settle_written(tc)
+
+    def _settle_written(self, tc: ET.Element) -> None:
+        """써 넣은 칸을 제출용 모양으로 맞춘다 (서식 헤더가 없으면 그대로 둔다).
+
+        * 예시를 파란 글씨로 둔 칸이 많다. 써 넣은 글자는 검정으로 바꾼다.
+        * 첫 문단에만 자동 번호를 건 칸에 `1. …` 처럼 번호를 직접 적으면 `1. 1. …` 이 된다.
+          줄이 번호·글머리로 시작하면 그 문단의 자동 번호를 끈다.
+        """
+        if HEADER not in self._entries:
+            return
+        sub = tc.find(SUBLIST)
+        for p in sub.findall(PARA) if sub is not None else []:
+            text = "".join(t.text or "" for t in p.iter(T))
+            if not text:
+                continue
+            if _MANUAL_MARK_RE.match(text) and self._has_heading(p.get("paraPrIDRef")):
+                p.set("paraPrIDRef", self._header_variant("paraPr", p.get("paraPrIDRef")))
+            for run in p.findall(RUN):
+                if run.find(T) is not None and self._colored(run.get("charPrIDRef")):
+                    run.set("charPrIDRef", self._header_variant("charPr", run.get("charPrIDRef")))
+
+    def _header_item(self, kind: str, item_id: str | None) -> ET.Element | None:
+        return self._root(HEADER).find(f".//{{{HH}}}{kind}[@id='{item_id}']")
+
+    def _colored(self, char_id: str | None) -> bool:
+        item = self._header_item("charPr", char_id)
+        return item is not None and item.get("textColor", "#000000").upper() != "#000000"
+
+    def _has_heading(self, para_id: str | None) -> bool:
+        item = self._header_item("paraPr", para_id)
+        heading = item.find(f"{{{HH}}}heading") if item is not None else None
+        return heading is not None and heading.get("type", "NONE") != "NONE"
+
+    def _header_variant(self, kind: str, item_id: str) -> str:
+        """kind(charPr/paraPr) 의 사본 id — 글자는 검정, 문단은 자동 번호 없음. 한 번만 만든다."""
+        cache = self._variants
+        if (kind, item_id) not in cache:
+            item = self._header_item(kind, item_id)
+            parent = next(p for p in self._root(HEADER).iter() if item in list(p))
+            clone = copy.deepcopy(item)
+            clone.set("id", str(max(int(x.get("id", 0)) for x in parent) + 1))
+            if kind == "charPr":
+                clone.set("textColor", "#000000")
+            else:
+                heading = clone.find(f"{{{HH}}}heading")
+                heading.set("type", "NONE")
+                heading.set("idRef", "0")
+            parent.append(clone)
+            parent.set("itemCnt", str(len(parent)))
+            self._dirty.add(HEADER)
+            cache[(kind, item_id)] = clone.get("id")
+        return cache[(kind, item_id)]
 
     def fill_rows(
         self,

@@ -6,11 +6,16 @@
 from __future__ import annotations
 
 import zipfile
+from xml.etree import ElementTree as ET
 
 import pytest
 
 from docflow.hwpx.document import (
+    HEADER,
+    HH,
     HP,
+    PARA,
+    RUN,
     CapacityError,
     CellNotFound,
     CoveredCell,
@@ -18,6 +23,7 @@ from docflow.hwpx.document import (
     HwpxDocument,
     HwpxError,
     RowSpanConflict,
+    T,
 )
 from tests import hwpx_factory as hf
 
@@ -488,14 +494,25 @@ def test_행을_늘려_쓰고_재계산하면_합계가_맞다(fdoc):
 def test_수식끼리_이어진_계산도_맞춘다(tmp_path):
     """금액 = 수량 x 단가 (수식), 합계 = 금액들의 합 (수식)."""
     rows = [
-        [hf.cell(0, 0, hf.para("수량")), hf.cell(0, 1, hf.para("단가")),
-         hf.cell(0, 2, hf.para("금액"))],
-        [hf.cell(1, 0, hf.para("2")), hf.cell(1, 1, hf.para("1,000")),
-         hf.cell(1, 2, hf.formula_para("=PRODUCT(A?:B?)", "0", fid="501"))],
-        [hf.cell(2, 0, hf.para("3")), hf.cell(2, 1, hf.para("500")),
-         hf.cell(2, 2, hf.formula_para("=PRODUCT(A?:B?)", "0", fid="502"))],
-        [hf.cell(3, 0, hf.para("합계"), colspan=2),
-         hf.cell(3, 2, hf.formula_para("=SUM(ABOVE)", "0", fid="503"))],
+        [
+            hf.cell(0, 0, hf.para("수량")),
+            hf.cell(0, 1, hf.para("단가")),
+            hf.cell(0, 2, hf.para("금액")),
+        ],
+        [
+            hf.cell(1, 0, hf.para("2")),
+            hf.cell(1, 1, hf.para("1,000")),
+            hf.cell(1, 2, hf.formula_para("=PRODUCT(A?:B?)", "0", fid="501")),
+        ],
+        [
+            hf.cell(2, 0, hf.para("3")),
+            hf.cell(2, 1, hf.para("500")),
+            hf.cell(2, 2, hf.formula_para("=PRODUCT(A?:B?)", "0", fid="502")),
+        ],
+        [
+            hf.cell(3, 0, hf.para("합계"), colspan=2),
+            hf.cell(3, 2, hf.formula_para("=SUM(ABOVE)", "0", fid="503")),
+        ],
     ]
     doc = HwpxDocument.open(hf.build(tmp_path / "c.hwpx", hf.section(hf.table(4, 3, rows))))
     result = doc.recalculate_formulas()
@@ -505,10 +522,14 @@ def test_수식끼리_이어진_계산도_맞춘다(tmp_path):
 
 def test_계산할_수_없는_수식은_그대로_두고_알려준다(tmp_path):
     rows = [
-        [hf.cell(0, 0, hf.para("1")),
-         hf.cell(0, 1, hf.formula_para("=AVERAGE(A1:A1)", "99", fid="601"))],
-        [hf.cell(1, 0, hf.para("합계")),
-         hf.cell(1, 1, hf.formula_para("=SUM(ABOVE)", "0", fid="602"))],
+        [
+            hf.cell(0, 0, hf.para("1")),
+            hf.cell(0, 1, hf.formula_para("=AVERAGE(A1:A1)", "99", fid="601")),
+        ],
+        [
+            hf.cell(1, 0, hf.para("합계")),
+            hf.cell(1, 1, hf.formula_para("=SUM(ABOVE)", "0", fid="602")),
+        ],
     ]
     doc = HwpxDocument.open(hf.build(tmp_path / "u.hwpx", hf.section(hf.table(2, 2, rows))))
     result = doc.recalculate_formulas()
@@ -520,10 +541,22 @@ def test_계산할_수_없는_수식은_그대로_두고_알려준다(tmp_path):
 
 
 def test_표를_지정해_재계산한다(tmp_path):
-    f1 = hf.table(2, 1, [[hf.cell(0, 0, hf.para("5"))],
-                         [hf.cell(1, 0, hf.formula_para("=SUM(ABOVE)", "0", fid="701"))]])
-    f2 = hf.table(2, 1, [[hf.cell(0, 0, hf.para("7"))],
-                         [hf.cell(1, 0, hf.formula_para("=SUM(ABOVE)", "0", fid="702"))]])
+    f1 = hf.table(
+        2,
+        1,
+        [
+            [hf.cell(0, 0, hf.para("5"))],
+            [hf.cell(1, 0, hf.formula_para("=SUM(ABOVE)", "0", fid="701"))],
+        ],
+    )
+    f2 = hf.table(
+        2,
+        1,
+        [
+            [hf.cell(0, 0, hf.para("7"))],
+            [hf.cell(1, 0, hf.formula_para("=SUM(ABOVE)", "0", fid="702"))],
+        ],
+    )
     doc = HwpxDocument.open(hf.build(tmp_path / "t.hwpx", hf.section(f1 + f2)))
     doc.recalculate_formulas(table=1)
     assert doc.get_cell(0, 1, 0) == "0"  # 표 0 은 건드리지 않는다
@@ -613,8 +646,7 @@ def _multi_paragraph_field() -> str:
     p1 = f'<hp:p id="1" paraPrIDRef="1" styleIDRef="0">{begin}</hp:p>'
     p2 = f'<hp:p id="2" paraPrIDRef="1" styleIDRef="0">{end}</hp:p>'
     outside = (
-        '<hp:p id="3" paraPrIDRef="1" styleIDRef="0">'
-        "<hp:run><hp:t>20○○년 밖</hp:t></hp:run></hp:p>"
+        '<hp:p id="3" paraPrIDRef="1" styleIDRef="0"><hp:run><hp:t>20○○년 밖</hp:t></hp:run></hp:p>'
     )
     return p1 + p2 + outside
 
@@ -775,3 +807,56 @@ def test_줄배치_캐시가_없는_문단에도_새_run을_넣는다(tmp_path):
     doc = _one_cell_doc(tmp_path, ctrl_only)
     doc.set_cell(0, 0, 0, "새 글자")
     assert doc.get_cell(0, 0, 0) == "새 글자"
+
+
+# ------------------------------------------------------------ 써 넣은 칸의 모양
+#: 글자 모양 10 은 파란 예시 글씨, 문단 모양 11 은 자동 번호(^1.)
+HEADER_XML = (
+    '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head"><hh:refList>'
+    '<hh:charProperties itemCnt="2">'
+    '<hh:charPr id="0" height="1000" textColor="#000000"/>'
+    '<hh:charPr id="10" height="1000" textColor="#2E74B5"/></hh:charProperties>'
+    '<hh:paraProperties itemCnt="2">'
+    '<hh:paraPr id="0"><hh:heading type="NONE" idRef="0" level="0"/></hh:paraPr>'
+    '<hh:paraPr id="11"><hh:heading type="NUMBER" idRef="1" level="0"/></hh:paraPr>'
+    "</hh:paraProperties></hh:refList></hh:head>"
+)
+
+
+def styled(tmp_path) -> HwpxDocument:
+    xml = hf.section(hf.table(1, 2, [[hf.cell(0, 0, hf.para("예시")), hf.cell(0, 1)]]))
+    return HwpxDocument.open(hf.build(tmp_path / "s.hwpx", xml, header=HEADER_XML))
+
+
+def runs_and_paras(doc: HwpxDocument, tmp_path) -> tuple[list[str], list[str], ET.Element]:
+    doc = reopen(doc, tmp_path)
+    _, tc = doc._anchor(0, 0, 0)
+    paras = list(tc.iter(PARA))
+    runs = [r.get("charPrIDRef") for p in paras for r in p.findall(RUN) if r.find(T) is not None]
+    return runs, [p.get("paraPrIDRef") for p in paras], doc._root(HEADER)
+
+
+def test_파란_예시_칸에_쓴_글자는_검정이다(tmp_path):
+    doc = styled(tmp_path)
+    doc.set_cell(0, 0, 0, "본관 3층\n대회의실")
+    runs, _, header = runs_and_paras(doc, tmp_path)
+    assert len(set(runs)) == 1 and runs[0] != "10"
+    black = header.find(f".//{{{HH}}}charPr[@id='{runs[0]}']")
+    assert (black.get("textColor"), black.get("height")) == ("#000000", "1000")
+    assert header.find(f".//{{{HH}}}charProperties").get("itemCnt") == "3"
+
+
+def test_번호를_직접_적으면_자동_번호를_끈다(tmp_path):
+    doc = styled(tmp_path)
+    doc.set_cell(0, 0, 0, "1. 교육과정 개편\n2. 현장실습")
+    _, paras, header = runs_and_paras(doc, tmp_path)
+    assert "11" not in paras
+    heading = header.find(f".//{{{HH}}}paraPr[@id='{paras[0]}']/{{{HH}}}heading")
+    assert heading.get("type") == "NONE"
+
+
+def test_번호_없이_적으면_자동_번호를_둔다(tmp_path):
+    doc = styled(tmp_path)
+    doc.set_cell(0, 0, 0, "교육과정 개편")
+    _, paras, _ = runs_and_paras(doc, tmp_path)
+    assert paras == ["11"]

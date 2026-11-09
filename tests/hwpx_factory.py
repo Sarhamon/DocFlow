@@ -138,8 +138,8 @@ def body_field(name: str = "content_body", fid: str = "900") -> list[str]:
     ]
 
 
-def build(path: Path, *sections: str) -> Path:
-    """mimetype + section 들로 최소 HWPX 를 만든다.
+def build(path: Path, *sections: str, header: str | None = None) -> Path:
+    """mimetype + section 들로 최소 HWPX 를 만든다. header 는 Contents/header.xml 내용.
 
     항목 시각을 고정해 같은 내용이면 같은 파일이 된다. 등록은 파일 해시로 바뀐 서식을 가리므로,
     시각이 들어가면 다시 만든 서식이 초 경계에 따라 바뀐 것으로 잡힌다.
@@ -151,6 +151,8 @@ def build(path: Path, *sections: str) -> Path:
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr(entry("mimetype"), "application/hwp+zip", zipfile.ZIP_STORED)
         zf.writestr(entry("version.xml"), "<v/>", zipfile.ZIP_DEFLATED)
+        if header is not None:
+            zf.writestr(entry("Contents/header.xml"), header, zipfile.ZIP_DEFLATED)
         for i, sec in enumerate(sections):
             zf.writestr(entry(f"Contents/section{i}.xml"), sec, zipfile.ZIP_DEFLATED)
     return path
@@ -165,8 +167,12 @@ def traffic_form(path: Path) -> Path:
     """
     rows = [
         [
-            cell(0, 0, para("제목", ctrl='<hp:ctrl><hp:colPr id="" type="NEWSPAPER"/></hp:ctrl>'),
-                 colspan=2),
+            cell(
+                0,
+                0,
+                para("제목", ctrl='<hp:ctrl><hp:colPr id="" type="NEWSPAPER"/></hp:ctrl>'),
+                colspan=2,
+            ),
             cell(0, 2, para("학번")),
             cell(0, 3, para("입금액(원)")),
         ],
@@ -217,7 +223,7 @@ def formula(expr: str, result: str, fmt: str = "%g,", fid: str = "500") -> str:
         f'<hp:stringParam name="Formula">{escape(expr)}</hp:stringParam>'
         f'<hp:stringParam name="ResultFormat">{fmt}</hp:stringParam>'
         f'<hp:stringParam name="LastResult">{result}</hp:stringParam>'
-        '</hp:parameters></hp:fieldBegin></hp:ctrl>'
+        "</hp:parameters></hp:fieldBegin></hp:ctrl>"
         f'<hp:t>{result}</hp:t><hp:ctrl><hp:fieldEnd beginIDRef="{fid}" fieldid="1"/></hp:ctrl>'
         "<hp:t/></hp:run>"
     )

@@ -103,8 +103,15 @@ def load_key(settings: Settings) -> bytes:
         return base64.b64decode(value)
     path = settings.key_file
     if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(new_key() + "\n", encoding="ascii")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(new_key() + "\n", encoding="ascii")
+        except OSError as e:  # 컨테이너처럼 쓸 수 없는 곳: 키를 환경변수로 주지 않은 것이다
+            raise RuntimeError(
+                f"암호 키가 없고 키 파일({path})도 만들 수 없다 ({e.strerror or e}). "
+                f"환경변수 {KEY_ENV} 에 키를 준다 (새 키: python -c "
+                '"from docflow.service.crypto import new_key; print(new_key())")'
+            ) from e
         try:
             path.chmod(0o600)
         except OSError:  # Windows 는 권한 비트를 거의 무시한다

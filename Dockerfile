@@ -5,6 +5,7 @@
 #
 # 한컴 변환이 없어 HWPX 만 만든다. 서식 적재·루트 계정은 같은 이미지로 한 번 돌린다:
 #   docker run --rm -e … docflow python tools/manage_users.py create-root <아이디> <이름>
+#   docker run --rm -e … docflow python tools/sync_forms.py --from-s3   # S3 의 <prefix>/templates/ 에서
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

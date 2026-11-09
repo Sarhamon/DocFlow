@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 from docflow.config import Settings
 from docflow.service.catalog import sync_templates
@@ -44,6 +46,17 @@ def new_doc(client, **body) -> dict:
 
 def test_상태(client):
     assert client.get("/api/health").json() == {"ok": True, "converter": True}
+
+
+def test_DB_에_닿지_않으면_상태는_503(client, monkeypatch):
+    """ALB 가 RDS 가 끊긴 작업을 빼도록."""
+
+    def down(*_args, **_kwargs):
+        raise OperationalError("SELECT 1", {}, Exception("connection refused"))
+
+    monkeypatch.setattr(Session, "execute", down)
+    r = client.get("/api/health")
+    assert (r.status_code, r.json()) == (503, {"ok": False, "db": False})
 
 
 # ------------------------------------------------------------ 서식

@@ -245,6 +245,12 @@ python -m venv .venv
 .\.venv\Scripts\python.exe tools\sync_forms.py
 .\.venv\Scripts\uvicorn.exe --factory docflow.web.app:create_app   # API 목록: http://127.0.0.1:8000/docs
 
+# 컨테이너 (M12). 코드만 담고 DB·파일·암호 키는 환경변수로: Dockerfile 머리말 참고
+docker build -t docflow .
+#   S3 를 쓸 때 서식은 S3 에서 읽어 등록한다 (컨테이너에 templates/ 가 없다)
+#   aws s3 sync templates/ s3://<버킷>/<DOCFLOW_S3_PREFIX>/templates/
+#   docker run --rm -e … docflow python tools/sync_forms.py --from-s3
+
 # 테스트 (원본 서식 없이도 돌아갑니다). 실제 서식·한컴 회귀는 -m local
 .\.venv\Scripts\pytest.exe
 .\.venv\Scripts\pytest.exe -m local

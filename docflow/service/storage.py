@@ -136,6 +136,26 @@ class S3FileStore:
             if objects := [{"Key": o["Key"]} for o in page.get("Contents", [])]:
                 self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": objects})
 
+    def download_prefix(self, prefix: str, dest: Path) -> int:
+        """prefix 아래 객체를 dest 폴더에 같은 경로로 내려받고 개수를 돌려준다.
+
+        Fargate 에는 templates/ 를 붙일 곳이 없어 서식 적재가 S3 에서 받아 쓴다
+        (sync_forms --from-s3).
+        """
+        base = self._key(prefix.rstrip("/")) + "/"
+        count = 0
+        for page in self.client.get_paginator("list_objects_v2").paginate(
+            Bucket=self.bucket, Prefix=base
+        ):
+            for obj in page.get("Contents", []):
+                if obj["Key"].endswith("/"):  # 콘솔에서 만든 빈 폴더 표시
+                    continue
+                path = Path(dest).joinpath(*_parts(obj["Key"][len(base) :]))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self.client.download_file(self.bucket, obj["Key"], str(path))
+                count += 1
+        return count
+
     def _head(self, key: str) -> dict | None:
         try:
             return self.client.head_object(Bucket=self.bucket, Key=self._key(key))
