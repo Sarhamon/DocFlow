@@ -36,6 +36,8 @@ def main() -> int:
     )  # fmt: skip
     for key in report.updated:
         log.info("  개정: %s", key)
+    for key in report.restored:
+        log.warning("  파일 복구(저장소에 없었음): %s", key)
     for key in report.hidden:
         log.info("  숨김(서식별로 나눔): %s", key)
     for key, why in report.failed:

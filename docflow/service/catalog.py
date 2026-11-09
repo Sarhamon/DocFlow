@@ -59,6 +59,8 @@ class SyncReport:
     unchanged: int = 0
     #: 묶음 파일을 서식별로 나누면서 목록에서 숨긴 예전 항목
     hidden: list[str] = field(default_factory=list)
+    #: 등록은 그대로인데 저장소에서 템플릿 파일이 없어져 다시 올린 서식
+    restored: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
 
 
@@ -71,14 +73,20 @@ def sync_templates(session: Session, store: FileStore, settings: Settings) -> Sy
 
     서식 여러 개를 묶은 파일은 서식 번호마다 따로 등록한다(키 `경로#1-02호`). 묶음을 통째로
     등록했던 서식은 목록에서 숨기기만 한다. 그 버전으로 쓴 문서는 그대로 열린다.
+    등록이 그대로여도 저장소에 템플릿 파일이 없으면 다시 올린다.
     스키마 형식(SCHEMA_VERSION)이 바뀌면 템플릿이 같아도 다시 뽑는다.
     """
     report = SyncReport()
     for path in sorted(t for t in settings.templates.rglob("*.hwpx") if is_form(t)):
         key = path.relative_to(settings.templates).as_posix()
         digest = _sha256(path)
-        if any(_current(f, digest) for f in file_forms(session, key)):
+        current = [f for f in file_forms(session, key) if _current(f, digest)]
+        if current:
             report.unchanged += 1
+            for form in current:  # 저장소 설정 실수 등으로 파일만 없어졌으면 다시 올린다
+                if not store.exists(form.latest.template_key):
+                    store.put(form.latest.template_key, path)
+                    report.restored.append(form.key)
             continue
         try:
             schema = extract_file(path, settings)

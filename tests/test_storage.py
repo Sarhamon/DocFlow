@@ -84,10 +84,28 @@ def test_버킷을_주지_않으면_로컬_폴더다(tmp_path, monkeypatch):
     assert store.root == tmp_path.resolve() / "data" / "files"
 
 
-def test_버킷을_주면_S3다(tmp_path, monkeypatch):
+@pytest.fixture
+def aws(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-2")
+    with mock_aws():
+        boto3.client("s3").create_bucket(
+            Bucket="prod-bucket", CreateBucketConfiguration={"LocationConstraint": "ap-northeast-2"}
+        )
+        yield
+
+
+def test_버킷을_주면_S3다(tmp_path, monkeypatch, aws):
     monkeypatch.setenv("DOCFLOW_S3_BUCKET", "prod-bucket")
     monkeypatch.setenv("DOCFLOW_S3_PREFIX", "docflow")
-    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-2")
     store = open_store(Settings.from_root(tmp_path))
     assert isinstance(store, S3FileStore)
     assert (store.bucket, store.prefix) == ("prod-bucket", "docflow/")
+
+
+def test_없는_버킷이면_바로_멈춘다(tmp_path, monkeypatch, aws):
+    """버킷 이름·권한이 틀리면 시작할 때 알린다 (파일마다 '없다'로 보이지 않게)."""
+    monkeypatch.setenv("DOCFLOW_S3_BUCKET", "nope")
+    with pytest.raises(RuntimeError, match="'nope'"):
+        open_store(Settings.from_root(tmp_path))

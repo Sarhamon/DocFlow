@@ -37,12 +37,22 @@ def open_store(settings: Settings) -> FileStore:
     """DOCFLOW_S3_BUCKET 이 있으면 S3 (DOCFLOW_S3_PREFIX 아래), 없으면 data/files 폴더.
 
     S3 인증·지역은 boto3 표준을 따른다 (Fargate 작업 역할, AWS_DEFAULT_REGION 등).
+    버킷에 닿지 않으면 바로 멈춘다: 그대로 띄우면 health 는 통과하고 파일마다 '없다'로 보인다.
     """
     bucket = os.environ.get("DOCFLOW_S3_BUCKET")
     if not bucket:
         return LocalFileStore(settings.data / "files")
     prefix = os.environ.get("DOCFLOW_S3_PREFIX", "")
-    return S3FileStore(bucket, prefix=prefix, cache=settings.data / "s3-cache")
+    store = S3FileStore(bucket, prefix=prefix, cache=settings.data / "s3-cache")
+    try:
+        store.client.head_bucket(Bucket=bucket)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        raise RuntimeError(
+            f"S3 버킷 {bucket!r} 에 접근할 수 없다 ({code}). "
+            "DOCFLOW_S3_BUCKET 이름과 작업 역할(IAM) 권한을 확인한다"
+        ) from e
+    return store
 
 
 def _parts(key: str) -> tuple[str, ...]:

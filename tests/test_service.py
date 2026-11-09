@@ -75,6 +75,21 @@ def test_바뀌지_않은_서식은_다시_등록하지_않는다(env, session):
     settings, _sessions, store = env
     report = sync_templates(session, store, settings)
     assert (report.added, report.updated, report.unchanged) == ([], [], 2)
+    assert report.restored == []
+
+
+def test_저장소에서_없어진_템플릿은_다시_올린다(env, session):
+    """S3 설정 없이 sync 를 돌리는 등으로 DB 에만 등록이 남은 경우 (sync 를 다시 돌려 복구)."""
+    settings, _sessions, store = env
+    form = session.get(Form, form_id(session, "회의계획서"))
+    key = form.latest.template_key
+    store.delete_prefix(key)
+    assert not store.exists(key)
+    report = sync_templates(session, store, settings)
+    assert (report.added, report.updated, report.unchanged) == ([], [], 2)
+    assert report.restored == [fx.MEETING]
+    assert store.exists(key)
+    assert [v.version for v in form.versions] == [1]
 
 
 def test_템플릿이_바뀌면_새_버전을_쌓고_옛_버전을_보존한다(env, session):
