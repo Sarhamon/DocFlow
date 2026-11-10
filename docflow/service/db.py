@@ -28,6 +28,7 @@ from alembic.config import Config
 from sqlalchemy import (
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -372,6 +373,22 @@ class LoginHistory(Base):
     ip: Mapped[str | None] = mapped_column(String(45), default=None)
     user_agent: Mapped[str | None] = mapped_column(String(300), default=None)
     at: Mapped[datetime] = mapped_column(default=now)
+
+
+class StoredFile(Base):
+    """DB 에 둔 파일 하나 (`DOCFLOW_FILE_STORE=db`, `storage.DbFileStore`).
+
+    S3 를 쓸 IAM 역할을 만들 수 없는 환경(학교 공용 계정)에서 템플릿·산출물을 RDS 에 둔다.
+    """
+
+    __tablename__ = "stored_files"
+
+    key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    size: Mapped[int]
+    #: 내용의 SHA-256. 읽을 때 캐시 파일을 내용별로 둔다
+    sha256: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
 
 
 def connect(url: str) -> sessionmaker:

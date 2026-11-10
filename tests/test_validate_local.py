@@ -222,6 +222,7 @@ def test_일부러_넣은_오류를_그_자리에서_잡는다(schemas):
                 missed.append(f"{k} {code}@{where}: {got}")
     assert not missed, f"{len(missed)}건\n" + "\n".join(missed[:20])
     assert caught == {
-        REQUIRED_EMPTY: 183, DATE_INVALID: 107, DATE_ORDER: 107,
+        # 필수 표 칸이 결재란 `○○○` 뿐이던 서식 1개가 빠졌다 (스키마 v7, 2026-11-10)
+        REQUIRED_EMPTY: 182, DATE_INVALID: 107, DATE_ORDER: 107,
         AMOUNT_TOTAL_MISMATCH: EXPECTED_TOTAL_INJECTED,
     }  # fmt: skip

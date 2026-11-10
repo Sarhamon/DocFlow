@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="서식 기반 문서 자동 생성·검증 시스템 DocFlow 의 마일스톤별 개발 진행 현황.">
 <meta property="og:title" content="DocFlow 개발 진행 현황">
-<meta property="og:description" content="마일스톤 12/13 완료 (진행도 93%). LLM 입력 자동화를 실제 모델로 확인하고 붙임 문서·계정 정보 채우기까지. 남은 것은 클라우드 이전.">
+<meta property="og:description" content="마일스톤 12/13 완료 (진행도 93%), 클라우드 이전(M12) 진행 중. 2026.11.10 로컬 + EC2 LLM 으로 시연하고 피드백을 정리했다.">
 <meta property="og:type" content="article">
 <title>DocFlow 개발 진행 현황</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -555,19 +555,20 @@
       입금계좌 확인서로 명단 채우기, 주민등록번호 암호화, 계좌·주민번호 형식 경고 — 까지 마쳤습니다.
       이어서 M10 의 <strong>LLM 부분</strong>(프롬프트 일괄 입력·본문 초안·정성 판정)을 만들고 실제 모델(EXAONE 3.5,
       RTX 3060)로 확인했습니다. 브라우저에서 써 보며 <strong>붙임 문서</strong>(기안문에 계획서 잇기·함께 내려받기·붙임 줄 채우기)와
-      계정 정보로 칸 채우기를 더했습니다. 남은 것은 클라우드 이전입니다.
+      계정 정보로 칸 채우기를 더했습니다. 지금은 클라우드 이전(M12)을 진행 중이고, 2026.11.10 노트북 로컬 + EC2 LLM 으로
+      시연했습니다. 시연 의견(결재란·집행 항목 이름·표 편집)은 아래 06 에 정리했습니다.
     </p>
 
     <dl class="docstrip">
-      <div><dt>문서번호</dt><dd>DocFlow-2026-1031</dd></div>
-      <div><dt>기준일</dt><dd>2026.10.31</dd></div>
+      <div><dt>문서번호</dt><dd>DocFlow-2026-1110</dd></div>
+      <div><dt>기준일</dt><dd>2026.11.10</dd></div>
       <div><dt>마일스톤</dt><dd>12 / 13 완료</dd></div>
-      <div><dt>다음</dt><dd>M12 클라우드 이전</dd></div>
+      <div><dt>진행 중</dt><dd>M12 클라우드 이전</dd></div>
     </dl>
   </header>
 
   <!-- 전체 진행도 -->
-  <div class="progress" role="img" aria-label="전체 진행도 93퍼센트. M0부터 M11 완료, M12 미착수">
+  <div class="progress" role="img" aria-label="전체 진행도 93퍼센트. M0부터 M11 완료, M12 진행 중">
     <div class="head">
       <b>93%</b>
       <span>마일스톤 규모(S=1, M=2, L=3)로 가중한 진행도 · 30점 중 28점</span>
@@ -585,7 +586,7 @@
       <i class="done" style="flex:3">M9</i>
       <i class="done" style="flex:3">M10</i>
       <i class="done" style="flex:2">M11</i>
-      <i style="flex:2">M12</i>
+      <i class="next" style="flex:2">M12</i>
     </div>
     <p class="legend"><span class="l-done">완료</span><span class="l-next">진행 중</span><span>미착수</span></p>
   </div>
@@ -595,7 +596,7 @@
     <div class="fig"><b>4,953</b><span>채울 표 칸 (슬롯)</span></div>
     <div class="fig"><b>280</b><span>명단·내역 반복영역</span></div>
     <div class="fig is-ok"><b>0</b><span>올바른 입력에서 나온 오탐</span></div>
-    <div class="fig"><b>695</b><span>자동 테스트 (기본 672 + 로컬 23)</span></div>
+    <div class="fig"><b>795</b><span>자동 테스트 (기본 772 + 로컬 23)</span></div>
   </div>
   <p class="figure-note">
     원본 <span class="num">.hwp</span> 193개 중 서식 목차·신구대조표 10건을 뺀 183개가 대상입니다.
@@ -701,9 +702,12 @@
           사용자가 문서를 이으면 계획서–정산서 금액을 대조해 경고한다(대상 서식 쌍은 아직 미정).
         </p>
       </li>
-      <li class="todo">
-        <span class="id">M12</span><span class="name">클라우드 이전<small>M</small></span><span class="pill open">미착수</span>
-        <p class="proof">변환을 별도 워커로 떼어 내고 로컬과 같은 시나리오가 클라우드에서 통과한다.</p>
+      <li class="next">
+        <span class="id">M12</span><span class="name">클라우드 이전<small>M</small></span><span class="pill next">진행 중</span>
+        <p class="proof">
+          한컴 변환 없이(HWPX 만) 로컬과 같은 시나리오가 AWS 에서 통과한다. 로컬 Docker(PostgreSQL·S3 호환 서버) 검증과
+          EC2(GPU) LLM 배포는 끝났고, ECR·Fargate·RDS·S3 배포가 남았다.
+        </p>
       </li>
     </ol>
   </section>
@@ -869,6 +873,11 @@
         <p>기안문 입력 화면 맨 아래에 설명 없는 <code>○○○</code> 칸 3개가 남았다. 결재란 <code>담당</code>·<code>PM 과장</code>·<code>처장</code>
           칸 옆에 표가 하나씩 더 들어 있었다(중첩 표). 중첩 표의 이름 없는 칸은 바깥 칸의 이름을 쓴다 — 서식 183개의 399칸.</p>
       </li>
+      <li>
+        <span class="file">시연 후</span>
+        <p>그 결재란 <code>○○○</code> 가 이름만 붙고 <strong>필수 입력 칸</strong>으로 남아 있었다 — 목록의 서식 전체에서 1,272칸.
+          바깥 칸이 결재란이면 결재란 칸으로 보고 필수에서 뺀다. 틀은 산출물에 남긴다(스키마 v7, 2026.11.10).</p>
+      </li>
     </ul>
   </section>
 
@@ -876,8 +885,8 @@
   <section>
     <h2><span class="no">05</span> 클라우드로 옮길 때</h2>
     <p class="lede">
-      한글이 필요한 곳은 <strong>형식 변환</strong> 하나입니다. 변환은 요청/결과 인터페이스 뒤에 숨겨 두어,
-      클라우드에서는 구현만 바꿔 끼우면 됩니다.
+      한글이 필요한 곳은 <strong>형식 변환</strong> 하나입니다. 클라우드에서는 변환을 하지 않고 <strong>HWPX 만</strong>
+      내려 주며, 작성자가 한글에서 열어 고친 뒤 PDF 로 냅니다. 그래서 Windows 인스턴스가 필요 없습니다.
     </p>
 
     <div class="scroll">
@@ -885,7 +894,7 @@
         <thead><tr><th>기능</th><th>한글 필요</th></tr></thead>
         <tbody>
           <tr><td>서식 로딩 · 입력폼 · 검증 · 값 주입 · 수식 계산 · HWPX 생성</td><td><span class="pill done">불필요</span></td></tr>
-          <tr><td>결과물 HWP · PDF 변환</td><td><span class="pill open">필요</span></td></tr>
+          <tr><td>결과물 HWP · PDF 변환 (클라우드에서는 하지 않음 — HWPX 를 받아 한글에서)</td><td><span class="pill open">필요</span></td></tr>
           <tr><td>관리자가 새 <code>.hwp</code> 서식 등록 (HWPX 로 올리면 불필요)</td><td><span class="pill open">필요</span></td></tr>
         </tbody>
       </table>
@@ -893,7 +902,7 @@
 
     <div class="svc">
       <div><b>ECS Fargate</b><span>웹 서비스와 문서 생성·검증. 순수 파이썬이라 Linux 컨테이너에서 그대로 돈다.</span></div>
-      <div><b>변환 백엔드</b><span>Windows 변환 워커 / HWPX 그대로 제공 / 한글 밖 PDF 변환기 중 실제 서식 품질로 고른다 (M12 전 결정).</span></div>
+      <div><b>변환</b><span>두지 않는다. 산출은 HWPX 다운로드, 서식 등록·명단 가져오기는 <code>.hwpx</code> 업로드 (결정).</span></div>
       <div><b>EC2 (GPU)</b><span>EXAONE 3.5 추론. 필요할 때만 켜고 끈다.</span></div>
       <div><b>S3 · RDS</b><span>템플릿·산출물 파일과 문서 이력(입력값·검증 결과·서식 버전).</span></div>
     </div>
@@ -939,10 +948,30 @@
         </p>
       </div>
       <div class="gap">
-        <h4>클라우드 변환 방식과 HWP 필요 여부 <span class="pill open">팀 결정</span></h4>
+        <h4>클라우드 변환 방식과 HWP 필요 여부 <span class="pill done">결정</span></h4>
         <p>
-          결과물을 HWP 로 꼭 줘야 하는지 먼저 정하면 선택지가 줄어듭니다. 서버에서 한글을 자동화로 돌리는
-          라이선스도 확인이 필요합니다.
+          서버는 HWPX 만 만들고, 작성자가 한글에서 열어 고친 뒤 PDF 로 냅니다. 서버에서 한글을 돌리지 않으니
+          변환 워커와 그 라이선스 문제가 없어졌습니다.
+        </p>
+      </div>
+      <div class="gap">
+        <h4>집행 항목 이름 수정 <span class="pill done">결정</span></h4>
+        <p>
+          시연 의견: 집행 항목과 그 이름은 바뀐다(<code>학생지원금</code> → <code>1인당 지원금</code>). 작성자가 직접 고치거나
+          글로 채우기(LLM)로 고칩니다(명세 IN_23·24). 금액·합계 검증은 칸 위치로 하므로 이름을 바꿔도 같습니다. 구현 전입니다.
+        </p>
+      </div>
+      <div class="gap">
+        <h4>표 셀 추가·삭제 <span class="pill open">검토</span></h4>
+        <p>
+          시연 의견: 표에서 셀을 자유롭게 더하고 빼야 합니다. 지금은 명단·내역 행을 서식 칸 수 안에서만 채웁니다.
+          행만인지 열까지인지, 명단 표만인지 모든 표인지 정해야 합니다.
+        </p>
+      </div>
+      <div class="gap">
+        <h4>한글처럼 편집 · 한글 단축키 <span class="pill open">검토</span></h4>
+        <p>
+          시연 의견: 웹에서 한글처럼 편하게 고치고 단축키도 한글과 같게. 입력 화면은 두고 표 조작 단축키부터 맞추는 안을 검토합니다.
         </p>
       </div>
       <div class="gap">
@@ -955,6 +984,7 @@
           문서번호·시행일자는 결재 시스템이 매기므로 필수가 아닙니다. 부서·연락처·이메일 칸은 계정 정보로 채우고(팩스는 연락처와 같은 번호),
           기안문의 붙임(사업 계획서 등)은 내 문서를 이어 함께 받습니다 — 묶음 파일 나누기 때문에 빠진 것이 아니라 원래 다른 서식입니다.
           복제하면 입력값·붙임·연결 문서가 함께 넘어갑니다.
+          결재란은 틀을 두고 필수에서 뺐습니다 — 결재선은 결재 시스템이 등록합니다(2026.11.10).
         </p>
       </div>
     </div>
@@ -966,7 +996,7 @@
       진행도는 <code>docs/dev-roadmap.md</code> 의 마일스톤 규모(S·M·L)를 1·2·3 점으로 가중했습니다.
       실제 서식은 내부 자료라 저장소에 없고, 그 서식으로 도는 테스트는 <code>pytest -m local</code> 로 분리했습니다.
     </p>
-    <p>DocFlow · 캡스톤 디자인 · 2026.10.31 기준</p>
+    <p>DocFlow · 캡스톤 디자인 · 2026.11.10 기준</p>
   </footer>
 
 </div>

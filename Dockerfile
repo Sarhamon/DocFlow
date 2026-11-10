@@ -2,6 +2,7 @@
 #
 #   docker build -t docflow .
 #   docker run -p 8000:8000 -e DOCFLOW_DATA_KEY=… -e DOCFLOW_DATABASE_URL=… -e DOCFLOW_S3_BUCKET=… docflow
+#   (+ -e DOCFLOW_DUCKDNS_DOMAIN=… -e DOCFLOW_DUCKDNS_TOKEN=… 이면 시작할 때 DuckDNS 에 등록)
 #
 # 한컴 변환이 없어 HWPX 만 만든다. 서식 적재·루트 계정은 같은 이미지로 한 번 돌린다:
 #   docker run --rm -e … docflow python tools/manage_users.py create-root <아이디> <이름>
@@ -33,7 +34,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
 
-# ALB 뒤에서 HTTPS 를 알아보도록 프록시 헤더를 믿는다 (컨테이너에는 ALB 만 붙는다)
-CMD ["uvicorn", "--factory", "docflow.web.app:create_app", \
-     "--host", "0.0.0.0", "--port", "8000", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+# 시작할 때 DuckDNS 이름을 이 태스크의 퍼블릭 IP 로 맞춘다(DOCFLOW_DUCKDNS_* 가 있을 때만, tools/duckdns.py).
+# ALB 없이 태스크가 바로 노출되므로 프록시 헤더(X-Forwarded-For)는 믿지 않는다 — 믿으면 누구나
+# 로그인 이력·감사 로그의 IP 를 꾸밀 수 있다
+CMD ["sh", "-c", "python tools/duckdns.py; exec uvicorn --factory docflow.web.app:create_app --host 0.0.0.0 --port 8000"]

@@ -1,4 +1,4 @@
-"""파일 저장소 — 서식 버전별 템플릿과 문서 산출물. 로컬 폴더, 또는 S3 (M12).
+"""파일 저장소 — 서식 버전별 템플릿과 문서 산출물. 로컬 폴더, S3, 또는 DB (M12).
 
 키는 `/` 로 나눈 상대 경로다(`forms/12/v1.hwpx`, `documents/3/r2/문서.pdf`).
 어느 저장소를 쓸지는 open_store 가 환경변수로 고른다.
@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from pathlib import Path, PurePosixPath
@@ -13,8 +14,11 @@ from typing import Protocol
 
 import boto3
 from botocore.exceptions import ClientError
+from sqlalchemy import delete, or_, select
+from sqlalchemy.orm import sessionmaker
 
 from docflow.config import Settings
+from docflow.service.db import StoredFile, connect
 
 
 class FileStore(Protocol):
@@ -34,11 +38,14 @@ class FileStore(Protocol):
 
 
 def open_store(settings: Settings) -> FileStore:
-    """DOCFLOW_S3_BUCKET 이 있으면 S3 (DOCFLOW_S3_PREFIX 아래), 없으면 data/files 폴더.
+    """DOCFLOW_FILE_STORE=db 면 DB(stored_files 표), DOCFLOW_S3_BUCKET 이 있으면 S3
+    (DOCFLOW_S3_PREFIX 아래), 없으면 data/files 폴더.
 
     S3 인증·지역은 boto3 표준을 따른다 (Fargate 작업 역할, AWS_DEFAULT_REGION 등).
     버킷에 닿지 않으면 바로 멈춘다: 그대로 띄우면 health 는 통과하고 파일마다 '없다'로 보인다.
     """
+    if os.environ.get("DOCFLOW_FILE_STORE") == "db":
+        return DbFileStore(connect(settings.database_url), cache=settings.data / "db-cache")
     bucket = os.environ.get("DOCFLOW_S3_BUCKET")
     if not bucket:
         return LocalFileStore(settings.data / "files")
@@ -163,3 +170,58 @@ class S3FileStore:
             if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
                 return None
             raise
+
+
+class DbFileStore:
+    """DB 의 stored_files 표. 읽을 때는 cache 폴더에 내용(SHA-256)별로 풀어 둔다.
+
+    S3 를 쓸 IAM 역할을 만들 수 없는 곳에서 쓴다(학교 공용 계정 — 역할 생성이 막혀 있다).
+    파일이 작아(템플릿 183개 13MB) 한 행에 통째로 둔다.
+    """
+
+    def __init__(self, sessions: sessionmaker, *, cache: Path) -> None:
+        self.sessions = sessions
+        self.cache = Path(cache)
+
+    def put(self, key: str, src: Path) -> int:
+        name = "/".join(_parts(key))
+        data = Path(src).read_bytes()
+        with self.sessions() as s:
+            row = s.get(StoredFile, name) or StoredFile(key=name)
+            row.data, row.size, row.sha256 = data, len(data), hashlib.sha256(data).hexdigest()
+            s.add(row)
+            s.commit()
+        return len(data)
+
+    def local_path(self, key: str) -> Path:
+        name = "/".join(_parts(key))
+        with self.sessions() as s:
+            digest = s.scalar(select(StoredFile.sha256).where(StoredFile.key == name))
+            if digest is None:
+                raise FileNotFoundError(key)
+            path = self.cache / digest / _parts(key)[-1]
+            if not path.is_file():
+                data = s.scalar(select(StoredFile.data).where(StoredFile.key == name))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                part = path.with_name(path.name + ".part")
+                part.write_bytes(data)
+                os.replace(part, path)
+        return path
+
+    def exists(self, key: str) -> bool:
+        name = "/".join(_parts(key))
+        with self.sessions() as s:
+            return s.scalar(select(StoredFile.key).where(StoredFile.key == name)) is not None
+
+    def delete_prefix(self, prefix: str) -> None:
+        base = "/".join(_parts(prefix.rstrip("/")))
+        # LIKE 의 특수 문자(`%`·`_`)는 글자 그대로 찾는다.
+        # `documents/3` 이 `documents/30` 을 지우지 않게 `/` 까지 붙인다
+        below = base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
+        with self.sessions() as s:
+            s.execute(
+                delete(StoredFile).where(
+                    or_(StoredFile.key == base, StoredFile.key.like(below, escape="\\"))
+                )
+            )
+            s.commit()
