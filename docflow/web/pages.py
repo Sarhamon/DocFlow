@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -27,6 +27,10 @@ templates = Jinja2Templates(directory=HERE / "templates")
 
 def mount(app: FastAPI, auth: Callable[..., AuthService]) -> None:
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> FileResponse:
+        return FileResponse(HERE / "static" / "favicon.ico", media_type="image/x-icon")
 
     def viewer(request: Request, svc: AuthService = Depends(auth)) -> User | Response:
         """쪽을 볼 계정. 볼 수 없으면 갈 곳(RedirectResponse)."""

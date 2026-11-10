@@ -100,6 +100,7 @@ def _name_nested_slots(slots: list[SlotSpec], layouts: list[_Layout]) -> None:
 
     기안문 결재란은 `담당`·`PM 과장`·`처장` 칸 옆 칸에 `○○○` 하나짜리 표를 넣어 두었다.
     표마다 따로 보면 이름이 없어 입력 화면에 설명 없는 `○○○` 칸으로 남았다(실측).
+    바깥 칸이 결재란이면 결재란 칸으로 본다.
     """
     for s in slots:
         host = layouts[s.table].table.host
@@ -112,6 +113,10 @@ def _name_nested_slots(slots: list[SlotSpec], layouts: list[_Layout]) -> None:
         left, above = _label_cells(parent, cell)
         if (label_cell := left or above) is not None:
             s.label = _norm(label_cell.text)
+        # 결재란 칸 안의 `○○○` 는 결재선이 채운다. 틀은 두고 입력·필수에서 뺀다
+        if any(c is not None and _in_approval_row(parent, c) for c in (left, above)):
+            s.role = "approval"
+            s.required = False
 
 
 def _type_formula_operands(

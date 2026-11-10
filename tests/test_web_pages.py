@@ -55,6 +55,11 @@ def test_로그인하지_않으면_로그인_쪽으로_보낸다(app):
     assert c.get("/login").status_code == 200
 
 
+def test_파비콘은_로그인_없이_받는다(app):
+    r = TestClient(app).get("/favicon.ico")
+    assert (r.status_code, r.headers["content-type"]) == (200, "image/x-icon")
+
+
 def test_첫_화면은_서식_선택이다(client):
     r = client.get("/", follow_redirects=False)
     assert (r.status_code, r.headers["location"]) == (303, "/forms")

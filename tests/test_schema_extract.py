@@ -315,6 +315,16 @@ def test_중첩_표의_이름_없는_칸은_바깥_칸의_이름을_쓴다(tmp_p
         (1, "담당", "○○○"),
         (2, "PM 과장", "○○○"),
     ]
+    # 결재란 칸이라 틀은 두되 입력·필수에서 뺀다
+    assert [(x.role, x.required) for x in nested] == [("approval", False)] * 2
+
+
+def test_중첩_표라도_결재란이_아니면_입력_칸이다(tmp_path):
+    inner = tbl(1, 1, (0, 0, "○○○"))
+    outer = tbl(1, 2, (0, 0, "담당자"), (0, 1, inner))
+    s = schema_of(tmp_path, outer)
+    [nested] = [x for x in s.slots if x.table > 0]
+    assert (nested.role, nested.required) == ("input", True)
 
 
 # ------------------------------------------------------------------ 변형
