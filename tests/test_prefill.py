@@ -509,3 +509,47 @@ def test_다음_문장의_낱말로_열을_정하지_않는다():
     cells = {"t0.r1.c1": "1,000,000", "t0.r1.c2": "820,000",
              "t0.r2.c1": "100,000", "t0.r2.c2": "95,000"}  # fmt: skip
     assert prefill(s, text, FakeLlm({"cells": cells}), today=TODAY).issues == []
+
+
+# ---------------------------------------------------------------- 집행 항목 이름 (IN_24)
+def 집행() -> FormSchema:
+    return FormSchema(
+        title="운영 계획서",
+        tables=[TableSpec(index=0, rows=3, cols=2,
+                          grid=[["구분", "금액"], ["① 강사료", "0,000,000원"],
+                                ["② 간식비", "0,000,000원"]])],
+        slots=[SlotSpec(table=0, row=1, col=0, label="항목 이름", placeholder="① 강사료",
+                        origin="item", required=False),
+               SlotSpec(table=0, row=1, col=1, label="① 강사료", input_type="amount",
+                        placeholder="0,000,000원"),
+               SlotSpec(table=0, row=2, col=0, label="항목 이름", placeholder="② 간식비",
+                        origin="item", required=False),
+               SlotSpec(table=0, row=2, col=1, label="② 간식비", input_type="amount",
+                        placeholder="0,000,000원")],
+    )  # fmt: skip
+
+
+def test_항목_이름_칸도_묻고_표에는_지금_이름을_보인다():
+    s = 집행()
+    p = plan(s)
+    labels = {t.key: t.label for t in p.cells}
+    assert labels["t0.r1.c0"] == "항목 이름 (지금: ① 강사료)"
+    view = table_view(s, p)
+    assert "① 강사료 {cells.t0.r1.c0}" in view  # 자리만 보이면 행의 뜻을 잃는다
+    assert "'항목 이름' 칸은" in build_request(s, p, "글", TODAY).system
+
+
+def test_글이_바꾼_이름만_받고_지금_이름을_베낀_값은_버린다():
+    out = prefill(
+        집행(), "간식비는 학생지원금으로 바꾸고 300,000원",
+        FakeLlm({"cells": {"t0.r1.c0": "① 강사료", "t0.r2.c0": "② 학생지원금",
+                           "t0.r2.c1": "300,000원"}}),
+        today=TODAY,
+    )  # fmt: skip
+    assert out.input["cells"] == {"t0.r2.c0": "② 학생지원금", "t0.r2.c1": "300,000원"}
+
+
+def test_글에_없는_새_이름은_경고한다():
+    out = prefill(집행(), "간식비 300,000원",
+                  FakeLlm({"cells": {"t0.r2.c0": "다과비"}}), today=TODAY)  # fmt: skip
+    assert [(i.code, i.location.key) for i in out.issues] == [(LLM_UNCITED, "t0.r2.c0")]

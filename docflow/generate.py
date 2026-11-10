@@ -234,6 +234,8 @@ def _fill_cells(doc: HwpxDocument, schema: FormSchema, data: FormInput, variant:
         table, row, col = map(int, m.groups())
         if not _in_variant(schema, table, variant):
             raise GenerateError(f"{key} 는 고른 변형에 없는 칸이다")
+        if slot is not None and slot.origin == "item" and not str(value).strip():
+            continue  # 집행 항목 이름을 비워 두면 서식 이름 그대로 (IN_23)
         doc.set_cell(table, row, col, str(value))
         written += 1
     return written

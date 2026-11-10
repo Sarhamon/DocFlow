@@ -391,6 +391,8 @@
           if (slot.role === "computed") return { node: "자동 계산", cls: "computed" };
           const multiline = slot.input_type === "text" && (slot.placeholder.includes("\n") || slot.placeholder.length > 40);
           const field = input(slot.id, slot.input_type, raw.cells[slot.id], slot.placeholder, (v) => { raw.cells[slot.id] = v; }, { multiline });
+          // 집행 항목 이름 (IN_23): 바꿀 때만 적는다. 비우면 서식 이름 그대로
+          if (slot.origin === "item") field.title = `항목 이름을 바꿀 때만 적으세요. 비우면 '${slot.placeholder.trim()}' 그대로 씁니다`;
           const button = draftButton(slot.id);
           return {
             node: button ? h("div", { class: "input-wrap" }, field, button) : field,

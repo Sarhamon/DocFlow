@@ -38,6 +38,7 @@ from docflow.schema.rules import (
     is_approval_head,
     is_approval_placeholder,
     is_approval_title,
+    is_budget_item,
     is_placeholder,
     is_statement,
     is_total_text,
@@ -74,6 +75,8 @@ def extract(
         slots.extend(find_slots(layout, found))
     _name_nested_slots(slots, layouts)
     _type_formula_operands(formulas, layouts, slots, repeats)
+    if items := _item_name_slots(slots, layouts, repeats):
+        slots = sorted([*slots, *items], key=lambda s: (s.table, s.row, s.col))
 
     return FormSchema(
         form_id=form_id,
@@ -117,6 +120,36 @@ def _name_nested_slots(slots: list[SlotSpec], layouts: list[_Layout]) -> None:
         if any(c is not None and _in_approval_row(parent, c) for c in (left, above)):
             s.role = "approval"
             s.required = False
+
+
+def _item_name_slots(
+    slots: list[SlotSpec], layouts: list[_Layout], repeats: list[RepeatSpec]
+) -> list[SlotSpec]:
+    """집행 항목 이름 칸 (IN_23): 금액 칸의 행 제목 가운데 비목 이름(`① 강사료`).
+
+    집행 항목과 그 이름은 해마다 바뀐다(`학생지원금` → `1인당 지원금`, 2026-11-10 시연). 작성자가
+    고칠 수 있게 입력 칸(`origin="item"`)으로 잡는다. 비워 두면 서식 이름을 그대로 쓴다.
+    표 하나에 둘 이상 있을 때만 본다 — 하나뿐이면 항목 목록이 아니라 칸 이름이다(`회의비용`).
+    명단(반복영역)의 행은 행마다 작성자가 적으니 뺀다.
+    """
+    taken = {(s.table, s.row, s.col) for s in slots}
+    in_repeat = {(r.table, row) for r in repeats for row in range(r.start_row, r.end_row + 1)}
+    found: dict[int, dict[tuple[int, int], str]] = defaultdict(dict)
+    for s in slots:
+        if s.role != "input" or s.input_type != "amount" or (s.table, s.row) in in_repeat:
+            continue
+        layout = layouts[s.table]
+        left, _ = _label_cells(layout, layout.cover[(s.row, s.col)])
+        if left is None or (s.table, left.row, left.col) in taken:
+            continue
+        if is_budget_item(left.text) and not is_total_text(left.text):
+            found[s.table][(left.row, left.col)] = left.text.strip()
+    return [
+        SlotSpec(table=table, row=row, col=col, label="항목 이름", placeholder=text,
+                 origin="item", input_type="text", required=False)
+        for table, cells in found.items() if len(cells) >= 2
+        for (row, col), text in cells.items()
+    ]  # fmt: skip
 
 
 def _type_formula_operands(

@@ -185,10 +185,11 @@ def skeleton(schema: FormSchema, variant: int | None = None) -> dict[str, Any]:
         for s in slots
     }
     def cell_default(s: SlotSpec) -> str:
-        """제출 문장은 문장째 두고(날짜·이름만 고친다), 관리자가 바꾼 칸은 예시를 지운다."""
+        """제출 문장은 문장째 두고(날짜·이름만 고친다), 관리자가 바꾼 칸은 예시를 지운다.
+        집행 항목 이름은 비워 두면 서식 이름을 쓴다."""
         if s.origin == "template":
             return s.placeholder
-        return "" if s.origin == "example" else default(s.placeholder)
+        return "" if s.origin in ("example", "item") else default(s.placeholder)
 
     out["cells"] = {s.id: cell_default(s) for s in slots}
     def column_key(rep: RepeatSpec, col: RepeatColumn) -> str:

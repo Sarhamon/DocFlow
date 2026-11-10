@@ -56,6 +56,8 @@ SYSTEM = """\
    같은 열의 위쪽 제목으로 판단한다. 표에 적힌 다른 글자는 서식의 글자라 옮기지 않는다.
 8. 한 항목에 금액이 여럿이면 금액마다 바로 앞뒤의 낱말로 열을 고른다.
    '예산' 옆의 금액은 예산 열, '집행'·'지출'·'사용' 옆의 금액은 집행 열이다.
+9. '항목 이름' 칸은 글이 그 항목의 이름을 바꾸라고 할 때만 새 이름을 적는다
+   (예: "간식비는 학생지원금으로"). 그 밖에는 "" 로 둔다. 지금 이름을 다시 적지 않는다.
 """
 
 Kind = Literal["field", "cell", "repeat"]
@@ -259,9 +261,18 @@ def plan(schema: FormSchema, variant: int | None = None) -> Plan:
             out.skipped.append(label)
             continue
         out.fields.append(Target("field", f.name, label, f.input_type, _example(f.placeholder)))
-    inputs = {(s.table, s.row, s.col) for s in schema.input_slots()}
+    # 집행 항목 이름 칸은 행 제목으로도 쓰이므로 제목 찾기에서 입력 칸으로 보지 않는다
+    inputs = {(s.table, s.row, s.col) for s in schema.input_slots() if s.origin != "item"}
     by_table: dict[int, list[Target]] = {}
     for s in schema.input_slots():
+        if s.origin == "item":
+            # 서식에 이름이 박혀 있어도 묻는다 (IN_24). 예시가 지금 이름이라 그대로 베끼면 버린다
+            if mine(s.table):
+                name = _one_line(s.placeholder)
+                t = Target("cell", s.id, f"항목 이름 (지금: {name})", s.input_type, name,
+                           s.table, s.row, s.col)  # fmt: skip
+                by_table.setdefault(s.table, []).append(t)
+            continue
         # 제출 문장은 날짜·이름만 고치는 칸이라 LLM 에 묻지 않는다 (문장째 다시 쓰게 된다)
         if not mine(s.table) or s.origin == "template" or _preset(s.placeholder):
             continue
@@ -344,6 +355,9 @@ def table_view(schema: FormSchema, p: Plan, budget: int = TABLE_BUDGET) -> str:
     반복영역(명단)은 한 줄로 줄인다. 넘치면 넣을 수 있는 표까지만 넣는다.
     """
     keys = {(t.table, t.row, t.col): t.key for t in p.cells}
+    # 집행 항목 이름 칸은 지금 이름을 함께 보인다. 자리만 보이면 행의 뜻을 잃는다
+    names = {(s.table, s.row, s.col): _one_line(s.placeholder)[:_CELL_LIMIT]
+             for s in schema.slots if s.origin == "item"}  # fmt: skip
     repeats = {(r.table, row): r for r in schema.repeats
                for row in range(r.start_row, r.end_row + 1)}  # fmt: skip
     blocks: list[str] = []
@@ -362,6 +376,8 @@ def table_view(schema: FormSchema, p: Plan, budget: int = TABLE_BUDGET) -> str:
             for c, text in enumerate(row):
                 key = keys.get((table, r, c))
                 cell = f"{{cells.{key}}}" if key else _one_line(text)[:_CELL_LIMIT]
+                if key and (table, r, c) in names:
+                    cell = f"{names[(table, r, c)]} {cell}"
                 if cells and cell and cell == cells[-1]:
                     continue  # 가로로 병합된 칸이 펼쳐져 같은 글자가 이어진다
                 cells.append(cell)

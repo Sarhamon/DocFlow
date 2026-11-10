@@ -284,3 +284,13 @@ def test_본문_자리표시자를_미리_알려준다(tmp_path):
         "20○○년 ○○월 ○○일",
         "사업담당자 : ○ ○ ○  (날인)",
     ]
+
+
+# ------------------------------------------------------------ 집행 항목 이름 (IN_23)
+def test_집행_항목_이름은_적으면_바꾸고_비우면_그대로(tmp_path):
+    from tests.test_schema_extract import 집행표
+
+    schema, template = make(tmp_path, hf.section(집행표("① 강사료", "② 간식비")), "집행")
+    data = FormInput(cells={"t0.r1.c0": "① 1인당 지원금", "t0.r2.c0": "  "})
+    grid = rows_of(generate(schema, data, template, tmp_path / "o.hwpx").path)
+    assert (grid[1][0], grid[2][0]) == ("① 1인당 지원금", "② 간식비")

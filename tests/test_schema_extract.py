@@ -518,3 +518,46 @@ def test_명단_열_이름에_윗줄_예시를_넣지_않고_0만_적힌_예시�
     [rep] = s.repeats
     cols = {c.label: c.input_type for c in rep.columns if c.label}
     assert cols == {"참석 대상": "text", "성명": "text", "산업체명": "text", "직위": "text"}
+
+
+# ------------------------------------------------------------------ 집행 항목 이름 (IN_23)
+def 집행표(*items: str) -> str:
+    """구분 | 산출근거 | 금액 — 2-03 계획서의 집행 계획 표를 줄인 것. 맨 아래는 합계."""
+    n = len(items)
+    cells = [(0, 0, "구분"), (0, 1, "산출근거"), (0, 2, "금액")]
+    for i, name in enumerate(items, 1):
+        cells += [(i, 0, name), (i, 1, "○○○원 × 0명"), (i, 2, "0,000,000원")]
+    cells += [(n + 1, 0, "합계"), (n + 1, 2, "0,000,000원")]
+    return tbl(n + 2, 3, *cells)
+
+
+def test_집행_항목_이름은_고칠_수_있는_선택_칸이다(tmp_path):
+    """시연 의견: 집행 항목과 그 이름은 바뀐다(`학생지원금` → `1인당 지원금`)."""
+    s = schema_of(tmp_path, 집행표("① 강사료", "② 간식비"))
+    items = [x for x in s.slots if x.origin == "item"]
+    assert [(x.id, x.placeholder, x.label, x.required, x.role) for x in items] == [
+        ("t0.r1.c0", "① 강사료", "항목 이름", False, "input"),
+        ("t0.r2.c0", "② 간식비", "항목 이름", False, "input"),
+    ]
+    # 금액 칸의 이름은 그대로 서식의 항목 이름이다
+    assert {x.id: x.label for x in s.slots}["t0.r1.c2"] == "① 강사료"
+
+
+def test_항목이_하나뿐이거나_비목_이름이_아니면_잡지_않는다(tmp_path):
+    one = schema_of(tmp_path, 집행표("회의비"))
+    assert not [x for x in one.slots if x.origin == "item"]  # 목록이 아니라 칸 이름이다
+    goals = schema_of(tmp_path, 집행표("유지 취업률", "교육혁신지수"))
+    assert not [x for x in goals.slots if x.origin == "item"]  # 성과지표
+
+
+@pytest.mark.parametrize(
+    "text, want",
+    [("① 강사료", True), ("④ 간식비", True), ("신산업 수익금", True),
+     ("인건비(산학협력교육운영비)", True), ("1인당 지원금", True), ("수당", True),
+     ("소계", False), ("합계금액", False), ("유지 취업률", False), ("식", False),
+     ("전문능력을 갖춘 자", False), ("91,939,533", False), ("○○비", False)],
+)  # fmt: skip
+def test_비목_이름(text, want):
+    from docflow.schema.rules import is_budget_item
+
+    assert is_budget_item(text) is want

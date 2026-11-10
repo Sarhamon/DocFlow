@@ -184,6 +184,30 @@ def is_approval_field(name: str) -> bool:
     return bool(_APPROVAL_FIELD_RE.match(name))
 
 
+#: 집행 항목(비목) 이름의 끝: `① 강사료`, `④ 간식비`, `신산업 수익금`, `인건비(산학협력교육운영비)`
+_BUDGET_ITEM_RE = re.compile(r"(?:비|료|금|수당)$")
+_TRAILING_NOTE_RE = re.compile(r"\s*\(.*?\)\s*$")
+_BUDGET_TOTAL_RE = re.compile(r"합계|소계|총계")
+#: 항목 이름으로 보는 최대 길이. 긴 글은 설명이다
+_BUDGET_ITEM_LIMIT = 30
+
+
+def is_budget_item(text: str) -> bool:
+    """집행 항목 이름인가. 괄호 설명을 뗀 이름이 …비·…료·…금·…수당 으로 끝난다.
+
+    금액 칸의 행 제목 가운데 이것만 고칠 수 있는 항목 이름으로 본다. 성과지표(`유지 취업률`),
+    강사 등급(`전문능력을 갖춘 자`), 단위(`식`), 숫자는 항목 이름이 아니다(서식 전체 실측).
+    """
+    flat = " ".join(text.split())
+    head = _TRAILING_NOTE_RE.sub("", flat)
+    return (
+        0 < len(flat) <= _BUDGET_ITEM_LIMIT
+        and bool(_BUDGET_ITEM_RE.search(head))
+        and not _BUDGET_TOTAL_RE.search(head)
+        and not is_placeholder(flat)
+    )
+
+
 #: 누름틀 이름으로 정하는 입력 유형. 이름은 전자문서 표준 서식에서 왔다.
 _FIELD_TYPE_RULES = [
     (re.compile(r"date$", re.I), "date"),
