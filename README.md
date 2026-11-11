@@ -8,7 +8,8 @@ LLM·입력 자동화, 운영 현황)이고, AWS 이전(M12)을 진행 중입니
 <http://docflow-ysu.duckdns.org> (배포 절차는 [`docs/deploy-aws.md`](docs/deploy-aws.md)).
 진행 현황은 [`docs/index.html`](docs/index.html), 개발 계획은 [`docs/dev-roadmap.md`](docs/dev-roadmap.md)에 있습니다.
 무엇을 만드는지는 [`docs/functional-spec.md`](docs/functional-spec.md)(기능명세서)에 정리했습니다.
-기능 목록의 원본은 팀 공유 파일 `Capstone.xlsx`이며(저장소 미포함), 이 문서의 명세와 같은 구조입니다.
+기능 목록의 원본은 [`docs/specsheet.xlsx`](docs/specsheet.xlsx)이며, 이 문서의 명세와 같은 구조입니다.
+DB 표 명세는 [`docs/tablestats.xlsx`](docs/tablestats.xlsx)에 있습니다.
 
 ---
 
@@ -189,6 +190,8 @@ DocFlow/
 ├─ tests/                  # pytest. 기본은 내부 자료 없이, 실제 서식 회귀는 `-m local`
 ├─ docs/index.html         # 진행 현황 리포트 (GitHub Pages)
 ├─ docs/functional-spec.md # 기능명세서 (역할·메뉴 Depth·기능 상세)
+├─ docs/specsheet.xlsx     # 기능명세 원본 (기능명세·역할 정의·용어집)
+├─ docs/tablestats.xlsx    # DB 테이블 명세서
 └─ requirements.txt
 ```
 

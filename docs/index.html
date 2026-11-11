@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="서식 기반 문서 자동 생성·검증 시스템 DocFlow 의 마일스톤별 개발 진행 현황.">
 <meta property="og:title" content="DocFlow 개발 진행 현황">
-<meta property="og:description" content="마일스톤 12/13 완료 (진행도 93%). 2026.11.10 시연 후 AWS 에 배포했고, 시연 의견(결재란·집행 항목·표 편집)을 반영했다.">
+<meta property="og:description" content="마일스톤 12/13 완료 (진행도 93%). 2026.11.10 시연 의견(결재란·집행 항목·표 편집)을 반영해 2026.11.11 AWS 에 다시 배포했고, 사이트에서 문서를 끝까지 만들어 보는 확인이 남았다.">
 <meta property="og:type" content="article">
 <title>DocFlow 개발 진행 현황</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -599,8 +599,8 @@
     </ul>
     <h2>원본</h2>
     <ul>
-      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/Capstone.xlsx">Capstone.xlsx</a><small>기능명세 시트</small></li>
-      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/테이블%20명세서.xlsx">테이블 명세서.xlsx</a></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/specsheet.xlsx">specsheet.xlsx</a><small>기능명세 · 역할 정의 · 용어집</small></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/tablestats.xlsx">tablestats.xlsx</a><small>DB 테이블 명세 (17개 표)</small></li>
     </ul>
   </nav>
 
@@ -618,7 +618,8 @@
       RTX 3060)로 확인했습니다. 브라우저에서 써 보며 <strong>붙임 문서</strong>(기안문에 계획서 잇기·함께 내려받기·붙임 줄 채우기)와
       계정 정보로 칸 채우기를 더했습니다. 지금은 클라우드 이전(M12)을 진행 중이고, 2026.11.10 노트북 로컬 + EC2 LLM 으로
       시연했습니다. 시연 뒤 <strong>AWS 에 배포</strong>했고(<a href="http://docflow-ysu.duckdns.org">docflow-ysu.duckdns.org</a>),
-      시연 의견 — 결재란을 필수에서 빼기, 집행 항목 이름 고치기·행 추가·삭제, 한글 표 단축키 — 을 반영했습니다(아래 06).
+      시연 의견 — 결재란을 필수에서 빼기, 집행 항목 이름 고치기·행 추가·삭제, 한글 표 단축키 — 을 반영해
+      2026.11.11 다시 배포했습니다(아래 06). 남은 일은 사이트에서 문서를 끝까지 만들어 보는 확인입니다.
     </p>
 
     <dl class="docstrip">
@@ -767,8 +768,9 @@
       <li class="next">
         <span class="id">M12</span><span class="name">클라우드 이전<small>M</small></span><span class="pill next">진행 중</span>
         <p class="proof">
-          한컴 변환 없이(HWPX 만) 로컬과 같은 시나리오가 AWS 에서 통과한다. Fargate·RDS·EC2(LLM) 배포를 마쳤다(2026.11.10, 2026.11.11 다시 배포).
+          한컴 변환 없이(HWPX 만) 로컬과 같은 시나리오가 AWS 에서 통과한다. Fargate·RDS·EC2(LLM) 배포를 마쳤다(2026.11.10). 2026.11.11 시연 의견 반영분을 다시 배포했다(스키마 v9, 서식 다시 등록).
           학교 공용 계정이 IAM 역할·ALB·Elastic IP 를 막아 파일은 RDS 에, 주소는 DuckDNS + Caddy 로 냈다.
+          자원이 매일 19시에 자동으로 꺼져 쓰는 날 RDS 를 먼저 켠다. Caddy 를 거치지 않던 8000 포트는 닫았다.
           사이트에서 문서를 끝까지 만들어 보는 확인이 남았다.
         </p>
       </li>
