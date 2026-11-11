@@ -294,3 +294,53 @@ def test_집행_항목_이름은_적으면_바꾸고_비우면_그대로(tmp_pat
     data = FormInput(cells={"t0.r1.c0": "① 1인당 지원금", "t0.r2.c0": "  "})
     grid = rows_of(generate(schema, data, template, tmp_path / "o.hwpx").path)
     assert (grid[1][0], grid[2][0]) == ("① 1인당 지원금", "② 간식비")
+
+
+# ------------------------------------------------------------ 집행 항목 행 추가·삭제
+def 정산표() -> str:
+    """항목 | 금액, 합계는 `=SUM(?2:?4)` (정산서처럼 범위를 적은 수식)."""
+    return hf.section(hf.table(5, 2, [
+        [hf.cell(0, 0, hf.para("집행항목")), hf.cell(0, 1, hf.para("금액(원)"))],
+        [hf.cell(1, 0, hf.para("① 강사료")), hf.cell(1, 1, hf.para("0,000,000원"))],
+        [hf.cell(2, 0, hf.para("② 간식비")), hf.cell(2, 1, hf.para("0,000,000원"))],
+        [hf.cell(3, 0, hf.para("③ 회의비")), hf.cell(3, 1, hf.para("0,000,000원"))],
+        [hf.cell(4, 0, hf.para("합계")), hf.cell(4, 1, hf.formula_para("=SUM(?2:?4)", "0"))],
+    ]))  # fmt: skip
+
+
+def test_집행_항목_행을_지우고_더하면_합계도_맞춘다(tmp_path):
+    from docflow.pipeline import parse_input
+
+    schema, template = make(tmp_path, 정산표(), "정산")
+    assert schema.item_rows() == {0: [1, 2, 3]}
+    data = parse_input(schema, {
+        "cells": {"t0.r1.c1": "100", "t0.r2.c1": "200", "t0.r3.c0": "③ 1인당 지원금",
+                  "t0.r3.c1": "300"},
+        "items": {"t0": {"removed": [2], "added": [{"0": "④ 학생지원금", "1": "50"}]}},
+    }).data  # fmt: skip
+    assert "t0.r2.c1" not in data.cells  # 지운 행의 값은 버린다
+    grid = rows_of(generate(schema, data, template, tmp_path / "o.hwpx").path)
+    assert grid == [["집행항목", "금액(원)"], ["① 강사료", "100"], ["③ 1인당 지원금", "300"],
+                    ["④ 학생지원금", "50"], ["합계", "450"]]  # fmt: skip
+
+
+def test_집행_항목이_아닌_행은_지울_수_없다(tmp_path):
+    from docflow.pipeline import InputError, parse_input
+
+    schema, _ = make(tmp_path, 정산표(), "정산")
+    with pytest.raises(InputError, match="집행 항목 행이 아니다"):
+        parse_input(schema, {"items": {"t0": {"removed": [4]}}})  # 합계 행
+    with pytest.raises(InputError, match="집행 항목 표가 아니다"):
+        parse_input(schema, {"items": {"t9": {"removed": [1]}}})
+
+
+def test_더한_항목은_여분_줄_위에_넣고_여분_줄은_지울_수_있다(tmp_path):
+    from docflow.pipeline import parse_input
+    from tests.test_schema_extract import 집행표
+
+    xml = hf.section(집행표("① 강사료", "② 간식비", "③ ......"))
+    schema, template = make(tmp_path, xml, "여분")
+    edit = {"removed": [3], "added": [{"0": "③ 회의비"}]}
+    data = parse_input(schema, {"items": {"t0": edit}}).data
+    grid = rows_of(generate(schema, data, template, tmp_path / "o.hwpx").path)
+    assert [r[0] for r in grid] == ["구분", "① 강사료", "② 간식비", "③ 회의비", "합계"]

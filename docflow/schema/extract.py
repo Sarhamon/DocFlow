@@ -40,6 +40,7 @@ from docflow.schema.rules import (
     is_approval_title,
     is_budget_item,
     is_placeholder,
+    is_spare_item,
     is_statement,
     is_total_text,
     parse_form_name,
@@ -144,10 +145,18 @@ def _item_name_slots(
             continue
         if is_budget_item(left.text) and not is_total_text(left.text):
             found[s.table][(left.row, left.col)] = left.text.strip()
+    found = {t: cells for t, cells in found.items() if len(cells) >= 2}
+    # 마지막 항목 아래의 여분 줄(`⑩ ......`)도 항목 행이다. 지우거나 이름을 적어 쓴다(시연 실측)
+    for table, cells in found.items():
+        layout, row = layouts[table], max(r for r, _ in cells) + 1
+        while (line := layout.by_row.get(row)) and is_spare_item(line[0].text):
+            if (table, row, line[0].col) not in taken:
+                cells[(row, line[0].col)] = line[0].text.strip()
+            row += 1
     return [
         SlotSpec(table=table, row=row, col=col, label="항목 이름", placeholder=text,
                  origin="item", input_type="text", required=False)
-        for table, cells in found.items() if len(cells) >= 2
+        for table, cells in found.items()
         for (row, col), text in cells.items()
     ]  # fmt: skip
 

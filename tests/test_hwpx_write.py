@@ -860,3 +860,54 @@ def test_번호_없이_적으면_자동_번호를_둔다(tmp_path):
     doc.set_cell(0, 0, 0, "교육과정 개편")
     _, paras, _ = runs_and_paras(doc, tmp_path)
     assert paras == ["11"]
+
+
+# ------------------------------------------------------------------ 행 지우기 (집행 항목)
+def test_행을_지우면_아래_행이_올라가고_표가_줄어든다(total_doc):
+    total_doc.delete_row(0, 2)
+    t = total_doc.tables()[0]
+    assert t.rows == 4
+    assert [r[0] for r in t.grid()] == ["제목", "1", "3", "합계"]
+    assert _height(total_doc) == 14120 - 2824
+    total_doc.set_cell(0, 2, 1, "셋째")  # 지운 뒤에도 좌표로 쓸 수 있다
+    assert total_doc.get_cell(0, 3, 0) == "합계"
+
+
+def test_위에서_내려온_병합_칸은_한_행_줄인다(tmp_path):
+    rows = [
+        [hf.cell(0, 0, hf.para("묶음"), rowspan=3), hf.cell(0, 1, hf.para("a"))],
+        [hf.cell(1, 1, hf.para("b"))],
+        [hf.cell(2, 1, hf.para("c"))],
+    ]
+    doc = HwpxDocument.open(hf.build(tmp_path / "m.hwpx", hf.section(hf.table(3, 2, rows))))
+    doc.delete_row(0, 1)
+    anchors = {(c.row, c.col): c for c in doc.tables()[0].cells}
+    assert anchors[(0, 0)].row_span == 2
+    assert [r[1] for r in doc.tables()[0].grid()] == ["a", "c"]
+    with pytest.raises(RowSpanConflict):
+        doc.delete_row(0, 0)  # 이 행에서 아래로 병합된 칸이 있다
+
+
+def test_행을_넣고_빼면_수식의_행_범위를_맞춘다(tmp_path):
+    """정산서의 합계는 `=SUM(?2:?4)` 처럼 범위를 적는다(1부터). SUM(ABOVE) 는 그대로다."""
+    rows = [
+        [hf.cell(0, 0, hf.para("항목")), hf.cell(0, 1, hf.para("금액"))],
+        [hf.cell(1, 0, hf.para("① 강사료")), hf.cell(1, 1, hf.para("100"))],
+        [hf.cell(2, 0, hf.para("② 간식비")), hf.cell(2, 1, hf.para("200"))],
+        [hf.cell(3, 0, hf.para("③ 회의비")), hf.cell(3, 1, hf.para("300"))],
+        [hf.cell(4, 0, hf.para("합계")), hf.cell(4, 1, hf.formula_para("=SUM(?2:?4)", "600"))],
+    ]
+    path = hf.build(tmp_path / "f.hwpx", hf.section(hf.table(5, 2, rows)))
+    doc = HwpxDocument.open(path)
+    new = doc.insert_row(0, 3)  # 마지막 항목 아래에 더한다
+    doc.shift_formulas(0, new, +1)
+    doc.set_cell(0, new, 1, "50")
+    doc.delete_row(0, 1)
+    doc.shift_formulas(0, 1, -1)
+    assert [f.formula for f in doc.formula_cells()] == ["=SUM(?2:?4)"]
+    doc.recalculate_formulas()
+    out = HwpxDocument.open(doc.save(tmp_path / "o.hwpx"))
+    assert out.tables()[0].grid()[-1] == ["합계", "550"]  # 200 + 300 + 50
+    assert "=SUM(?2:?4)??" in zipfile.ZipFile(tmp_path / "o.hwpx").read(
+        "Contents/section0.xml"
+    ).decode()

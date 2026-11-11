@@ -129,6 +129,21 @@ class Issue:
 
 # ---------------------------------------------------------------- 입력·설정
 @dataclass
+class ItemEdit:
+    """집행 항목 표 하나의 행 편집 (시연 의견: 집행 항목은 바뀔 수 있다)."""
+
+    #: 지운 항목 행 (서식의 행 번호)
+    removed: list[int] = field(default_factory=list)
+    #: 마지막 항목 아래에 더한 행들. 행은 열 번호 -> 값
+    added: list[dict[int, str]] = field(default_factory=list)
+
+
+def added_key(table: int, index: int, col: int) -> str:
+    """더한 행의 칸 키 (`t14.n0.c2`). 서식에 없는 행이라 좌표 대신 순번을 쓴다."""
+    return f"t{table}.n{index}.c{col}"
+
+
+@dataclass
 class FormInput:
     """사용자가 입력한 값. 키는 스키마의 id 를 그대로 쓴다."""
 
@@ -140,6 +155,8 @@ class FormInput:
     rows: dict[str, list[dict[int, str]]] = field(default_factory=dict)
     #: 변형이 있는 서식에서 고른 변형 번호. None 이면 전체를 본다
     variant: int | None = None
+    #: 집행 항목 표 번호 -> 지운 행·더한 행 (schema.item_rows)
+    items: dict[int, ItemEdit] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -314,8 +331,12 @@ def _targets(
         if (t := _field_target(spec, ex)) is not None:
             yield t, data.fields.get(spec.name, "")
     for slot in schema.slots:
+        edit = data.items.get(slot.table)
+        if edit and slot.row in edit.removed:
+            continue  # 지운 집행 항목 행
         if _in_variant(schema, slot.table, data.variant) and (t := _slot_target(slot, ex)):
             yield t, data.cells.get(slot.id, "")
+    yield from _added_targets(schema, data, ex)
     for rep in schema.repeats:
         if not _in_variant(schema, rep.table, data.variant):
             continue
@@ -326,6 +347,27 @@ def _targets(
             for col in rep.columns:
                 if (t := _repeat_target(rep, col, i, ex)) is not None:
                     yield t, row.get(col.col, "")
+
+
+def _added_targets(
+    schema: FormSchema, data: FormInput, ex: Exclusions
+) -> Iterator[tuple[_Target, str]]:
+    """더한 집행 항목 행의 칸. 형식은 마지막 항목 행의 같은 열 칸을 따른다. 필수는 아니다."""
+    item_rows = schema.item_rows()
+    for table, edit in data.items.items():
+        if not edit.added or table not in item_rows:
+            continue
+        last = schema.item_anchor(table)
+        last = item_rows[table][-1] if last is None else last
+        like = {s.col: s for s in schema.slots if s.table == table and s.row == last}
+        for i, row in enumerate(edit.added):
+            for col, value in row.items():
+                spec = like.get(col)
+                if spec is None or (t := _slot_target(spec, ex)) is None:
+                    continue
+                where = Location("cell", added_key(table, i, col), table, None, col,
+                                 label=_one_line(spec.label))  # fmt: skip
+                yield replace(t, location=where, required=False, placeholder=""), value
 
 
 # ---------------------------------------------------------------- 칸 하나 규칙
@@ -648,6 +690,10 @@ def check_amount_totals(
                 values = [
                     data.cells.get(x.id, "") for x in above if x.input_type not in _NOT_AMOUNT
                 ]
+                # 더한 집행 항목 행은 마지막 항목 아래(이 합계 위)에 들어간다
+                edit, anchor = data.items.get(table), schema.item_anchor(table)
+                if edit and anchor is not None and anchor in {x.row for x in above}:
+                    values += [row.get(col, "") for row in edit.added]
             items = [a for v in values if (a := item_amount(v)) is not None]
             if items:
                 where = Location("cell", s.id, s.table, s.row, s.col, label=_one_line(s.label))

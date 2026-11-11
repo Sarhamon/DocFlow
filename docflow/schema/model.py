@@ -20,7 +20,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-SCHEMA_VERSION = 8  # 8: 집행 항목 이름 칸(origin=item)을 고칠 수 있는 칸으로 잡는다
+from docflow.schema.rules import is_spare_item
+
+SCHEMA_VERSION = 9  # 9: 집행 항목 표 끝의 여분 줄(`⑩ ......`)도 항목 행으로 잡는다
 
 #: 서식 번호가 붙은 변형 이름 (`1-02호`)
 _NUMBERED_RE = re.compile(r"^\d+-\d+호$")
@@ -251,3 +253,26 @@ class FormSchema(BaseModel):
     def input_slots(self) -> list[SlotSpec]:
         """작성자가 채우는 칸."""
         return [s for s in self.slots if s.role == "input"]
+
+    def item_rows(self) -> dict[int, list[int]]:
+        """집행 항목 표 -> 항목 행들 (항목 이름 칸이 있는 행, IN_23).
+
+        작성자가 이 행을 지우거나 마지막 항목 아래에 행을 더할 수 있다. 반복영역이 있는 표는
+        뺀다 — 반복영역을 늘리면 행 번호가 밀려 둘이 어긋난다.
+        """
+        with_repeats = {r.table for r in self.repeats}
+        rows: dict[int, set[int]] = {}
+        for s in self.slots:
+            if s.origin == "item" and s.table not in with_repeats:
+                rows.setdefault(s.table, set()).add(s.row)
+        return {t: sorted(r) for t, r in sorted(rows.items())}
+
+    def item_anchor(self, table: int) -> int | None:
+        """더한 항목 행을 넣을 자리: 마지막 실제 항목 행. 그 아래의 여분 줄(`⑩ ......`)보다 위다.
+
+        정산서의 합계 범위(`=SUM(?6:?15)`)는 여분 줄을 빼고 실제 항목까지만 더한다. 그 아래에 넣으면
+        더한 항목이 합계에서 빠진다.
+        """
+        rows = [s.row for s in self.slots
+                if s.table == table and s.origin == "item" and not is_spare_item(s.placeholder)]
+        return max(rows, default=None)

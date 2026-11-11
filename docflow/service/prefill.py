@@ -79,6 +79,8 @@ class Target:
     col: int | None = None
     #: 반복영역 id (kind=repeat)
     repeat: str | None = None
+    #: 집행 항목 이름 칸 (IN_24). 글에 나온 새 이름만 받는다
+    rename: bool = False
 
     def describe(self) -> str:
         text = f"{self.label} [{self.input_type}]"
@@ -153,6 +155,16 @@ def _preset(placeholder: str) -> bool:
 
 def _bare(text: str) -> str:
     return re.sub(r"[\W_]", "", text)
+
+
+#: 항목 이름 앞의 번호 (`①`, `⑩`, `1.`)
+_ITEM_NUMBER_RE = re.compile(r"^[\s①-⑳⑴-⒇\d.)]+")
+
+
+def _named_in(value: str, text: str) -> bool:
+    """새 항목 이름이 글에 나온 이름인가. 번호를 뗀 이름이 두 글자 이상이고 글에 그대로 있다."""
+    name = _bare(_ITEM_NUMBER_RE.sub("", value))
+    return len(name) >= 2 and name in _bare(text)
 
 
 #: 값 대신 적는 '정보 없음' 표시. 글에 없으면 값이 아니다 (실측: 미지정·미제공·추가 설명 필요)
@@ -270,7 +282,7 @@ def plan(schema: FormSchema, variant: int | None = None) -> Plan:
             if mine(s.table):
                 name = _one_line(s.placeholder)
                 t = Target("cell", s.id, f"항목 이름 (지금: {name})", s.input_type, name,
-                           s.table, s.row, s.col)  # fmt: skip
+                           s.table, s.row, s.col, rename=True)  # fmt: skip
                 by_table.setdefault(s.table, []).append(t)
             continue
         # 제출 문장은 날짜·이름만 고치는 칸이라 LLM 에 묻지 않는다 (문장째 다시 쓰게 된다)
@@ -472,7 +484,10 @@ def read_answer(
         for t in targets:
             # 사본 칸에는 쓰지 않는다. 비운 사본은 원본 값을 쓰므로(pipeline.copy_map) 원본을
             # 고치면 사본도 따라간다
-            if (value := clean(t, _text(got.get(t.key)))) and not _useless(t, value):
+            value = clean(t, _text(got.get(t.key)))
+            if t.rename and not _named_in(value, text):
+                continue  # `①` 처럼 번호만 적거나 글에 없는 이름으로 바꾸면 이름이 망가진다(실측)
+            if value and not _useless(t, value):
                 raw[part][t.key] = value
                 filled.append(Filled(t, value))
     rows = data.get("rows")

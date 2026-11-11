@@ -192,6 +192,15 @@ _BUDGET_TOTAL_RE = re.compile(r"합계|소계|총계")
 _BUDGET_ITEM_LIMIT = 30
 
 
+#: 여분 항목 줄 (`⑩ ......`): 서식이 항목을 더 적으라고 비워 둔 줄
+_SPARE_ITEM_RE = re.compile(r"^[①-⑳⑴-⒇\d.)\s]*[.·…]{2,}$")
+
+
+def is_spare_item(text: str) -> bool:
+    """집행 항목 표 끝의 여분 줄 이름인가 (`⑩ ......`). 지우거나 이름을 적어 항목으로 쓴다."""
+    return bool(_SPARE_ITEM_RE.match(" ".join(text.split())))
+
+
 def is_budget_item(text: str) -> bool:
     """집행 항목 이름인가. 괄호 설명을 뗀 이름이 …비·…료·…금·…수당 으로 끝난다.
 

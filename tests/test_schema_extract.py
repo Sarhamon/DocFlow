@@ -522,7 +522,8 @@ def test_명단_열_이름에_윗줄_예시를_넣지_않고_0만_적힌_예시�
 
 # ------------------------------------------------------------------ 집행 항목 이름 (IN_23)
 def 집행표(*items: str) -> str:
-    """구분 | 산출근거 | 금액 — 2-03 계획서의 집행 계획 표를 줄인 것. 맨 아래는 합계."""
+    """구분 | 산출근거 | 금액 — 2-03 계획서의 집행 계획 표를 줄인 것. 맨 아래는 합계.
+    항목 이름 대신 `⑩ ......` 처럼 여분 줄을 넣을 수 있다(정산서)."""
     n = len(items)
     cells = [(0, 0, "구분"), (0, 1, "산출근거"), (0, 2, "금액")]
     for i, name in enumerate(items, 1):
@@ -561,3 +562,19 @@ def test_비목_이름(text, want):
     from docflow.schema.rules import is_budget_item
 
     assert is_budget_item(text) is want
+
+
+def test_마지막_항목_아래의_여분_줄도_항목_행이다(tmp_path):
+    """정산서 끝의 `⑩ ......` 는 항목을 더 적으라고 비워 둔 줄이다. 지우거나 이름을 적어 쓴다."""
+    s = schema_of(tmp_path, 집행표("① 강사료", "② 간식비", "③ ......"))
+    assert s.item_rows() == {0: [1, 2, 3]}
+    assert s.item_anchor(0) == 2  # 더한 행은 여분 줄 위에 넣는다
+
+
+@pytest.mark.parametrize(
+    "text, want", [("⑩ ......", True), ("......", True), ("⑩ …", False), ("⑩ 회의비", False)]
+)
+def test_여분_줄(text, want):
+    from docflow.schema.rules import is_spare_item
+
+    assert is_spare_item(text) is want

@@ -4,7 +4,8 @@
 장기적으로는 결재 라인 자동화(반려/통과 판정)까지 확장합니다.
 
 캡스톤 디자인(졸업작품) 프로젝트이며, 현재 **M0~M11 완료**(문서 엔진, 서식 3종 관통, 웹 API, 로그인, 사용자 화면, 관리자 페이지,
-LLM·입력 자동화, 운영 현황)이고, AWS 이전(M12)을 진행 중입니다. 2026-11-10 로컬 + EC2 LLM 으로 시연했습니다.
+LLM·입력 자동화, 운영 현황)이고, AWS 이전(M12)을 진행 중입니다. 2026-11-10 시연 후 AWS 에 배포했습니다:
+<http://docflow-ysu.duckdns.org> (배포 절차는 [`docs/deploy-aws.md`](docs/deploy-aws.md)).
 진행 현황은 [`docs/index.html`](docs/index.html), 개발 계획은 [`docs/dev-roadmap.md`](docs/dev-roadmap.md)에 있습니다.
 무엇을 만드는지는 [`docs/functional-spec.md`](docs/functional-spec.md)(기능명세서)에 정리했습니다.
 기능 목록의 원본은 팀 공유 파일 `Capstone.xlsx`이며(저장소 미포함), 이 문서의 명세와 같은 구조입니다.
@@ -250,6 +251,9 @@ docker build -t docflow .
 #   S3 를 쓸 때 서식은 S3 에서 읽어 등록한다 (컨테이너에 templates/ 가 없다)
 #   aws s3 sync templates/ s3://<버킷>/<DOCFLOW_S3_PREFIX>/templates/
 #   docker run --rm -e … docflow python tools/sync_forms.py --from-s3
+#   학교 AWS 계정처럼 S3 역할을 만들 수 없으면 DOCFLOW_FILE_STORE=db 로 파일을 DB 에 둔다.
+#   DOCFLOW_DUCKDNS_DOMAIN·DOCFLOW_DUCKDNS_TOKEN 이 있으면 시작할 때 DuckDNS 에 자기 IP 를 등록한다
+#   실제 배포(Fargate + RDS + Caddy): docs/deploy-aws.md
 
 # 테스트 (원본 서식 없이도 돌아갑니다). 실제 서식·한컴 회귀는 -m local
 .\.venv\Scripts\pytest.exe
@@ -331,7 +335,7 @@ check_cell(...) / check_field(...) / check_repeat_cell(...)   # 칸 하나
 `2026원`으로 합산되는 오탐이 옛 엔진에 있었습니다.
 
 ```
-테스트   795개 (기본 772 + 로컬 23)
+테스트   837개 (기본 814 + 로컬 23)
 ```
 
 기본 테스트는 서식 파일을 읽지 않고 스키마·HWPX를 코드로 만듭니다. 원본이 내부 자료라 저장소에 없기

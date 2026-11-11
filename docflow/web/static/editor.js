@@ -57,9 +57,17 @@
 
   function normalize(input, skeleton) {
     const src = Object.keys(input || {}).length ? input : skeleton;
-    const out = { fields: {}, cells: {}, rows: {}, replace: {} };
+    const out = { fields: {}, cells: {}, rows: {}, replace: {}, items: {} };
     if (src.variant !== undefined) out.variant = src.variant;
     else if (DF.choices(schema).length) out.variant = schema.variants[0].label;
+    // 집행 항목 행 편집: 표 -> {지운 행, 더한 행}
+    for (const [key, e] of Object.entries(src.items || {})) {
+      if (key.startsWith("_") || !e) continue;
+      out.items[key] = {
+        removed: (e.removed || []).map(Number),
+        added: (e.added || []).map((line) => Object.fromEntries(Object.entries(line || {}).map(([k, v]) => [k, String(v)]))),
+      };
+    }
     // 채택한 초안 칸 -> 인용 근거(고쳐 쓰기 전의 글). 예전 모양(칸 목록)도 읽는다
     const drafted = src._drafted || {};
     out._drafted = Array.isArray(drafted) ? Object.fromEntries(drafted.map((w) => [w, ""])) : { ...drafted };
@@ -98,6 +106,9 @@
       if (rows.length) out.rows[id] = rows;
     }
     for (const [k, v] of Object.entries(raw.replace)) if (k.trim()) out.replace[k] = v;
+    // 더한 항목 행은 비어 있어도 둔다 (작성자가 행을 더한 것 자체가 뜻이다)
+    const items = Object.entries(raw.items).filter(([, e]) => e.removed.length || e.added.length);
+    if (items.length) out.items = Object.fromEntries(items.map(([k, e]) => [k, { removed: [...e.removed].sort((a, b) => a - b), added: e.added.map(clean) }]));
     // 채택한 본문 초안 칸: 점검이 입력값과 숫자가 어긋나는지 계속 본다 (ED_05)
     const drafted = Object.entries(raw._drafted).filter(([w]) => String(valueAt(w)).trim());
     if (drafted.length) out._drafted = Object.fromEntries(drafted);
@@ -376,15 +387,26 @@
       for (const r of rep.example_rows) skip.add(r);
     }
     const totalRows = new Map(own.repeats.filter((r) => r.total_row != null).map((r) => [r.total_row, r]));
+    // 집행 항목 행: 지우고(되살리고) 마지막 항목 아래에 더한다. 반복영역이 있는 표는 뺀다 (schema.item_rows)
+    const itemRows = itemRowsOf(own);
+    const items = itemRows.length && !readonly() ? itemEdit(t.index) : null;
+    const lastItem = itemAnchor(own, itemRows);
     return DF.renderTable(t, {
       skipRow: (r) => skip.has(r),
       rowsAt: (r) => {
         const rep = own.repeats.find((x) => x.start_row === r);
-        return rep ? repeatRows(t, rep) : null;
+        if (rep) return repeatRows(t, rep);
+        return items && r === lastItem + 1 ? addedItemRows(t, own, items, lastItem) : null;
       },
       cell: (c) => {
         const key = `${c.row},${c.col}`;
         const slot = own.slots.get(key);
+        if (items && items.removed.includes(c.row)) {
+          // 지운 항목 행: 서식 글자를 지운 줄로 보이고 이름 칸에서 되살린다
+          if (!(slot && slot.origin === "item")) return { node: h("s", { class: "muted" }, c.text), cls: "removed" };
+          return { node: h("span", {}, h("s", { class: "muted" }, slot.placeholder.trim()), " ",
+            h("button", { type: "button", class: "link small", tabindex: -1, onclick: () => restoreItem(t.index, c.row) }, "되살리기")), cls: "removed" };
+        }
         if (slot) {
           if (slot.role === "fixed") return null; // 관리자가 입력폼에서 뺀 칸: 서식 글자 그대로
           if (slot.role === "approval") return { node: c.text.trim() ? c.text : "결재란", cls: "approval" };
@@ -392,7 +414,12 @@
           const multiline = slot.input_type === "text" && (slot.placeholder.includes("\n") || slot.placeholder.length > 40);
           const field = input(slot.id, slot.input_type, raw.cells[slot.id], slot.placeholder, (v) => { raw.cells[slot.id] = v; }, { multiline });
           // 집행 항목 이름 (IN_23): 바꿀 때만 적는다. 비우면 서식 이름 그대로
-          if (slot.origin === "item") field.title = `항목 이름을 바꿀 때만 적으세요. 비우면 '${slot.placeholder.trim()}' 그대로 씁니다`;
+          if (slot.origin === "item") {
+            field.title = `항목 이름을 바꿀 때만 적으세요. 비우면 '${slot.placeholder.trim()}' 그대로 씁니다`;
+            if (items) {
+              return { node: h("div", { style: "position:relative" }, removeButton(`${slot.placeholder.trim()} 행 지우기`, () => removeItem(t.index, c.row)), field), cls: "slot" };
+            }
+          }
           const button = draftButton(slot.id);
           return {
             node: button ? h("div", { class: "input-wrap" }, field, button) : field,
@@ -409,6 +436,97 @@
         return null;
       },
     });
+  }
+
+  // ---------------------------------------------------------------- 집행 항목 행 (시연 의견)
+  /** 표의 집행 항목 행 (이름 칸이 있는 행). 서버의 schema.item_rows 와 같다. */
+  function itemRowsOf(own) {
+    if (own.repeats.length) return [];
+    return [...new Set([...own.slots.values()].filter((s) => s.origin === "item").map((s) => s.row))].sort((a, b) => a - b);
+  }
+
+  // 여분 줄 (`⑩ ......`) — schema.rules.is_spare_item 과 같다
+  const SPARE_ITEM = /^[①-⑳⑴-⒇\d.)\s]*[.·…]{2,}$/;
+
+  /** 더한 행을 넣을 자리: 마지막 실제 항목 행 (여분 줄 위). 서버의 schema.item_anchor 와 같다. */
+  function itemAnchor(own, rows) {
+    const real = [...own.slots.values()].filter((s) => s.origin === "item" && !SPARE_ITEM.test(s.placeholder.split(/\s+/).join(" ").trim())).map((s) => s.row);
+    return real.length ? Math.max(...real) : rows[rows.length - 1];
+  }
+
+  function itemEdit(table) {
+    const key = `t${table}`;
+    return raw.items[key] || (raw.items[key] = { removed: [], added: [] });
+  }
+
+  /** 행 지우기 단추. Tab 은 칸 사이만 오가게 한다 (한글처럼). */
+  function removeButton(title, onclick) {
+    return h("button", { type: "button", class: "link small", title, tabindex: -1, style: "position:absolute;left:-2px;top:-2px;font-size:11px", onclick }, "×");
+  }
+
+  /** 마지막 항목 아래에 더한 행들 + [항목 추가]. 마지막 항목 행의 칸 모양을 그대로 쓴다. */
+  function addedItemRows(t, own, items, last) {
+    const anchors = t.cells.filter((c) => c.row === last).sort((a, b) => a.col - b.col);
+    const rows = items.added.map((line, i) => {
+      const tr = h("tr", { class: "data added" });
+      let at = 0;
+      anchors.forEach((a, k) => {
+        if (a.col > at) tr.append(h("td", { colspan: a.col - at > 1 ? a.col - at : null }));
+        const td = h("td", { colspan: a.col_span > 1 ? a.col_span : null, style: "position:relative" });
+        if (own.formulas.get(`${last},${a.col}`)) {
+          td.className = "computed";
+          td.append("자동 계산");
+        } else {
+          const like = own.slots.get(`${last},${a.col}`);
+          const el = input(`t${t.index}.n${i}.c${a.col}`, like ? like.input_type : "text", line[String(a.col)], k === 0 ? "새 항목 이름" : "",
+            (v) => { line[String(a.col)] = v; }, {});
+          el.setAttribute("aria-label", `더한 ${i + 1}번째 항목 ${k === 0 ? "이름" : `${a.col + 1}열`}`);
+          td.append(el);
+        }
+        if (k === 0) td.prepend(removeButton(`더한 ${i + 1}번째 항목 지우기`, () => removeAdded(t.index, i)));
+        tr.append(td);
+        at = a.col + a.col_span;
+      });
+      if (at < t.cols) tr.append(h("td", { colspan: t.cols - at > 1 ? t.cols - at : null }));
+      return tr;
+    });
+    rows.push(h("tr", { class: "item-tools" }, h("td", { colspan: t.cols },
+      h("button", { type: "button", class: "small", onclick: () => addItem(t.index) }, "+ 항목 추가"),
+      h("span", { class: "hint" }, "  Alt+Insert 항목 추가 · Alt+Delete 행 지우기"))));
+    return rows;
+  }
+
+  function itemsChanged() {
+    redraw();
+    changed();
+    scheduleCheck();
+  }
+
+  function addItem(table) {
+    const e = itemEdit(table);
+    e.added.push({});
+    itemsChanged();
+    const first = document.querySelector(`[data-where^="t${table}.n${e.added.length - 1}."]`);
+    if (first) first.focus();
+  }
+
+  function removeItem(table, row) {
+    const e = itemEdit(table);
+    if (!e.removed.includes(row)) e.removed.push(row);
+    itemsChanged();
+  }
+
+  function restoreItem(table, row) {
+    const e = itemEdit(table);
+    e.removed = e.removed.filter((r) => r !== row);
+    itemsChanged();
+  }
+
+  function removeAdded(table, i) {
+    const e = itemEdit(table);
+    if (Object.values(e.added[i] || {}).some((v) => String(v).trim()) && !confirm(`더한 ${i + 1}번째 항목을 지울까요?`)) return;
+    e.added.splice(i, 1);
+    itemsChanged();
   }
 
   /** 반복영역의 입력 행들. 서식 첫 데이터 행의 칸 모양을 그대로 쓴다. */
@@ -632,6 +750,8 @@
   function valueAt(where) {
     const m = /^(.+)\[(\d+)\]\.c(\d+)$/.exec(where);
     if (m) return ((raw.rows[m[1]] || [])[Number(m[2])] || {})[m[3]] || "";
+    const n = /^t(\d+)\.n(\d+)\.c(\d+)$/.exec(where); // 더한 집행 항목 행
+    if (n) return (((raw.items[`t${n[1]}`] || {}).added || [])[Number(n[2])] || {})[n[3]] || "";
     return raw.cells[where] ?? raw.fields[where] ?? "";
   }
 
@@ -1092,6 +1212,73 @@
       document.querySelectorAll("#filters button").forEach((x) => x.classList.toggle("on", x === b));
       showIssues(issues);
     });
+  }
+
+  // ---------------------------------------------------------------- 한글 표 단축키
+  // Alt+Insert 행 추가 · Alt+Delete 행 지우기 (한글의 줄 추가/지우기), 방향키로 칸 사이 이동.
+  // Tab / Shift+Tab 은 브라우저가 칸 사이를 오간다(행 지우기 단추는 tabindex=-1)
+  $("tables").addEventListener("keydown", (ev) => {
+    const el = ev.target;
+    const where = el.dataset && el.dataset.where;
+    if (!where || readonly()) return;
+    if (ev.altKey && (ev.key === "Insert" || ev.key === "Delete")) {
+      ev.preventDefault();
+      rowShortcut(where, ev.key === "Insert");
+      return;
+    }
+    if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey || el.tagName !== "INPUT") return;
+    const end = el.selectionStart === el.value.length && el.selectionEnd === el.value.length;
+    const start = el.selectionStart === 0 && el.selectionEnd === 0;
+    const dir = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: start ? "left" : null, ArrowRight: end ? "right" : null }[ev.key];
+    if (!dir) return;
+    const next = neighbor(el, dir);
+    if (next) { ev.preventDefault(); next.focus(); if (next.select) next.select(); }
+  });
+
+  /** 지금 칸이 든 행에서 행을 더하거나 지운다: 명단 행, 집행 항목 행, 더한 항목 행. */
+  function rowShortcut(where, insert) {
+    const rep = /^(.+)\[(\d+)\]\.c\d+$/.exec(where);
+    if (rep) {
+      const spec = schema.repeats.find((r) => r.id === rep[1]);
+      const i = Number(rep[2]);
+      if (!spec) return;
+      if (insert) {
+        raw.rows[spec.id].splice(i + 1, 0, newRow(spec, i + 1));
+        redraw(); changed();
+        const cell = cellOf(`${spec.id}[${i + 1}].c${spec.columns.find((c) => c.role === "input").col}`);
+        if (cell) cell.focus();
+      } else removeRow(spec, i);
+      return;
+    }
+    const added = /^t(\d+)\.n(\d+)\.c\d+$/.exec(where);
+    const item = /^t(\d+)\.r(\d+)\.c\d+$/.exec(where);
+    const table = Number((added || item || [])[1]);
+    if (!(added || item) || !raw.items[`t${table}`]) return; // 집행 항목 표가 아니다
+    if (insert) addItem(table);
+    else if (added) removeAdded(table, Number(added[2]));
+    else if (itemRowsOf(DF.indexSchema(schema).get(table)).includes(Number(item[2]))) removeItem(table, Number(item[2]));
+  }
+
+  /** 같은 표에서 위·아래·왼쪽·오른쪽에 있는 입력칸 (화면 위치로 고른다 — 병합 칸이 있어도 맞다). */
+  function neighbor(el, dir) {
+    const table = el.closest("table");
+    if (!table) return null;
+    const me = el.getBoundingClientRect();
+    const cx = me.left + me.width / 2;
+    const cy = me.top + me.height / 2;
+    let best = null;
+    let bestScore = Infinity;
+    for (const x of table.querySelectorAll("input[data-where], textarea[data-where]")) {
+      if (x === el || x.disabled) continue;
+      const r = x.getBoundingClientRect();
+      const dx = r.left + r.width / 2 - cx;
+      const dy = r.top + r.height / 2 - cy;
+      const ok = { up: dy < -4, down: dy > 4, left: dx < -4 && Math.abs(dy) < me.height, right: dx > 4 && Math.abs(dy) < me.height }[dir];
+      if (!ok) continue;
+      const score = dir === "up" || dir === "down" ? Math.abs(dy) * 4 + Math.abs(dx) : Math.abs(dx);
+      if (score < bestScore) { best = x; bestScore = score; }
+    }
+    return best;
   }
 
   load().catch((e) => {

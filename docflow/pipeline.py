@@ -27,7 +27,14 @@ from docflow.convert import ConversionJob, ConversionResult, Converter
 from docflow.generate import GenerateResult, generate
 from docflow.schema.model import FormSchema, RepeatColumn, RepeatSpec, SlotSpec
 from docflow.schema.rules import is_placeholder
-from docflow.validate import DEFAULT_CONFIG, FormInput, Issue, ValidationConfig, validate
+from docflow.validate import (
+    DEFAULT_CONFIG,
+    FormInput,
+    Issue,
+    ItemEdit,
+    ValidationConfig,
+    validate,
+)
 
 
 class InputError(ValueError):
@@ -95,6 +102,42 @@ def _column(rep: RepeatSpec, key: str) -> int:
 _COPY_MARK_RE = re.compile(r"^[가-힣]{1,6}용$")
 
 
+_ITEM_TABLE_RE = re.compile(r"^t(\d+)$")
+_CELL_KEY_RE = re.compile(r"^t(\d+)\.r(\d+)\.c\d+$")
+
+
+def _items(schema: FormSchema, raw: Any) -> dict[int, ItemEdit]:
+    """집행 항목 행 편집 `{"t14": {"removed": [4], "added": [{"0": "⑥ 학생지원금"}]}}` 을 읽는다."""
+    tables = schema.item_rows()
+    out: dict[int, ItemEdit] = {}
+    for key, edit in _visible(raw if isinstance(raw, dict) else {}).items():
+        m = _ITEM_TABLE_RE.match(str(key))
+        table = int(m[1]) if m else -1
+        if table not in tables:
+            known = [f"t{t}" for t in tables]
+            raise InputError(f"집행 항목 표가 아니다: {key!r} (있는 것: {known})")
+        edit = edit if isinstance(edit, dict) else {}
+        try:
+            removed = sorted({int(r) for r in edit.get("removed") or []})
+            added = [{int(k): str(v) for k, v in _visible(line).items()}
+                     for line in edit.get("added") or [] if isinstance(line, dict)]  # fmt: skip
+        except (TypeError, ValueError) as e:
+            raise InputError(f"{key}: 행·열 번호는 숫자여야 한다") from e
+        if bad := [r for r in removed if r not in tables[table]]:
+            raise InputError(f"{key}: 집행 항목 행이 아니다: {bad} (항목 행: {tables[table]})")
+        cols = schema.tables[table].cols if table < len(schema.tables) else 0
+        if any(not 0 <= c < cols for row in added for c in row):
+            raise InputError(f"{key}: 더한 행에 표에 없는 열이 있다 (열 {cols}개)")
+        if removed or added:
+            out[table] = ItemEdit(removed, added)
+    return out
+
+
+def _removed(key: str, items: dict[int, ItemEdit]) -> bool:
+    m = _CELL_KEY_RE.match(key)
+    return bool(m) and int(m[1]) in items and int(m[2]) in items[int(m[1])].removed
+
+
 def copy_map(schema: FormSchema) -> dict[str, str]:
     """사본 표의 칸 -> 원본 칸. 입력 칸 구성(자리·이름·형식)이 통째로 같은 표는 같은 서식의
     사본이다(회의계획서의 학과용·부서용). 작성자가 한 번만 쓰면 사본에도 들어간다.
@@ -130,7 +173,7 @@ def copy_map(schema: FormSchema) -> dict[str, str]:
 def parse_input(schema: FormSchema, raw: dict[str, Any]) -> ParsedInput:
     """입력 JSON 을 FormInput 으로 읽는다. 반복영역 열은 이름으로도 받는다."""
     raw = _visible(raw)
-    unknown = sorted(set(raw) - {"variant", "fields", "cells", "rows", "replace"})
+    unknown = sorted(set(raw) - {"variant", "fields", "cells", "rows", "replace", "items"})
     if unknown:
         raise InputError(f"모르는 항목: {unknown}")
     repeats = {r.id: r for r in schema.repeats}
@@ -143,14 +186,23 @@ def parse_input(schema: FormSchema, raw: dict[str, Any]) -> ParsedInput:
             {_column(rep, str(k)): str(v) for k, v in _visible(line).items()} for line in lines
         ]
     cells = {k: str(v) for k, v in _visible(raw.get("cells") or {}).items()}
-    for copy, original in copy_map(schema).items():
+    copies = copy_map(schema)
+    for copy, original in copies.items():
         if not cells.get(copy, "").strip() and cells.get(original, "").strip():
             cells[copy] = cells[original]  # 비운 사본 칸은 원본 표의 값을 쓴다
+    items = _items(schema, raw.get("items") or {})
+    for copy, original in copies.items():  # 사본 표는 원본 표의 행 편집을 따른다
+        copy_table, original_table = (int(k[1 : k.index(".")]) for k in (copy, original))
+        if original_table in items and copy_table in schema.item_rows():
+            items.setdefault(copy_table, items[original_table])
+    # 지운 항목 행의 값은 버린다 — 합계·문서 간 대조에 더해지지 않게
+    cells = {k: v for k, v in cells.items() if not _removed(k, items)}
     data = FormInput(
         cells=cells,
         fields={k: str(v) for k, v in _visible(raw.get("fields") or {}).items()},
         rows=rows,
         variant=_variant(schema, raw.get("variant")),
+        items=items,
     )
     replacements = {str(k): str(v) for k, v in _visible(raw.get("replace") or {}).items()}
     return ParsedInput(data, replacements)

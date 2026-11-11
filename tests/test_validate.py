@@ -496,3 +496,24 @@ def test_채우지_않은_자리가_남으면_FILL_LEFT_경고():
     assert [(i.code, i.severity) for i in left] == [(FILL_LEFT, "warning")]
     done = "제출합니다. 2026년 10월 30일 담당 : 김민수 (날인)"
     assert check_cell(정산서(), "t0.r1.c2", done) == []
+
+
+# ---------------------------------------------------------------- 집행 항목 행 추가·삭제
+def test_지운_항목_행은_보지_않고_더한_행은_형식과_합계에_든다(tmp_path):
+    from docflow.pipeline import parse_input
+    from tests.test_schema_extract import schema_of, 집행표
+
+    schema = schema_of(tmp_path, 집행표("① 강사료", "② 간식비"))  # 합계는 손으로 적는 칸
+    raw = {
+        "cells": {"t0.r1.c1": "1명", "t0.r1.c2": "100", "t0.r3.c2": "150"},
+        "items": {"t0": {"removed": [2], "added": [{"0": "③ 학생지원금", "2": "50"}]}},
+    }
+    assert [i.code for i in validate(schema, parse_input(schema, raw).data)] == []
+    raw["items"]["t0"]["added"][0]["2"] = "오십"
+    issues = validate(schema, parse_input(schema, raw).data)
+    # 더한 행의 칸 키로 짚는다. 읽지 못한 금액은 더하지 않으니 합계도 어긋난다(보통 행과 같다)
+    assert ("AMOUNT_INVALID", "t0.n0.c2") in [(i.code, i.location.id) for i in issues]
+    raw["items"]["t0"]["added"][0]["2"] = "50"
+    raw["cells"]["t0.r3.c2"] = "200"
+    issues = validate(schema, parse_input(schema, raw).data)
+    assert [i.code for i in issues] == ["AMOUNT_TOTAL_MISMATCH"]  # 100 + 50 ≠ 200

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from docflow.hwpx.document import Block, HwpxDocument, Recalc
+from docflow.hwpx.document import Block, HwpxDocument, HwpxError, Recalc
 from docflow.schema.model import FormSchema, RepeatColumn, RepeatSpec
 from docflow.schema.rules import ISSUED_FIELDS, PLACEHOLDER_PATTERNS, is_date_placeholder
 from docflow.validate import FormInput
@@ -100,6 +100,7 @@ def generate(
         result.replaced = doc.replace_text(replacements)
     # 반복영역을 늘리거나 변형을 지우기 전에 본다. 좌표가 스키마와 같아 입력값 키로 쓸 수 있다
     result.leftovers = find_leftovers(doc, schema, data, variant, HwpxDocument.open(template))
+    result.cells += _edit_items(doc, schema, data, variant)
     for rep in sorted(schema.repeats, key=lambda r: (r.table, -r.start_row)):
         # 행을 늘리면 아래 행 번호가 밀리므로 아래쪽 반복영역부터 쓴다
         if _in_variant(schema, rep.table, variant):
@@ -111,6 +112,39 @@ def generate(
 
     doc.save(out)
     return result
+
+
+# ---------------------------------------------------------------- 집행 항목 행
+def _edit_items(doc: HwpxDocument, schema: FormSchema, data: FormInput, variant: int | None) -> int:
+    """집행 항목 표의 행을 더하고 지운다(시연 의견). 남은 칸의 값은 원래 좌표로 이미 썼다.
+
+    더한 행은 마지막 실제 항목 행을 복제해 그 아래(여분 줄·합계 위)에 넣는다.
+    그 뒤 지운 행을 아래부터 지운다.
+    행을 넣고 뺄 때마다 수식의 행 범위(`=SUM(?6:?15)`)를 맞춘다. `SUM(ABOVE)` 는 그대로 맞다.
+    """
+    rows = schema.item_rows()
+    written = 0
+    for table, edit in sorted(data.items.items()):
+        if table not in rows or not _in_variant(schema, table, variant):
+            continue
+        last = schema.item_anchor(table)
+        last = rows[table][-1] if last is None else last
+        try:
+            for i, values in enumerate(edit.added):
+                new = doc.insert_row(table, last + i)
+                doc.shift_formulas(table, new, +1)
+                for col, value in sorted(values.items()):
+                    if str(value).strip():
+                        doc.set_cell(table, new, col, str(value))
+                        written += 1
+            for row in sorted(edit.removed, reverse=True):
+                # 더한 행보다 아래(여분 줄)는 더한 만큼 밀려 있다
+                at = row + len(edit.added) if row > last else row
+                doc.delete_row(table, at)
+                doc.shift_formulas(table, at, -1)
+        except HwpxError as e:
+            raise GenerateError(f"표 {table + 1} 의 집행 항목 행을 바꿀 수 없다: {e}") from e
+    return written
 
 
 # ---------------------------------------------------------------- 변형
@@ -324,7 +358,7 @@ def find_leftovers(
         (r.table, row)
         for r in schema.repeats
         for row in [*range(r.start_row, r.end_row + 1), *r.example_rows]
-    }
+    } | {(table, row) for table, edit in data.items.items() for row in edit.removed}
     found: list[Leftover] = []
     for t in doc.tables():
         if not _in_variant(schema, t.index, variant):

@@ -297,3 +297,31 @@ def operands(formula: str, grid: Grid, row: int, col: int) -> set[tuple[int, int
     calc = _Reader(_tokenize(src[1:]), grid, row, col)
     calc.expr()
     return calc.reads
+
+
+# ------------------------------------------------------------------ 행을 넣고 뺄 때
+#: 칸 참조의 행 번호 (`C7`, `?15`). `C?` 처럼 자기 행을 가리키면 고칠 것이 없다
+_ROW_REF_RE = re.compile(r"(?<![A-Za-z])([A-Za-z?])(\d+)(?![A-Za-z(])")
+
+
+def shift_rows(formula: str, at: int, delta: int) -> str:
+    """표에 행을 넣거나(delta=+1) 뺀(delta=-1) 뒤 수식의 행 번호를 맞춘다. at 은 그 행(0부터).
+
+    넣을 때: at 이상을 가리키는 참조를 한 칸 내린다. 범위의 끝(`?6:?15` 의 `?15`)이 바로 위
+    행이면 함께 늘린다 — 집행 항목 표의 마지막 항목 아래에 행을 더하면 합계 범위에 들어가야 한다.
+    뺄 때: at 보다 아래를 가리키는 참조를 한 칸 올린다. 범위의 끝이 그 행이면 범위를 줄인다.
+    `SUM(ABOVE)` 처럼 행 번호가 없는 수식은 그대로다.
+    """
+    out: list[str] = []
+    pos = 0
+    for m in _ROW_REF_RE.finditer(formula):
+        n = int(m.group(2)) - 1  # 0부터
+        end = formula[: m.start()].rstrip().endswith(":")
+        if delta > 0:
+            moved = n >= at or (end and n == at - 1)
+        else:
+            moved = n > at or (end and n == at)
+        out += [formula[pos : m.start()], m.group(1), str(n + 1 + (delta if moved else 0))]
+        pos = m.end()
+    out.append(formula[pos:])
+    return "".join(out)

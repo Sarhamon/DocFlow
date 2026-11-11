@@ -25,7 +25,7 @@ from dataclasses import field as dc_field
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from docflow.hwpx.formula import FormulaError, evaluate, format_result
+from docflow.hwpx.formula import FormulaError, evaluate, format_result, shift_rows
 
 HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 T = f"{{{HP}}}t"
@@ -644,6 +644,79 @@ class HwpxDocument:
                 sz.set("height", str(int(sz.get("height", 0)) + added))
         self._dirty.add(section)
         return after + 1
+
+    def delete_row(self, table: int, row: int) -> None:
+        """row 행을 지운다. 아래 행의 번호와 표의 행 수는 함께 올라간다.
+
+        이 행에서 아래로 병합된 칸이 있으면 지우지 않는다(RowSpanConflict). 위에서 내려와 이 행을
+        덮는 병합 칸은 한 행 줄인다. 수식의 행 번호는 고치지 않는다 — shift_formulas 로 맞춘다.
+        """
+        elements = self._table_elements()
+        if not 0 <= table < len(elements):
+            raise CellNotFound(f"표 {table} 이(가) 없다 (표 {len(elements)}개)")
+        section, tbl, _depth = elements[table]
+        row_cnt = int(tbl.get("rowCnt", 0))
+        trs = tbl.findall(TR)
+        if len(trs) != row_cnt:
+            raise HwpxError(f"표 {table}: tr {len(trs)}개와 rowCnt {row_cnt} 이(가) 다르다")
+        if not 0 <= row < row_cnt or row_cnt < 2:
+            raise CellNotFound(f"표 {table} 에서 {row}행을 지울 수 없다 (행 {row_cnt}개)")
+        target = trs[row]
+        cells = [_read_cell(tc, text=False) for tc in target.findall(TC)]
+        if any(c.row_span != 1 for c in cells):
+            raise RowSpanConflict(f"표 {table} {row}행은 아래로 병합된 칸이 있어 지울 수 없다")
+        if any(el.tag == TBL for el in target.iter()):
+            # 지우면 뒤 표의 번호가 모두 바뀌어 스키마의 표 번호와 어긋난다
+            raise RowSpanConflict(f"표 {table} {row}행에는 중첩 표가 있어 지울 수 없다")
+        spanning = [
+            tc
+            for tr in trs[:row]
+            for tc in tr.findall(TC)
+            if (c := _read_cell(tc, text=False)).row + c.row_span - 1 >= row
+        ]
+        heights = [
+            int(sz.get("height", 0))
+            for tc in target.findall(TC)
+            if (sz := tc.find(CELL_SZ)) is not None
+        ]
+        removed = max(heights, default=0)
+
+        tbl.remove(target)
+        for tr in trs[row + 1 :]:
+            for tc in tr.findall(TC):
+                addr = tc.find(CELL_ADDR)
+                addr.set("rowAddr", str(int(addr.get("rowAddr", 0)) - 1))
+        tbl.set("rowCnt", str(row_cnt - 1))
+        if (size := tbl.find(SZ)) is not None:
+            size.set("height", str(max(int(size.get("height", 0)) - removed, 0)))
+        for tc in spanning:
+            span = tc.find(CELL_SPAN)
+            span.set("rowSpan", str(int(span.get("rowSpan", 1)) - 1))
+            if (sz := tc.find(CELL_SZ)) is not None:
+                sz.set("height", str(max(int(sz.get("height", 0)) - removed, 0)))
+        self._dirty.add(section)
+
+    def shift_formulas(self, table: int, at: int, delta: int) -> int:
+        """행을 넣거나 뺀 뒤 그 표 수식의 행 번호를 맞춘다(formula.shift_rows). 고친 수 반환."""
+        elements = self._table_elements()
+        section, tbl, _depth = elements[table]
+        changed = 0
+        for tc in tbl.iter(TC):
+            for begin, _texts in _walk_field_elements(tc):
+                if begin.get("type") != "FORMULA":
+                    continue
+                for param in begin.iter():
+                    name = param.get("name")
+                    if name not in ("Formula", "Command") or not param.text:
+                        continue
+                    head, sep, rest = param.text.partition("??")  # Command: 수식??형식;;결과
+                    new = shift_rows(head, at, delta)
+                    if new != head:
+                        param.text = new + sep + rest
+                        changed += name == "Formula"
+        if changed:
+            self._dirty.add(section)
+        return changed
 
     def _anchor(self, table: int, row: int, col: int) -> tuple[str, ET.Element]:
         elements = self._table_elements()

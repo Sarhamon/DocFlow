@@ -549,7 +549,9 @@ def test_글이_바꾼_이름만_받고_지금_이름을_베낀_값은_버린다
     assert out.input["cells"] == {"t0.r2.c0": "② 학생지원금", "t0.r2.c1": "300,000원"}
 
 
-def test_글에_없는_새_이름은_경고한다():
+@pytest.mark.parametrize("answer", ["다과비", "②", "② 다과"])
+def test_글에_없는_이름이나_번호만_적은_답은_버린다(answer):
+    """실측: 7.8B 가 항목 이름 칸마다 `①`·`②` 만 적어 산출물의 이름이 번호만 남았다."""
     out = prefill(집행(), "간식비 300,000원",
-                  FakeLlm({"cells": {"t0.r2.c0": "다과비"}}), today=TODAY)  # fmt: skip
-    assert [(i.code, i.location.key) for i in out.issues] == [(LLM_UNCITED, "t0.r2.c0")]
+                  FakeLlm({"cells": {"t0.r2.c0": answer}}), today=TODAY)  # fmt: skip
+    assert "t0.r2.c0" not in out.input.get("cells", {})
