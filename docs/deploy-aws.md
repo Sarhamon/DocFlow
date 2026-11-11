@@ -1,6 +1,8 @@
 # AWS 배포 안내 (M12)
 
-사이트: **<http://docflow-ysu.duckdns.org>** (2026-11-10 배포). 서울 리전(`ap-northeast-2`), 학교 공용 계정 `093356173512`.
+사이트: **<http://docflow-ysu.duckdns.org>** (2026-11-10 배포, 2026-11-11 다시 배포 `docflow:6`). 서울 리전(`ap-northeast-2`), 학교 공용 계정 `093356173512`.
+HTTPS 가 없어 주소는 `http://` 까지 적어 준다 — 브라우저가 https 로 먼저 시도하면 열리지 않는다.
+**자원은 매일 저녁 7시에 자동으로 꺼진다**(관리 측 비용 정책). 다음 날 쓰려면 RDS 를 켠다(6장).
 계정이 공용이라 남의 자원(Elastic IP·RDS·EC2 다수)이 섞여 있다. 우리 자원은 이름에 `docflow` 가 붙거나 `Project=DocFlow` 태그가 있다.
 
 ## 1. 구성
@@ -22,7 +24,7 @@
 | ECS | 클러스터·서비스 `docflow`, 작업 정의 `docflow:N` | Fargate 0.5 vCPU / 1 GB, 1개. 실행 역할 `ecsTaskExecutionRole`(공용) |
 | RDS | `docflow-db` | PostgreSQL 16, db.t4g.micro, 20 GB, 외부 접속 불가, 자동 백업 1일 |
 | EC2 | `plus-DocFlow` (g4dn.xlarge) | Ollama + `exaone3.5:7.8b`. `OLLAMA_HOST=0.0.0.0` (systemd override) |
-| 보안 그룹 | `docflow-app-sg` 80·8000 전체 / `docflow-db-sg` 5432 ← 앱·EC2 / `plus-docflow` 11434 ← 앱 | 8000 은 Caddy 전 주소. 닫아도 된다 |
+| 보안 그룹 | `docflow-app-sg` 80 전체 / `docflow-db-sg` 5432 ← 앱·EC2 / `plus-docflow` 11434 ← 앱 | 8000(Caddy 를 거치지 않는 주소)은 닫았다(2026-11-11) |
 | 로그 | CloudWatch `/ecs/docflow` (14일) | 스트림 `web/…`(앱), `caddy/…` |
 | 주소 | DuckDNS `docflow-ysu` | 태스크가 뜰 때 자동 등록. **DuckDNS 화면에서 IP 를 고치지 않는다** |
 
@@ -77,7 +79,7 @@ ssh -i C:/.ssh/plus-ec2.pem -N -L 15432:docflow-db.cd2e804cyc02.ap-northeast-2.r
 
 ```bash
 export DOCFLOW_DATABASE_URL="postgresql+psycopg://docflow:$DB_PASSWORD@127.0.0.1:15432/docflow" DOCFLOW_FILE_STORE=db DOCFLOW_DATA_KEY="$DATA_KEY_NEW"
-python tools/sync_forms.py      # 서식 등록·개정 (234개, 약 1분)
+python tools/sync_forms.py      # 서식 등록·개정 (234개, 약 1분). Windows 콘솔에서 글자가 깨지면 PYTHONIOENCODING=utf-8
 python tools/demo_setup.py      # 시연 서식 입력폼 설정 (처음 한 번)
 ```
 
@@ -97,7 +99,35 @@ aws ecs run-task --profile mfa --cluster docflow --task-definition docflow:1 --l
 `reset-password root` 로 바꾸면 새 초기 비밀번호가 로그(`/ecs/docflow`)에 찍힌다. 다른 계정은 관리자 화면에서 푼다.
 콘솔에서는 ECS → 클러스터 `docflow` → 새 태스크 실행 → `docflow:1`, 퍼블릭 IP 켜기, `docflow-app-sg`, 컨테이너 명령 재정의.
 
-## 6. LLM 켜고 끄기
+## 6. 켜고 끄기
+
+### 매일 저녁 7시 자동 중지
+
+학교 계정은 매일 19시에 자원을 끈다. RDS 가 꺼지면 앱이 시작할 때 DB 에 닿지 못해 죽고, ECS 서비스는 개수 1 을
+지키려고 2~3분마다 태스크를 새로 띄우다 헬스체크에서 죽기를 되풀이한다(사이트는 응답 없음). 다음 날 쓰려면:
+
+```bash
+aws rds start-db-instance --profile mfa --db-instance-identifier docflow-db
+aws rds wait db-instance-available --profile mfa --db-instance-identifier docflow-db   # 5~10분
+```
+
+RDS 가 뜨면 ECS 가 다음 태스크를 정상으로 띄우고 DuckDNS 를 새 IP 로 고친다(따로 할 일 없음, 2~3분).
+`aws ecs describe-services --profile mfa --cluster docflow --services docflow` 의 `runningCount` 가 1 이면 된다.
+
+작업을 마치고 직접 끌 때는 ECS 개수도 0 으로 내려 재시작 반복을 막는다. 그 경우 켤 때 RDS 를 켠 **뒤에** 1 로 올린다.
+
+```bash
+# 끄기
+aws ecs update-service --profile mfa --cluster docflow --service docflow --desired-count 0
+aws ec2 stop-instances --profile mfa --instance-ids i-09c4bdcd27aacab5a
+aws rds stop-db-instance --profile mfa --db-instance-identifier docflow-db
+# 켜기 (RDS 가 available 이 된 뒤)
+aws ecs update-service --profile mfa --cluster docflow --service docflow --desired-count 1
+```
+
+RDS 는 멈춘 지 7일이 지나면 AWS 가 저절로 다시 켠다.
+
+### LLM
 
 평소 꺼 둔다. 글로 채우기·본문 초안을 쓸 때만 콘솔(EC2 → `plus-DocFlow` → 시작/중지) 또는
 `aws ec2 start-instances|stop-instances --profile mfa --instance-ids i-09c4bdcd27aacab5a`. 켜고 1~2분 뒤부터 쓸 수 있고,
