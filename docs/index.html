@@ -403,6 +403,45 @@
   }
   .svc span { font-size: 13.5px; color: var(--ink-mute); }
 
+  /* ---------- 발표·시연 자료 (넓은 화면은 왼쪽에 고정, 좁으면 머리 위 블록) ---------- */
+
+  .docnav {
+    margin-bottom: 32px;
+    padding: 14px 16px;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  .docnav h2 {
+    font-family: var(--f-data);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .16em;
+    color: var(--ink-faint);
+    border: 0;
+    padding: 0;
+    margin: 0 0 8px;
+  }
+  .docnav h2:not(:first-child) { margin-top: 14px; }
+  .docnav ul { list-style: none; margin: 0; padding: 0; }
+  .docnav li + li { margin-top: 6px; }
+  .docnav a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--rule); }
+  .docnav a:hover { color: var(--mark); border-bottom-color: var(--mark); }
+  .docnav small { display: block; font-size: 11.5px; color: var(--ink-faint); }
+
+  @media (min-width: 1300px) {
+    .docnav {
+      position: fixed;
+      top: 40px;
+      left: calc(50% - 440px - 230px);
+      width: 210px;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      margin: 0;
+    }
+  }
+
   footer {
     margin-top: 56px;
     padding-top: 18px;
@@ -543,6 +582,28 @@
 <body>
 <div class="wrap">
 
+  <nav class="docnav" aria-label="발표·시연 자료">
+    <h2>시연</h2>
+    <ul>
+      <li><a href="http://docflow-ysu.duckdns.org">운영 사이트</a><small>매일 19시 자동 중지 · 쓰기 전 RDS 켜기</small></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/demo.md">시연 안내</a><small>순서 · 막혔을 때 · 질문 대비</small></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/dev-roadmap.md#7-시연-피드백-2026-11-10">시연 피드백과 처리</a></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/deploy-aws.md#6-켜고-끄기">AWS 켜고 끄기</a></li>
+    </ul>
+    <h2>발표</h2>
+    <ul>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/README.md">README</a><small>설계 · 구조 · 테스트</small></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/functional-spec.md">기능명세서</a><small>131개 기능</small></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/dev-roadmap.md">개발 로드맵</a><small>마일스톤 · 위험 · 결정</small></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/deploy-aws.md">AWS 배포 안내</a><small>구성 · 학교 계정 제약</small></li>
+    </ul>
+    <h2>원본</h2>
+    <ul>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/Capstone.xlsx">Capstone.xlsx</a><small>기능명세 시트</small></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/테이블%20명세서.xlsx">테이블 명세서.xlsx</a></li>
+    </ul>
+  </nav>
+
   <header class="masthead">
     <p class="eyebrow">DocFlow · 캡스톤 디자인 · 개발 진행 현황</p>
     <h1>LLM 입력 자동화까지 완료, 클라우드 이전만 남음</h1>
@@ -561,8 +622,8 @@
     </p>
 
     <dl class="docstrip">
-      <div><dt>문서번호</dt><dd>DocFlow-2026-1110</dd></div>
-      <div><dt>기준일</dt><dd>2026.11.10</dd></div>
+      <div><dt>문서번호</dt><dd>DocFlow-2026-1111</dd></div>
+      <div><dt>기준일</dt><dd>2026.11.11</dd></div>
       <div><dt>마일스톤</dt><dd>12 / 13 완료</dd></div>
       <div><dt>진행 중</dt><dd>M12 클라우드 이전</dd></div>
     </dl>
@@ -1002,7 +1063,7 @@
       진행도는 <code>docs/dev-roadmap.md</code> 의 마일스톤 규모(S·M·L)를 1·2·3 점으로 가중했습니다.
       실제 서식은 내부 자료라 저장소에 없고, 그 서식으로 도는 테스트는 <code>pytest -m local</code> 로 분리했습니다.
     </p>
-    <p>DocFlow · 캡스톤 디자인 · 2026.11.10 기준</p>
+    <p>DocFlow · 캡스톤 디자인 · 2026.11.11 기준</p>
   </footer>
 
 </div>
