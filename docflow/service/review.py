@@ -147,11 +147,11 @@ def locate(evidence: str, hay: list[tuple[Location, str]]) -> Location:
     """근거 문장이 그대로 있는 칸. 따옴표·띄어쓰기 차이는 무시한다.
 
     여러 줄에 걸친 근거(`일시 : …\\n장소 : …`)는 원문 사이에 번호(`b.`)가 끼어 통째로는 없으므로
-    줄·쉼표마다 나눠 찾는다.
+    줄·쉼표마다 나눠 찾는다. 칸 이름을 앞에 붙인 근거(`회의비용: 30,000원 × 6명`)는 `:` 뒤로 찾는다.
     """
     quote = " \"'“”‘’"
     whole = _flat(evidence).strip(quote)
-    pieces = [whole] + [p for part in re.split(r"\n|, |; |…", evidence)
+    pieces = [whole] + [p for part in re.split(r"\n|, |; |…|:", evidence)
                         if len(p := _flat(part).strip(quote)) >= _MIN_PIECE]  # fmt: skip
     for needle in pieces:
         if len(needle) < 2:

@@ -119,6 +119,14 @@ def test_정적_파일(client):
         assert client.get(f"/static/{name}").status_code == 200
 
 
+def test_정적_파일은_매번_서버에_확인한다(client):
+    """배포 뒤 캐시에 남은 예전 스크립트가 새 화면 틀과 섞이지 않게 한다 (2026-11-13 배포)."""
+    page = client.get("/static/editor.js")
+    assert page.headers["cache-control"] == "no-cache"
+    again = client.get("/static/editor.js", headers={"if-none-match": page.headers["etag"]})
+    assert again.status_code == 304
+
+
 # ------------------------------------------------------------ 화면이 쓰는 API
 def test_표_배치는_병합을_담는다(client):
     data = client.get(f"/api/forms/{traffic_id(client)}/layout").json()

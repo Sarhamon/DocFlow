@@ -202,3 +202,25 @@ def test_비운_사본_칸은_원본_표의_값을_쓴다():
         "t1.r0.c1": "중간점검", "t3.r0.c1": "중간점검"}  # fmt: skip
     own = {"cells": {"t1.r0.c1": "중간점검", "t3.r0.c1": "부서 회의"}}
     assert parse_input(s, own).data.cells["t3.r0.c1"] == "부서 회의"
+
+
+def test_비운_사본_명단은_원본_표의_행을_쓴다():
+    """회의계획서 부서용의 참석자 명단도 학과용에 한 번만 쓴다. 사본에 따로 쓰면 그 행을 둔다."""
+    from docflow.pipeline import parse_input
+    from docflow.schema.model import FormSchema, RepeatColumn, RepeatSpec, SlotSpec, TableSpec
+
+    def mark(i: int, text: str) -> TableSpec:
+        return TableSpec(index=i, rows=1, cols=1, grid=[[text]])
+
+    tables = [mark(0, "학과용"), TableSpec(index=1, rows=4, cols=2),
+              mark(2, "부서용"), TableSpec(index=3, rows=4, cols=2)]  # fmt: skip
+    slots = [SlotSpec(table=t, row=0, col=1, label="회의명") for t in (1, 3)]
+    repeats = [RepeatSpec(table=t, header_rows=[1], start_row=2, end_row=3, columns=[
+                   RepeatColumn(col=0, label="성명"), RepeatColumn(col=1, label="직위")])
+               for t in (1, 3)]  # fmt: skip
+    s = FormSchema(title="회의", tables=tables, slots=slots, repeats=repeats)
+    line = [{"성명": "정민호", "직위": "이사"}]
+    assert parse_input(s, {"rows": {"t1.r2-3": line}}).data.rows == {
+        "t1.r2-3": [{0: "정민호", 1: "이사"}], "t3.r2-3": [{0: "정민호", 1: "이사"}]}  # fmt: skip
+    own = {"rows": {"t1.r2-3": line, "t3.r2-3": [{"성명": "최유진"}]}}
+    assert parse_input(s, own).data.rows["t3.r2-3"] == [{0: "최유진"}]

@@ -1018,9 +1018,7 @@
         DF.toast(`오류 ${errors.length}건을 먼저 고치세요.`, "error");
         return;
       }
-      const warn = $("gen-warn");
-      warn.replaceChildren();
-      if (r.issues.length) warn.append(h("div", { class: "msg warn" }, `경고 ${r.issues.length}건이 남아 있습니다. 내용을 확인했으면 그대로 만들 수 있습니다.`));
+      // 경고는 검증 결과에서 이미 보였다. 만들 때 다시 묻지 않는다 (ER_09)
       $("gen-dialog").showModal();
     } catch (e) { DF.fail(e); }
   }

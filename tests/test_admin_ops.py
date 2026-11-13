@@ -149,7 +149,7 @@ def test_관리자_변경은_감사_로그에_남고_비밀번호는_적지_않�
     assert admin.get("/api/admin/audit", params={"q": "회의계획서"}).json()["total"] == 1
 
 
-# ------------------------------------------------------------ 문서 간 대조 (VA_11·VA_12)
+# ------------------------------------------------------------ 문서 간 대조 (VA_11·AD_30)
 def amount_form(tmp_path, name: str) -> bytes:
     from tests import hwpx_factory as hf
     from tests.test_schema_extract import tbl

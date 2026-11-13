@@ -317,8 +317,8 @@ def mount(
     # ------------------------------------------------------------ 검증 규칙 (AD_15~17)
     @app.get(f"{API}/rules", dependencies=admins)
     def rule_list(s: Session = Depends(session)) -> list[dict[str, Any]]:
-        """규칙과 적용 서식 수, 전체 on/off, 예외 서식 (AD_15)."""
-        forms = catalog.listed_forms(s)
+        """규칙과 적용 서식 수, 전체 on/off, 예외 서식 (AD_15). 수는 공개 서식만 센다."""
+        forms = [f for f in catalog.listed_forms(s) if f.public]
         applies = {code: 0 for code in RULES}
         for form in forms:
             for code in applicable_rules(catalog.load_schema(form.latest)):

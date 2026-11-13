@@ -16,11 +16,22 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from docflow.service.catalog import form_no_query
+from docflow.service.crosscheck import CROSS_AMOUNT_MISMATCH
 from docflow.service.db import Document, DocumentEvent, Form, FormVersion, LoginHistory, User, now
+from docflow.service.draft import DRAFT_UNCITED
+from docflow.service.prefill import LLM_UNCITED
+from docflow.service.review import QUALITATIVE
 from docflow.validate import RULE_INFO
 
 #: 검증 결과가 남는 이력 종류
 CHECKED = ("validated", "generated")
+#: 검증 규칙(RULE_INFO) 밖에서 생기는 경고의 이름 (오류 통계에 보인다)
+OTHER_NAMES = {
+    LLM_UNCITED: "글로 채우기 인용 확인",
+    DRAFT_UNCITED: "본문 초안 인용 확인",
+    QUALITATIVE: "정성 판정",
+    CROSS_AMOUNT_MISMATCH: "문서 간 금액 대조",
+}
 
 
 @dataclass
@@ -137,7 +148,7 @@ def error_stats(session: Session, *, days: int = 30, at: datetime | None = None)
         "checks": len(rows),
         "failed": sum(c["failed"] for c in daily.values()),
         "by_rule": [
-            {"code": code, "name": RULE_INFO.get(code, (code, ""))[0],
+            {"code": code, "name": RULE_INFO.get(code, (OTHER_NAMES.get(code, code), ""))[0],
              "errors": c["error"], "warnings": c["warning"], "documents": len(rule_docs[code])}
             for code, c in sorted(by_rule.items(), key=lambda kv: -sum(kv[1].values()))
         ],  # fmt: skip

@@ -195,6 +195,11 @@ def parse_input(schema: FormSchema, raw: dict[str, Any]) -> ParsedInput:
         copy_table, original_table = (int(k[1 : k.index(".")]) for k in (copy, original))
         if original_table in items and copy_table in schema.item_rows():
             items.setdefault(copy_table, items[original_table])
+        # 비운 사본 명단은 원본 표의 같은 자리 명단 행을 쓴다
+        for rep in (r for r in schema.repeats if r.table == copy_table):
+            src = f"t{original_table}.r{rep.start_row}-{rep.end_row}"
+            if not rows.get(rep.id) and rows.get(src):
+                rows[rep.id] = rows[src]
     # 지운 항목 행의 값은 버린다 — 합계·문서 간 대조에 더해지지 않게
     cells = {k: v for k, v in cells.items() if not _removed(k, items)}
     data = FormInput(

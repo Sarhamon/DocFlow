@@ -555,3 +555,12 @@ def test_글에_없는_이름이나_번호만_적은_답은_버린다(answer):
     out = prefill(집행(), "간식비 300,000원",
                   FakeLlm({"cells": {"t0.r2.c0": answer}}), today=TODAY)  # fmt: skip
     assert "t0.r2.c0" not in out.input.get("cells", {})
+
+
+def test_괄호가_붙은_없음도_빈_답으로_본다():
+    """EXAONE 이 `없음]` 처럼 괄호 찌꺼기를 붙여 답한 일이 있다 (2026-11-13 운영)."""
+    from docflow.service.prefill import _empty_answer
+
+    for value in ("없음]", "[없음]", "(없음)", "없음"):
+        assert _empty_answer(value, "글에는 접수번호가 없다", set()), value
+    assert not _empty_answer("[2026 AID] 결과", "글", set())

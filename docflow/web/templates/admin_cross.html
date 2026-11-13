@@ -79,7 +79,7 @@
       const data = await api("GET", `/api/admin/forms?${new URLSearchParams({ q: search.value.trim(), size: 20 })}`);
       results.replaceChildren(...data.items.map((f) => h("div", {}, h("button", { type: "button", class: "small link", onclick: () => {
         state.form = f; state.keys = new Set(); drawSide(side).catch(DF.fail);
-      } }, `${f.program} ${f.form_no} ${f.title}`))));
+      } }, `${f.program} ${f.form_no} ${f.title}`, f.public ? null : h("span", { class: "muted" }, " (비공개)")))));
     }
 
     if (state.form) {

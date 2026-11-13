@@ -300,6 +300,13 @@ def test_규칙_목록은_적용_서식_수와_켜짐을_준다(admin):
     assert got["DATE_INVALID"] == ("날짜 형식", True, 1, 2)
 
 
+def test_규칙_적용_서식_수는_비공개_서식을_세지_않는다(admin):
+    form = admin.get("/api/admin/forms").json()["items"][0]
+    admin.patch(f"/api/admin/forms/{form['id']}", json={"public": False})
+    [rule] = [r for r in admin.get("/api/admin/rules").json() if r["code"] == "REQUIRED_EMPTY"]
+    assert (rule["applies"], rule["forms"]) == (1, 1)
+
+
 def test_규칙을_끄면_점검과_만들기에서_빠지고_켜면_돌아온다(admin, user):
     doc = meeting_doc(user)
     bad = {"t0.r0.c1": "정기회의", "t0.r1.c1": "2026.13.45"}

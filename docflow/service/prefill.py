@@ -201,7 +201,9 @@ def _empty_answer(value: str, text: str, labels: set[str]) -> bool:
         return True
     if "".join(value.split()) in flat:
         return False
-    return value.strip() in _NO_VALUE or bool(_NO_INFO_RE.search(value))
+    # `없음]` 처럼 괄호 찌꺼기가 붙어도 빈 값이다
+    return (value.strip() in _NO_VALUE or bare in _NO_VALUE
+            or bool(_NO_INFO_RE.search(value)))  # fmt: skip
 
 
 def _useless(t: Target, value: str, *, example: bool = True) -> bool:

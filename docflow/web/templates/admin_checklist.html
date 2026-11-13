@@ -68,7 +68,7 @@
     const results = h("div", { class: "small" });
     const find = async () => {
       const data = await api("GET", `/api/admin/forms?${new URLSearchParams({ q: search.value.trim(), size: 20 })}`);
-      results.replaceChildren(...data.items.map((f) => h("div", {}, h("button", { type: "button", class: "small link", onclick: () => { picked = f; drawPick(); } }, formName(f)))));
+      results.replaceChildren(...data.items.map((f) => h("div", {}, h("button", { type: "button", class: "small link", onclick: () => { picked = f; drawPick(); } }, formName(f), f.public ? null : h("span", { class: "muted" }, " (비공개)")))));
     };
     search.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); find().catch(DF.fail); } });
     box.replaceChildren(

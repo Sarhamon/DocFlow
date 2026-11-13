@@ -25,8 +25,17 @@ ADMIN_ROLES = ("admin", "root")
 templates = Jinja2Templates(directory=HERE / "templates")
 
 
+class _Static(StaticFiles):
+    """매번 서버에 확인한다(그대로면 304). 배포 뒤 예전 스크립트가 새 화면 틀과 섞이지 않게."""
+
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def mount(app: FastAPI, auth: Callable[..., AuthService]) -> None:
-    app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+    app.mount("/static", _Static(directory=HERE / "static"), name="static")
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> FileResponse:

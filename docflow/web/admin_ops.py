@@ -187,7 +187,7 @@ def mount(
                 "size": size, "actions": audit.ACTIONS}  # fmt: skip
 
 
-# ---------------------------------------------------------------- 문서 간 대조 규칙 (VA_12)
+# ---------------------------------------------------------------- 문서 간 대조 규칙 (AD_30)
 class CrossRuleBody(BaseModel):
     name: str = Field(max_length=200)
     source_form_id: int
