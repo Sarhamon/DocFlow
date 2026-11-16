@@ -1174,7 +1174,7 @@
     placeholders = f.placeholders || [];
     $("gen-formats").classList.toggle("hidden", !converter);
     $("gen-hwpx").classList.toggle("hidden", converter);
-    $("roster-file").accept = converter ? ".hwp,.hwpx" : ".hwpx";
+    $("roster-file").accept = f.hwp_upload !== false ? ".hwp,.hwpx" : ".hwpx";
     raw = normalize(d.input, f.skeleton);
     if (DF.choices(schema).length) {
       const sel = $("variant");

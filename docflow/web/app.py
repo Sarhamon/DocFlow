@@ -60,6 +60,7 @@ from docflow.service.documents import (
     Conflict,
     DocumentService,
     GenerateOutcome,
+    Serialized,
     ValidationFailed,
     issue_dict,
 )
@@ -279,12 +280,20 @@ def create_app(
     crypto.use(crypto.Cipher(crypto.load_key(settings)))
     sessions: sessionmaker = connect(database_url or settings.database_url)
     store = store or open_store(settings)
+    auto = converter == "auto"
     if converter == "auto" and os.environ.get("DOCFLOW_CONVERTER") == "none":
         converter = None
     if converter == "auto":
         from docflow.adapters.hancom import HancomConverter, available
 
         converter = HancomConverter() if available() else None
+    #: 올린 HWP(서식·명단)를 HWPX 로 바꾸는 변환기. 한컴이 없으면 hwp2hwpx (운영 서버)
+    importer = converter
+    if importer is None and auto:
+        from docflow.adapters import hwp2hwpx
+
+        importer = hwp2hwpx.Hwp2HwpxConverter() if hwp2hwpx.available() else None
+    hwp_import = Serialized(importer) if importer is not None else None
 
     secure_cookie = os.environ.get("DOCFLOW_SECURE_COOKIE") == "1"
 
@@ -582,8 +591,10 @@ def create_app(
             "fields": fields_meta(schema),
             # 본문 초안을 만들 수 있는 칸 (변형과 상관없이 모두. 화면이 보이는 칸에만 단추를 단다)
             "draft_targets": [{"where": t.key, "label": t.label} for t in draft.targets(schema)],
-            # 변환기(한컴)가 없으면 HWPX 만 만들고 명단 가져오기는 HWPX 만 받는다
+            # 변환기(한컴)가 없으면 HWPX 만 만든다
             "converter": svc.converter is not None,
+            # 명단 가져오기가 HWP 도 받나 (한컴이나 hwp2hwpx 가 있을 때)
+            "hwp_upload": hwp_import is not None,
             # 정성 판정 물음 수. 없으면 화면이 [정성 판정] 단추를 숨긴다
             "checklist": len(review.items_for(svc.session, doc.form_version.form_id)),
             # 본문에 남는 자리표시자 (작성일·서명란). 화면이 '본문 문구 바꾸기'에 단추로 보인다
@@ -700,7 +711,7 @@ def create_app(
             for i, upload in enumerate(files):
                 entry: dict[str, Any] = {"name": upload.filename, "people": 0, "error": None}
                 try:
-                    path, _ = hwpx_upload(upload, Path(tmp), svc.converter, stem=f"f{i}")
+                    path, _ = hwpx_upload(upload, Path(tmp), hwp_import, stem=f"f{i}")
                     found = roster.read_rosters(HwpxDocument.open(path))
                     if not found:
                         raise ValueError("성명·계좌 같은 머리줄이 있는 명단 표를 찾지 못했다")
@@ -927,7 +938,7 @@ def create_app(
     ) -> list[dict[str, Any]]:
         return [event_dict(e) for e in svc.history(doc_id, me)]
 
-    admin_api.mount(app, session=session, admin_user=admin_user, store=store, converter=converter)
+    admin_api.mount(app, session=session, admin_user=admin_user, store=store, converter=importer)
     admin_ops.mount(app, session=session, admin_user=admin_user, store=store)
     admin_ops.mount_cross(app, session=session, admin_user=admin_user)
     admin_ops.mount_checklist(app, session=session, admin_user=admin_user)

@@ -185,6 +185,22 @@ def test_한글이_없으면_HWP_는_받지_않는다(admin):
     assert r.status_code == 503 and "HWPX" in r.json()["detail"]
 
 
+def test_한글이_없어도_hwp2hwpx_가_있으면_HWP_를_받는다(tmp_path, monkeypatch):
+    """운영 서버: 문서 출력용 변환기는 없지만(HWPX 만) HWP 서식은 올릴 수 있다."""
+    from docflow.adapters import hwp2hwpx
+
+    hwpx = hf.build(tmp_path / "converted.hwpx", hf.section(fx.meeting_form()))
+    monkeypatch.setenv("DOCFLOW_CONVERTER", "none")
+    monkeypatch.setattr(hwp2hwpx, "available", lambda: True)
+    monkeypatch.setattr(hwp2hwpx, "Hwp2HwpxConverter", lambda: HwpToHwpx(hwpx))
+    app = make_app(tmp_path / "app", converter="auto")
+    with TestClient(app) as c:
+        fx.login(c, "boss")
+        r = upload(c, SIGNATURES["HWP"] + b" fake hwp", "[AID 서식 6-02호] 출장 보고서.hwp")
+        assert r.status_code == 201, r.text
+        assert c.get("/api/health").json()["converter"] is False
+
+
 @pytest.mark.parametrize(
     ("name", "data"),
     [("서식.pdf", b"%PDF-1.7"), ("서식.hwpx", b"not a zip"), ("서식.hwp", b"PK\x03\x04 zip")],

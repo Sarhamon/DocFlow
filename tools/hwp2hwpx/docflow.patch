@@ -1,0 +1,31 @@
+diff --git a/src/main/java/kr/dogfoot/hwp2hwpx/section/ForFieldBegin.java b/src/main/java/kr/dogfoot/hwp2hwpx/section/ForFieldBegin.java
+index cc369c7..d226fbd 100644
+--- a/src/main/java/kr/dogfoot/hwp2hwpx/section/ForFieldBegin.java
++++ b/src/main/java/kr/dogfoot/hwp2hwpx/section/ForFieldBegin.java
+@@ -108,7 +108,6 @@ public class ForFieldBegin extends Converter {
+             return hwpField.getName();
+         }
+ 
+-        if (hwpField.getHeader().getCommand() != null) return "";
+         else if (hwpField.getName() != null) return hwpField.getName();
+ 
+         return "";
+diff --git a/src/main/java/kr/dogfoot/hwp2hwpx/section/object/ForTable.java b/src/main/java/kr/dogfoot/hwp2hwpx/section/object/ForTable.java
+index 34e9169..8b6b8e8 100644
+--- a/src/main/java/kr/dogfoot/hwp2hwpx/section/object/ForTable.java
++++ b/src/main/java/kr/dogfoot/hwp2hwpx/section/object/ForTable.java
+@@ -77,10 +77,10 @@ public class ForTable extends ForShapeObject {
+ 
+     private void cellzone(CellZone cellZone, ZoneInfo zoneInfo) {
+         cellZone
+-                .startRowAddrAnd((short) zoneInfo.getStartRow())
+-                .startColAddrAnd((short) zoneInfo.getStartColumn())
+-                .endRowAddrAnd((short) zoneInfo.getEndRow())
+-                .endColAddrAnd((short) zoneInfo.getEndColumn())
++                .startRowAddrAnd((short) zoneInfo.getStartColumn())
++                .startColAddrAnd((short) zoneInfo.getStartRow())
++                .endRowAddrAnd((short) zoneInfo.getEndColumn())
++                .endColAddrAnd((short) zoneInfo.getEndRow())
+                 .borderFillIDRef(parameter.borderFillRef(zoneInfo.getBorderFillId()));
+     }
+ 

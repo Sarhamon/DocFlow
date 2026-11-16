@@ -132,6 +132,31 @@ def test_여러_확인서를_올리면_명단으로_읽고_저장하지는_않�
     assert client.get(f"/api/documents/{doc}").json()["input"] == {}  # 저장하지 않는다
 
 
+def test_한글이_없어도_hwp2hwpx_가_있으면_HWP_명단을_읽는다(tmp_path, monkeypatch):
+    from docflow.adapters import hwp2hwpx
+    from tests.test_admin_forms import HwpToHwpx
+
+    hwpx = hf.build(tmp_path / "converted.hwpx", hf.section(확인서(KIM)))
+    monkeypatch.setenv("DOCFLOW_CONVERTER", "none")
+    monkeypatch.setattr(hwp2hwpx, "available", lambda: True)
+    monkeypatch.setattr(hwp2hwpx, "Hwp2HwpxConverter", lambda: HwpToHwpx(hwpx))
+    settings = Settings.from_root(tmp_path / "app")
+    fx.write_templates(settings)
+    with connect(settings.database_url)() as s:
+        sync_templates(s, LocalFileStore(settings.data / "files"), settings)
+    app = create_app(settings, converter="auto", llm=None)
+    fx.make_user(app.state.sessions)
+    with TestClient(app) as c:
+        fx.login(c)
+        [form] = c.get("/api/forms", params={"q": "교통비"}).json()["items"]
+        doc = c.post("/api/documents", json={"form_id": form["id"]}).json()["id"]
+        flags = c.get(f"/api/documents/{doc}/form").json()
+        assert (flags["converter"], flags["hwp_upload"]) == (False, True)
+        files = [("files", ("김철수.hwp", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1 hwp"))]
+        out = c.post(f"/api/documents/{doc}/roster", params={"repeat": "t0.r3-5"}, files=files)
+        assert [(f["people"], f["error"]) for f in out.json()["files"]] == [(1, None)]
+
+
 def test_없는_명단이나_남의_문서는_안_된다(app_and_other, tmp_path):
     client, other_doc = app_and_other
     files = [("files", upload(tmp_path, "a.hwpx", KIM))]

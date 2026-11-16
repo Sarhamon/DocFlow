@@ -4,9 +4,19 @@
 #   docker run -p 8000:8000 -e DOCFLOW_DATA_KEY=… -e DOCFLOW_DATABASE_URL=… -e DOCFLOW_S3_BUCKET=… docflow
 #   (+ -e DOCFLOW_DUCKDNS_DOMAIN=… -e DOCFLOW_DUCKDNS_TOKEN=… 이면 시작할 때 DuckDNS 에 등록)
 #
-# 한컴 변환이 없어 HWPX 만 만든다. 서식 적재·루트 계정은 같은 이미지로 한 번 돌린다:
+# 한컴 변환이 없어 HWPX 만 만든다(HWP 서식 업로드는 hwp2hwpx 로 HWPX 로 바꿔 받는다). 서식 적재·루트 계정은 같은 이미지로 한 번 돌린다:
 #   docker run --rm -e … docflow python tools/manage_users.py create-root <아이디> <이름>
 #   docker run --rm -e … docflow python tools/sync_forms.py --from-s3   # S3 의 <prefix>/templates/ 에서
+# HWP 서식을 올리면 HWPX 로 바꾸는 변환기 (docflow/adapters/hwp2hwpx.py). 한컴 없이 돈다.
+# 원본에서 두 곳을 고쳐 쓴다(tools/hwp2hwpx/docflow.patch): 누름틀 이름을 버리지 않고,
+# 셀 영역 테두리의 행·열을 바로잡는다. 판을 올릴 때는 서식 전체로 한컴 변환본과 다시 견준다
+FROM maven:3.9-eclipse-temurin-17 AS hwp2hwpx
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git clone https://github.com/neolord0/hwp2hwpx .     && git checkout -q 62d95b980a4e3a6766877dd3fb6f7f45f4afcf3d
+COPY tools/hwp2hwpx /patch
+RUN git apply --ignore-whitespace /patch/docflow.patch     && mvn -q -DskipTests package dependency:copy-dependencies -DincludeScope=runtime     && javac -encoding UTF-8 -cp "target/classes:target/dependency/*" -d target/classes /patch/Main.java
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -28,6 +38,11 @@ COPY tools ./tools
 RUN useradd --system --uid 10001 docflow \
     && mkdir -p /var/lib/docflow \
     && chown docflow /var/lib/docflow
+
+COPY --from=eclipse-temurin:17-jre /opt/java/openjdk /opt/java/openjdk
+COPY --from=hwp2hwpx /src/target/classes /opt/hwp2hwpx/classes
+COPY --from=hwp2hwpx /src/target/dependency /opt/hwp2hwpx/lib
+ENV PATH=/opt/java/openjdk/bin:$PATH     DOCFLOW_HWP2HWPX=/opt/hwp2hwpx
 USER docflow
 
 EXPOSE 8000
