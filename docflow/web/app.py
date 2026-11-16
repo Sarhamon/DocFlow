@@ -268,6 +268,7 @@ def create_app(
 ) -> FastAPI:
     """앱을 만든다. converter 가 "auto" 면 한컴오피스가 있을 때만 한컴 변환기를 쓴다.
     환경변수 DOCFLOW_CONVERTER=none 이면 한컴이 있어도 쓰지 않는다(HWPX 만 만든다).
+    "auto" 인데 한컴이 없으면 올린 HWP(서식·명단)만 hwp2hwpx 로 받는다(adapters/hwp2hwpx.py).
 
     llm 이 "auto" 면 요청마다 시스템 설정의 주소·모델로 Ollama 를 부른다(관리자가 바꾸면 바로 적용).
     None 이면 자연어 일괄 입력을 쓸 수 없다(503).

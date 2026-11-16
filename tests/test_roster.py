@@ -125,7 +125,7 @@ def test_여러_확인서를_올리면_명단으로_읽고_저장하지는_않�
     got = [(f["name"], f["people"], bool(f["error"])) for f in out["files"]]
     assert got == [("김철수.hwpx", 1, False), ("이영희.hwpx", 2, False), ("메모.txt", 0, True),
                    ("빈 서식.hwpx", 0, True), ("옛 파일.hwp", 0, True)]  # fmt: skip
-    assert "HWPX" in out["files"][4]["error"]  # 한글이 없으면 HWP 는 못 읽는다
+    assert "HWPX" in out["files"][4]["error"]  # 변환기가 없으면 HWP 는 못 읽는다
     assert [(m["label"], m["found"]) for m in out["mapping"]] == [
         ("연번", False), ("성명", True), ("입금계좌 은행명", True),
         ("입금계좌 입금액(원)", True)]  # fmt: skip

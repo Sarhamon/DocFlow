@@ -3,6 +3,9 @@
 지금 변환기는 같은 PC 의 한컴오피스(`adapters.hancom.HancomConverter`)다. 클라우드로 옮길 때
 (M12) Windows 변환 워커나 다른 엔진으로 바꿔도 호출하는 쪽은 이 모듈만 본다. 그래서 이 모듈은
 한컴·Windows 에 의존하지 않는다.
+
+올린 HWP 를 HWPX 로 받는 일만은 한컴이 없어도 된다 (운영 서버):
+`adapters.hwp2hwpx.Hwp2HwpxConverter`.
 """
 
 from __future__ import annotations

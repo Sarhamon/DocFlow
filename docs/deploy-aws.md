@@ -1,6 +1,6 @@
 # AWS 배포 안내 (M12)
 
-사이트: **<http://docflow-ysu.duckdns.org>** (2026-11-10 배포, 2026-11-11 다시 배포 `docflow:6`). 서울 리전(`ap-northeast-2`), 학교 공용 계정 `093356173512`.
+사이트: **<http://docflow-ysu.duckdns.org>** (2026-11-10 배포, 2026-11-16 다시 배포 `docflow:11`). 서울 리전(`ap-northeast-2`), 학교 공용 계정 `093356173512`.
 HTTPS 가 없어 주소는 `http://` 까지 적어 준다 — 브라우저가 https 로 먼저 시도하면 열리지 않는다.
 **자원은 매일 저녁 7시에 자동으로 꺼진다**(관리 측 비용 정책). 다음 날 쓰려면 RDS 를 켠다(6장).
 계정이 공용이라 남의 자원(Elastic IP·RDS·EC2 다수)이 섞여 있다. 우리 자원은 이름에 `docflow` 가 붙거나 `Project=DocFlow` 태그가 있다.
@@ -20,7 +20,7 @@ HTTPS 가 없어 주소는 `http://` 까지 적어 준다 — 브라우저가 ht
 
 | 자원 | 이름·설정 | 비고 |
 |---|---|---|
-| ECR | `docflow` | 앱 이미지(태그 `<커밋>-<월일시분>`), Caddy 사본(`caddy-2.8.4`) |
+| ECR | `docflow` | 앱 이미지(태그 `<커밋>-<월일시분>`, 약 580 MB — Java 런타임 포함), Caddy 사본(`caddy-2.8.4`) |
 | ECS | 클러스터·서비스 `docflow`, 작업 정의 `docflow:N` | Fargate 0.5 vCPU / 1 GB, 1개. 실행 역할 `ecsTaskExecutionRole`(공용) |
 | RDS | `docflow-db` | PostgreSQL 16, db.t4g.micro, 20 GB, 외부 접속 불가, 자동 백업 1일 |
 | EC2 | `plus-DocFlow` (g4dn.xlarge) | Ollama + `exaone3.5:7.8b`. `OLLAMA_HOST=0.0.0.0` (systemd override) |
@@ -29,6 +29,21 @@ HTTPS 가 없어 주소는 `http://` 까지 적어 준다 — 브라우저가 ht
 | 주소 | DuckDNS `docflow-ysu` | 태스크가 뜰 때 자동 등록. **DuckDNS 화면에서 IP 를 고치지 않는다** |
 
 비용은 RDS·Fargate 합쳐 월 약 $40. EC2(LLM)는 켜 둔 시간만큼 시간당 약 $0.53.
+
+### HWP 올리기 (hwp2hwpx)
+
+서버에 한컴이 없어 **만드는 문서는 HWPX 뿐**이지만, **올리는 HWP 는 받는다**(2026-11-16~). 관리자의 서식 등록·개정과
+편집 화면의 명단 가져오기에서 `.hwp` 를 올리면 오픈소스 hwp2hwpx(Java)가 HWPX 로 바꾼다 (`docflow/adapters/hwp2hwpx.py`).
+
+- 이미지를 빌드할 때 `Dockerfile` 이 변환기를 넣는다: 원본(<https://github.com/neolord0/hwp2hwpx>, 커밋 고정)을 받아
+  `tools/hwp2hwpx/docflow.patch` 로 두 곳을 고치고(누름틀 이름 살리기, 셀 영역 테두리 행·열 바로잡기) Java 17 런타임과 함께 둔다.
+  따로 설치·설정할 것은 없다 (`DOCFLOW_HWP2HWPX` 도 이미지에 들어 있다).
+- 켜졌는지는 관리자 화면 > 시스템의 변환기 항목으로 본다: **사용 가능 (Hwp2HwpxConverter)**.
+- 변환할 때만 Java 프로세스가 잠깐 뜬다(서식 하나에 0.5초 안팎). 태스크 메모리(1 GB)가 모자라면 여기서 실패한다.
+- 로컬(Windows + 한컴)은 예전대로 한컴으로 바꾼다. hwp2hwpx 는 한컴이 없을 때만 쓴다.
+- **변환기 판(Dockerfile 의 커밋)을 올릴 때는 다시 견준다.** 지금 판은 `forms/` 의 HWP 193개를 바꿔 한컴 변환본(`templates/`)과
+  스키마가 모두 같고(183/183), 한글에서 PDF 로 뽑아 쪽수·글자가 모두 같은 것을 확인했다. 패치가 안 맞으면 빌드가 멈춘다.
+- PDF 는 서버에서 만들지 않는다. LibreOffice(+H2Orestart)로 뽑아 보았으나 쪽이 넘어가고 표 간격이 달라 쓰지 않기로 했다.
 
 ### 계획과 달라진 점 (학교 계정 제약)
 
@@ -48,7 +63,8 @@ HTTPS 가 없어 주소는 `http://` 까지 적어 준다 — 브라우저가 ht
   $c = aws sts get-session-token --serial-number arn:aws:iam::093356173512:mfa/Capstone2 --duration-seconds 43200 --token-code <코드> --query Credentials --output json | ConvertFrom-Json; aws configure set aws_access_key_id $c.AccessKeyId --profile mfa; aws configure set aws_secret_access_key $c.SecretAccessKey --profile mfa; aws configure set aws_session_token $c.SessionToken --profile mfa; aws configure set region ap-northeast-2 --profile mfa
   ```
   이후 명령은 모두 `--profile mfa`. Git Bash 에서는 `/ecs/docflow` 같은 인자가 경로로 바뀌므로 `MSYS_NO_PATHCONV=1` 을 둔다.
-- Docker Desktop 을 켠다 (이미지 빌드).
+- Docker Desktop 을 켠다 (이미지 빌드). 빌드는 인터넷이 필요하다 — hwp2hwpx 원본(GitHub)과 라이브러리(Maven)를 받는다.
+  캐시가 없는 첫 빌드는 몇 분 더 걸린다.
 
 ## 3. 다시 배포하기
 
@@ -63,7 +79,8 @@ docker build --platform linux/amd64 -t $R/docflow:$TAG . && docker push $R/docfl
 2. `aws ecs register-task-definition --profile mfa --cli-input-json file://taskdef.json` (secrets 폴더에서) → 새 번호 N
 3. `aws ecs update-service --profile mfa --cluster docflow --service docflow --task-definition docflow:N`
 4. `aws ecs wait services-stable --profile mfa --cluster docflow --services docflow` — 태스크가 하나라 **1~2분 끊긴다**.
-5. **스키마 형식(`SCHEMA_VERSION`)이 바뀐 배포면** 새 코드가 뜬 **뒤에** 서식을 다시 등록한다(4장). 예전 코드는 새 스키마를 못 읽는다.
+5. 관리자 화면 > 시스템에서 변환기가 **사용 가능 (Hwp2HwpxConverter)** 인지 본다 (HWP 올리기).
+6. **스키마 형식(`SCHEMA_VERSION`)이 바뀐 배포면** 새 코드가 뜬 **뒤에** 서식을 다시 등록한다(4장). 예전 코드는 새 스키마를 못 읽는다.
 
 새 태스크는 IP 가 바뀌고, 앱이 뜰 때 DuckDNS 를 새 IP 로 고친다. DNS 가 퍼지는 데 1분쯤 걸린다.
 

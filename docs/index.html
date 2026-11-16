@@ -769,6 +769,7 @@
         <span class="id">M12</span><span class="name">클라우드 이전<small>M</small></span><span class="pill next">진행 중</span>
         <p class="proof">
           한컴 변환 없이(HWPX 만) 로컬과 같은 시나리오가 AWS 에서 통과한다. Fargate·RDS·EC2(LLM) 배포를 마쳤다(2026.11.10). 2026.11.11 시연 의견 반영분을 다시 배포했다(스키마 v9, 서식 다시 등록).
+          2026.11.16 올린 HWP 를 HWPX 로 바꿔 받는 변환기(hwp2hwpx)를 넣어 다시 배포했다.
           학교 공용 계정이 IAM 역할·ALB·Elastic IP 를 막아 파일은 RDS 에, 주소는 DuckDNS + Caddy 로 냈다.
           자원이 매일 19시에 자동으로 꺼져 쓰는 날 RDS 를 먼저 켠다. Caddy 를 거치지 않던 8000 포트는 닫았다.
           사이트에서 문서를 끝까지 만들어 보는 확인이 남았다.
@@ -809,7 +810,11 @@
    │ 입력값 → validate → generate      <em>[순수 파이썬]</em>
 <b>문서.hwpx</b>
    │ HancomConverter (한 번에 하나)    <em>[한컴 COM · 자식 프로세스]</em>
-<b>문서.hwp, .pdf</b>                  내려받기: 서식번호_문서명_작성일</div>
+<b>문서.hwp, .pdf</b>                  내려받기: 서식번호_문서명_작성일
+
+<b>올린 .hwp</b>     서식 등록 · 명단 가져오기
+   │ 한컴 COM / hwp2hwpx (한컴 없는 서버) <em>[Java · 자식 프로세스]</em>
+<b>.hwpx</b>         스키마 추출·등록 / 명단 읽기</div>
   </section>
 
   <!-- 3 -->
@@ -950,8 +955,9 @@
   <section>
     <h2><span class="no">05</span> 클라우드로 옮길 때</h2>
     <p class="lede">
-      한글이 필요한 곳은 <strong>형식 변환</strong> 하나입니다. 클라우드에서는 변환을 하지 않고 <strong>HWPX 만</strong>
-      내려 주며, 작성자가 한글에서 열어 고친 뒤 PDF 로 냅니다. 그래서 Windows 인스턴스가 필요 없습니다.
+      한글이 필요한 곳은 <strong>결과물 형식 변환</strong> 하나입니다. 클라우드에서는 변환을 하지 않고 <strong>HWPX 만</strong>
+      내려 주며, 작성자가 한글에서 열어 고친 뒤 PDF 로 냅니다. 올린 <code>.hwp</code> 는 오픈소스 변환기(hwp2hwpx)로
+      HWPX 로 바꿔 받습니다. 그래서 Windows 인스턴스가 필요 없습니다.
     </p>
 
     <div class="scroll">
@@ -960,14 +966,14 @@
         <tbody>
           <tr><td>서식 로딩 · 입력폼 · 검증 · 값 주입 · 수식 계산 · HWPX 생성</td><td><span class="pill done">불필요</span></td></tr>
           <tr><td>결과물 HWP · PDF 변환 (클라우드에서는 하지 않음 — HWPX 를 받아 한글에서)</td><td><span class="pill open">필요</span></td></tr>
-          <tr><td>관리자가 새 <code>.hwp</code> 서식 등록 (HWPX 로 올리면 불필요)</td><td><span class="pill open">필요</span></td></tr>
+          <tr><td>관리자의 <code>.hwp</code> 서식 등록 · HWP 명단 가져오기 (hwp2hwpx 로 HWPX 로 바꿔 받음)</td><td><span class="pill done">불필요</span></td></tr>
         </tbody>
       </table>
     </div>
 
     <div class="svc">
       <div><b>ECS Fargate</b><span>웹 서비스와 문서 생성·검증. 순수 파이썬이라 Linux 컨테이너에서 그대로 돈다.</span></div>
-      <div><b>변환</b><span>두지 않는다. 산출은 HWPX 다운로드, 서식 등록·명단 가져오기는 <code>.hwpx</code> 업로드 (결정).</span></div>
+      <div><b>변환</b><span>결과물 변환은 두지 않는다(산출은 HWPX 다운로드). 서식 등록·명단 가져오기는 <code>.hwp</code> 도 받아 같은 컨테이너의 hwp2hwpx 로 HWPX 로 바꾼다 (2026.11.16).</span></div>
       <div><b>EC2 (GPU)</b><span>EXAONE 3.5 추론. 필요할 때만 켜고 끈다.</span></div>
       <div><b>RDS</b><span>문서 이력(입력값·검증 결과·서식 버전)과 템플릿·산출물 파일. 학교 계정이 앱의 S3 역할을 막아 파일도 DB 에 둔다.</span></div>
       <div><b>주소</b><span>DuckDNS(<code>docflow-ysu.duckdns.org</code>) — 태스크가 뜰 때 자기 IP 를 등록. 80 포트는 같은 태스크의 Caddy 가 받는다. HTTPS 는 배포가 잦아들면.</span></div>
@@ -1017,7 +1023,9 @@
         <h4>클라우드 변환 방식과 HWP 필요 여부 <span class="pill done">결정</span></h4>
         <p>
           서버는 HWPX 만 만들고, 작성자가 한글에서 열어 고친 뒤 PDF 로 냅니다. 서버에서 한글을 돌리지 않으니
-          변환 워커와 그 라이선스 문제가 없어졌습니다.
+          변환 워커와 그 라이선스 문제가 없어졌습니다. 올린 HWP 는 오픈소스 hwp2hwpx 로 HWPX 로 바꿔 받습니다 —
+          서식 193개를 한컴 변환본과 견주어 스키마와 쪽수·글자가 같은 것을 확인했습니다(2026.11.16).
+          서버에서 PDF 를 만드는 것은 LibreOffice 로 시험해 보니 쪽이 넘어가고 표 간격이 달라 넣지 않았습니다.
         </p>
       </div>
       <div class="gap">

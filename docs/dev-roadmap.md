@@ -69,6 +69,7 @@ M0 기반 ─ M1 HWPX 코어 ─ M2 서식 파이프라인 ─ M3 검증 엔진 
 
 **진행 현황 (2026-11-11)**: M0~M11 완료, M12 진행 중 — AWS 배포는 끝났고(<http://docflow-ysu.duckdns.org>, [`deploy-aws.md`](deploy-aws.md))
 2026-11-11 커밋까지 다시 배포했다(스키마 v9, 서식 다시 등록). 사이트에서 문서를 끝까지 만들어 보는 확인이 남았다.
+2026-11-16 올린 HWP 를 HWPX 로 바꿔 받는 기능(hwp2hwpx)을 넣어 다시 배포했다(`docflow:11`).
 M10 은 실제 모델(EXAONE 3.5)로 완료 기준을 확인했고, 2026-11-10 노트북 로컬 + EC2 LLM 터널로 시연했다(`demo.md`).
 규모(S=1, M=2, L=3) 가중 30점 중 28점, **93%** (진행 중인 M12 는 세지 않음).
 테스트 845개(기본 822 + `local` 23) 통과.
@@ -283,7 +284,8 @@ M10 의 LLM 부분(자연어 일괄 입력·본문 초안·정성 판정)은 GPU
 
 ### M12. AWS 이전 (M)
 - 웹/LLM 컴퓨팅 분리, 저장소·DB 이전. 한컴 COM 변환은 운영 서버에 두지 않고 **HWPX 만** 다룬다
-  (산출은 HWPX 다운로드, 서식 등록·명단 가져오기는 `.hwpx` 업로드). Windows 인스턴스가 필요 없다.
+  (산출은 HWPX 다운로드). 서식 등록·명단 가져오기는 `.hwpx` 와 `.hwp` 를 받는다 — `.hwp` 는 hwp2hwpx 로
+  HWPX 로 바꾼다(2026-11-16, 아래). Windows 인스턴스가 필요 없다.
 - **완료**: 로컬과 동일한 시나리오가 AWS에서 한컴 변환 없이(HWPX 만) 통과한다.
   → 진행 중 (2026-11-10 기준). LLM(EXAONE 3.5)을 EC2(GPU)에, 웹 앱을 Fargate·RDS 에 배포 완료.
   - DB: `DOCFLOW_DATABASE_URL` 로 주소를 바꾼다(없으면 `data/docflow.db`). Alembic 도입(`docflow/migrations`) —
@@ -310,6 +312,17 @@ M10 의 LLM 부분(자연어 일괄 입력·본문 초안·정성 판정)은 GPU
     MinIO 는 공식 Docker 이미지를 더 받을 수 없어(Docker Hub 저장소 없음, quay.io 401) `motoserver/moto` 를 쓴다.
     boto3 는 `AWS_ENDPOINT_URL` 로 S3 호환 서버를 가리킨다(코드 변경 없음, AWS 에서는 빼고 작업 역할로).
   - **AWS 배포 (2026-11-10)**: <http://docflow-ysu.duckdns.org>. 절차·자원·정리 방법은 [`deploy-aws.md`](deploy-aws.md).
+  - **HWP 올리기 (2026-11-16)**: 한컴 없는 서버에서 올린 `.hwp` 를 오픈소스 hwp2hwpx(Java)로 HWPX 로 바꾼다
+    (`docflow/adapters/hwp2hwpx.py`, 서식 등록·개정과 명단 가져오기). 문서 출력용 변환기와는 따로 둔다 —
+    서버가 만드는 것은 그대로 HWPX 뿐이고 화면의 HWP·PDF 선택도 나오지 않는다.
+    - 원본을 두 곳 고쳐 쓴다(`tools/hwp2hwpx/docflow.patch`): 누름틀 이름을 비워 쓰던 것, 셀 영역 테두리의
+      행·열이 뒤바뀌던 것. 표 수식은 Command 하나에만 쓰므로 어댑터가 한컴처럼 Formula·ResultFormat·LastResult 로 풀어 쓴다.
+    - 확인: `forms/` 의 HWP 193개 변환 실패 0, 한컴 변환본과 스키마 183/183 일치. 한글로 PDF 를 뽑아 견주면
+      193개 모두 쪽수·글자가 같고 187개는 픽셀까지 같다(나머지 6개는 0.5% 안팎 — 확대해 본 정산서는 표 선·글자가 약 0.3mm 밀림).
+      원본에 저장된 인쇄 설정(모아찍기, 7개)은 옮기지 않는다. 운영 이미지 안에서도 같은 결과(서식 하나에 평균 0.44초).
+    - `docflow:11` 로 배포(이미지 약 580 MB, Java 런타임 142 MB 포함). 사이트에서 HWP 를 올려 보는 확인은 남았다.
+    - 서버에서 PDF 만들기는 하지 않는다: LibreOffice + H2Orestart 로 서식 12개를 뽑아 보니 글자는 남지만
+      8개에서 쪽이 넘어가고 표 간격·결재란이 어긋났다(Windows 글꼴을 넣어도 같음).
     ECR 이미지 → ECS Fargate 서비스(0.5 vCPU / 1 GB, 퍼블릭 IP) → RDS PostgreSQL 16, LLM 은 같은 VPC 의 EC2 Ollama 를
     사설 IP 로 부른다(`OLLAMA_HOST=0.0.0.0`, 보안 그룹은 앱에서만). 서식 234종을 적재하고 루트 계정을 만들었다.
     학교 공용 계정의 제약으로 계획을 바꾼 것:

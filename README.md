@@ -79,6 +79,9 @@ ysu_forms/     # 원본 + 그 파생물 전부
 - **주 경로(순수 파이썬)**: 템플릿을 HWPX로 1회 변환해 두고, 값 주입은 zip+XML 조작으로 처리.
   한컴오피스 없이 동작하고, 테스트·diff가 가능하며, 서버 이전이 쉽습니다.
 - **보조 경로(로컬 전용)**: 원본 변환과 최종 `.hwp` / `.pdf` 산출은 한컴 COM 사용.
+- **올린 HWP 받기(한컴 없는 서버)**: 서식 등록·명단 가져오기에서 올린 `.hwp` 는 오픈소스 hwp2hwpx(Java)로
+  HWPX 로 바꿔 받습니다. 서버가 만드는 문서는 그대로 HWPX 뿐입니다. 서식 193개로 한컴 변환본과 견주었습니다
+  (스키마 183/183 일치, 쪽수·글자 일치).
 
 > **왜 이렇게 나눴나**: 한컴 COM은 Windows + 한컴오피스가 깔린 기기에서만 동작해 AWS로 못 올라갑니다.
 > COM 의존을 `docflow/adapters/hancom.py` 한 곳에 가둬 두면, Phase 2에서 이 모듈만 떼거나
@@ -151,6 +154,10 @@ schemas/<원본폴더>/**/*.json     필드 / 표 / 슬롯 / 반복영역 + 검�
     | docflow/convert.py  변환 요청/결과
     | docflow/adapters/hancom.py        [한컴 COM · 자식 프로세스]
 문서.hwp, 문서.pdf                 내려받기: 서식번호_문서명_작성일
+
+올린 .hwp (서식 등록·명단 가져오기)
+    | 한컴 COM, 한컴이 없는 서버는 docflow/adapters/hwp2hwpx.py   [Java · 자식 프로세스]
+.hwpx                              그 뒤는 위와 같다 (스키마 추출·등록 / 명단 읽기)
 ```
 
 ## 5. 디렉터리 구조
@@ -179,9 +186,11 @@ DocFlow/
 │  ├─ web/pages.py         # 화면 (Jinja2 쪽 틀 + static/ 스크립트)
 │  ├─ config.py · log.py   # 경로·환경 설정, 로깅
 │  ├─ adapters/hancom.py   # 한컴 COM 어댑터 (로컬 전용, 격리 대상)
+│  ├─ adapters/hwp2hwpx.py # 올린 HWP -> HWPX (한컴 없는 서버용, Java 자식 프로세스)
 │  └─ adapters/ollama.py   # Ollama 클라이언트 (JSON 스키마 제약 출력)
 ├─ tools/
 │  ├─ convert_templates.py # 원본 .hwp -> .hwpx 일괄 변환
+│  ├─ hwp2hwpx/            # hwp2hwpx 실행용 Main.java 와 패치 (Dockerfile 이 이미지에 넣는다)
 │  ├─ extract_schema.py    # HWPX -> 서식 스키마 JSON 추출
 │  ├─ make_document.py     # 서식 하나를 입력 JSON 으로 채워 HWPX·HWP·PDF 로 (M5)
 │  ├─ sync_forms.py        # templates/ 의 서식을 서비스 DB 에 등록 (M6)
@@ -232,6 +241,7 @@ DocFlow/
 
 - Windows 11 / Python 3.12 / **한컴오피스 2022 (한글 12.0)** — COM ProgID `HWPFrame.HwpObject`
 - 코어 코드는 한컴오피스 없이도 동작합니다. COM은 템플릿 변환과 최종 산출에만 필요합니다.
+- 컨테이너(운영 서버)는 Java 17 + hwp2hwpx 로 올린 HWP 를 받습니다. 로컬 개발에는 Java 가 필요 없습니다.
 
 ```powershell
 python -m venv .venv
@@ -250,6 +260,7 @@ python -m venv .venv
 .\.venv\Scripts\uvicorn.exe --factory docflow.web.app:create_app   # API 목록: http://127.0.0.1:8000/docs
 
 # 컨테이너 (M12). 코드만 담고 DB·파일·암호 키는 환경변수로: Dockerfile 머리말 참고
+#   HWP 올리기용 hwp2hwpx(Java)도 이미지에 넣는다 — 빌드할 때 GitHub·Maven 에서 받는다
 docker build -t docflow .
 #   S3 를 쓸 때 서식은 S3 에서 읽어 등록한다 (컨테이너에 templates/ 가 없다)
 #   aws s3 sync templates/ s3://<버킷>/<DOCFLOW_S3_PREFIX>/templates/

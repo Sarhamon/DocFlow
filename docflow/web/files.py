@@ -29,7 +29,8 @@ def hwpx_upload(
 ) -> tuple[Path, str]:
     """올린 HWP·HWPX 를 work 안의 HWPX 로. (HWPX 경로, 원래 파일 이름)
 
-    HWP 는 한컴 변환이 있어야 한다. converter 는 한 번에 하나만 돌도록 감싼 것을 준다.
+    HWP 는 변환기(한컴이나 hwp2hwpx)가 있어야 한다.
+    converter 는 한 번에 하나만 돌도록 감싼 것을 준다.
     """
     name = Path(upload.filename or "").name
     suffix = Path(name).suffix.lower()
@@ -46,7 +47,7 @@ def hwpx_upload(
     if fmt == "HWPX":
         return src, name
     if converter is None:
-        # 운영 서버(리눅스)에는 한컴이 없다. 학생에게 HWPX 로 받기로 했다
+        # 한컴도 hwp2hwpx 도 없는 곳. HWPX 로 받는다
         raise Unavailable("HWP 파일은 읽을 수 없습니다. 한글에서 HWPX 로 저장해 올리세요")
     result = converter.convert(ConversionJob(source=src, formats=("HWPX",), out_dir=work))
     if not result.ok:
