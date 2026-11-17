@@ -29,6 +29,7 @@ from docflow.schema.model import (
     Variant,
 )
 from docflow.schema.rules import (
+    OPTIONAL_CONCEPTS,
     FormLocation,
     column_concept,
     field_input_type,
@@ -513,7 +514,10 @@ def find_slots(layout: _Layout, repeats: list[RepeatSpec]) -> list[SlotSpec]:
                     else infer_input_type(text if origin == "placeholder" else "", label)
                 ),
                 role="approval" if approval else "input",
-                required=origin == "placeholder" and not approval,
+                # 계좌·은행 칸은 비어도 문서를 만든다. 입금계좌 확인서로 채우거나 나중에 적는다
+                # (2026-11-17). 관리자가 필수로 정하면 필수다
+                required=origin == "placeholder" and not approval
+                and column_concept(label) not in OPTIONAL_CONCEPTS,
             )
         )
     return slots

@@ -1,9 +1,11 @@
 """자연어 일괄 입력 (M10, F2-c) — 사용자가 적은 글로 LLM 이 서식의 칸을 한 번에 채운다.
 
-1. 고른 서식(변형)의 채울 칸 목록을 만든다. **명단·계좌·주민등록번호는 넘기지 않는다** — 사람 명단은
-   입금계좌 확인서로 채우고(`service.roster`), 계좌·주민등록번호 칸은 직접 적는다.
+1. 고른 서식(변형)의 채울 칸 목록을 만든다. 사람 명단(성명·학번 …)도 넘긴다.
+   **계좌·은행·주민등록번호 칸·열은 넘기지 않는다** — 직접 적거나 입금계좌 확인서로 채운다
+   (`service.roster`).
 2. 칸 목록으로 답의 JSON 스키마를 만든다. 답의 모양이 입력 JSON(`pipeline.parse_input`)과 같아서
-   그대로 입력 화면에 넣을 수 있다.
+   그대로 입력 화면에 넣을 수 있다. 칸이 많으면 명단 → 표 칸 묶음 → 누름틀로 나눠 연달아
+   묻는다(`chunks`).
 3. 답에서 없는 칸·빈 값을 버린다. 저장하지 않는다 — 화면이 미리 보여 주고 사용자가 넣는다.
 4. **인용 검사**: 채운 금액·날짜가 글에 없으면 `LLM_UNCITED` 경고. LLM 이 지어낸 숫자를 잡는다.
 
@@ -15,27 +17,32 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal
 
-from docflow.llm import LlmClient, LlmRequest
+from docflow.llm import LlmClient, LlmError, LlmRequest
 from docflow.pipeline import copy_map, parse_input
 from docflow.schema.labels import field_label
 from docflow.schema.model import FormSchema, SlotSpec
 from docflow.schema.rules import column_concept, is_approval_title, is_placeholder
 from docflow.validate import Issue, Location, find_dates, parse_amount
 
+log = logging.getLogger(__name__)
+
 LLM_UNCITED = "LLM_UNCITED"
 #: 글의 최대 길이 (7.8B 의 문맥과 응답 시간을 생각한 값)
 MAX_PROMPT = 4000
+#: 한 번에 묻는 표 칸 수. 넘으면 표 단위로 나눠 연달아 묻는다
+CHUNK_CELLS = 40
 #: 반복영역 하나에 받는 최대 행 수
 MAX_ROWS = 200
 #: 이 뜻의 칸·열은 LLM 에 넘기지 않는다 (개인정보)
 PRIVATE = {"rrn", "account", "bank"}
-#: 이 뜻의 열이 있는 반복영역은 사람 명단이라 통째로 뺀다
+#: 이 뜻의 열이 있는 반복영역은 사람 명단이다 (본문 초안은 인원만 넘긴다, `draft.facts`)
 ROSTER = {"name", "rrn", "account", "student_id"}
 #: 서술형 칸의 이름
 _NARRATIVE_RE = re.compile(
@@ -222,6 +229,12 @@ def _useless(t: Target, value: str, *, example: bool = True) -> bool:
 _LABEL_LIMIT = 60
 #: 머리줄로 보는 최소 제목 수
 _HEADER_MIN = 3
+#: 행 제목이 될 수 있는 글: 한글이나 두 글자 넘는 영문이 있다. `1`·`5`·`A`·`/`·`1,700,000` 은 값이다
+_TITLE_RE = re.compile(r"[가-힣]|[A-Za-z]{2,}")
+
+
+def _title(text: str) -> str:
+    return text if _TITLE_RE.search(text) else ""
 
 
 def context_label(schema: FormSchema, slot: SlotSpec, inputs: set[tuple[int, int, int]]) -> str:
@@ -239,9 +252,11 @@ def context_label(schema: FormSchema, slot: SlotSpec, inputs: set[tuple[int, int
         text = _one_line(grid[r][c])
         return text if text and not is_placeholder(text) else ""
 
-    row = _one_line(slot.label) or next(
-        (h for c in range(slot.col - 1, -1, -1) if (h := header(slot.row, c))), ""
-    )
+    # 행 제목은 글자가 있는 칸을 먼저 찾는다. 값 칸(`산단계 정과목` 의 1·5)을 집으면 여러 행의
+    # 칸 이름이 `5 / 비고` 로 같아져 모델이 행을 가리지 못한다(실측). 글자 제목이 없으면
+    # 숫자라도 쓴다 — 연번만 있는 명단은 그 번호가 행을 가른다
+    lefts = [_one_line(slot.label)] + [header(slot.row, c) for c in range(slot.col - 1, -1, -1)]
+    row = next((h for h in lefts if _title(h)), "") or next((h for h in lefts if h), "")
     # 열 제목: 위로 올라가며 입력 칸은 건너뛰고 처음 만나는 제목. 빈 칸이나 자리표시자를 만나면
     # 멈춘다 — 더 위의 글자는 다른 표 블록의 머리다(회의비용 칸이 명단 머리 `성명` 을 집었다)
     col = ""
@@ -312,16 +327,16 @@ def plan(schema: FormSchema, variant: int | None = None) -> Plan:
     for rep in schema.repeats:
         if not mine(rep.table):
             continue
+        # 사람 명단도 넘긴다(성명·학번·소속 …). LLM 은 우리 서버에서 돌아 밖으로 나가지 않는다
+        # (2026-11-17 결정). 계좌·은행·주민등록번호 열만 빼고 직접 적거나 입금계좌 확인서로 채운다
         cols = [c for c in rep.columns if c.role == "input"]
-        concepts = {column_concept(c.label) for c in cols}
-        if concepts & ROSTER:
-            out.skipped.append(f"명단 ({', '.join(_one_line(c.label) for c in cols)})")
-            continue
+        private = [c for c in cols if column_concept(c.label) in PRIVATE]
+        out.skipped += [_one_line(c.label) for c in private]
         targets = [
             Target("repeat", str(c.col), _one_line(c.label) or f"{c.col}열", c.input_type,
                    _example(c.prefilled or ""), rep.table, rep.start_row, c.col, rep.id)
             for c in cols
-            if column_concept(c.label) not in PRIVATE
+            if c not in private
         ]  # fmt: skip
         if targets:
             out.rows[rep.id] = targets
@@ -333,6 +348,7 @@ def output_schema(p: Plan) -> dict[str, Any]:
     """답의 JSON 스키마. 모양은 입력 JSON 과 같다: {fields, cells, rows}.
 
     모든 칸을 필수로 둔다(모르면 ""). 선택으로 두면 모델이 빈 객체 `{}` 로 답해 버린다.
+    표(명단·표 칸)를 누름틀보다 먼저 둔다. 모델은 스키마 순서대로 답을 쓰므로 표를 먼저 채운다.
     """
 
     def obj(props: dict[str, Any]) -> dict[str, Any]:
@@ -343,19 +359,20 @@ def output_schema(p: Plan) -> dict[str, Any]:
         return obj({t.key: {"type": "string", "description": t.describe()} for t in targets})
 
     props: dict[str, Any] = {}
-    if p.fields:
-        props["fields"] = text(p.fields)
-    if p.cells:
-        props["cells"] = text(p.cells)
     if p.rows:
         props["rows"] = obj({
             rid: {"type": "array", "items": text(cols), "maxItems": MAX_ROWS}
             for rid, cols in p.rows.items()
         })  # fmt: skip
+    if p.cells:
+        props["cells"] = text(p.cells)
+    if p.fields:
+        props["fields"] = text(p.fields)
     return obj(props)
 
 
-#: 표 모양에 넣는 최대 글자 수. 문맥 8192 토큰 안에 글·칸 목록·답이 함께 들어가야 한다
+#: 표 모양에 넣는 최대 글자 수. 문맥(`adapters.ollama.DEFAULT_CONTEXT`) 안에 글·칸 목록·답이
+#: 함께 들어가야 한다
 TABLE_BUDGET = 5000
 #: 표 모양의 칸 하나에 보이는 최대 글자 수
 _CELL_LIMIT = 16
@@ -366,7 +383,8 @@ def table_view(schema: FormSchema, p: Plan, budget: int = TABLE_BUDGET) -> str:
 
     칸 이름만으로는 어느 칸인지 모호한 경우가 많다(목록 모양 표에서 행의 값 `보조` 가 이름이 되는
     등). 표를 보여 주면 모델이 머리글을 직접 보고 칸을 고른다.
-    반복영역(명단)은 한 줄로 줄인다. 넘치면 넣을 수 있는 표까지만 넣는다.
+    반복영역(명단)은 한 줄로 줄인다. 넘치는 표는 빼고 뒤의 표는 계속 넣는다.
+    병합으로 가려진 칸은 격자에서 빈 칸이라 그대로 두어야 열이 맞는다.
     """
     keys = {(t.table, t.row, t.col): t.key for t in p.cells}
     # 집행 항목 이름 칸은 지금 이름을 함께 보인다. 자리만 보이면 행의 뜻을 잃는다
@@ -392,8 +410,6 @@ def table_view(schema: FormSchema, p: Plan, budget: int = TABLE_BUDGET) -> str:
                 cell = f"{{cells.{key}}}" if key else _one_line(text)[:_CELL_LIMIT]
                 if key and (table, r, c) in names:
                     cell = f"{names[(table, r, c)]} {cell}"
-                if cells and cell and cell == cells[-1]:
-                    continue  # 가로로 병합된 칸이 펼쳐져 같은 글자가 이어진다
                 cells.append(cell)
             while cells and not cells[-1]:
                 cells.pop()
@@ -401,10 +417,33 @@ def table_view(schema: FormSchema, p: Plan, budget: int = TABLE_BUDGET) -> str:
                 lines.append("| " + " | ".join(cells) + " |")
         block = f"표 {table + 1}:\n" + "\n".join(lines)
         if used + len(block) > budget:
-            break
+            continue  # 큰 표 하나 때문에 뒤의 작은 표까지 빠지지 않게 한다
         blocks.append(block)
         used += len(block)
     return "\n\n".join(blocks)
+
+
+def chunks(p: Plan, limit: int = CHUNK_CELLS) -> list[Plan]:
+    """한 번에 묻지 않고 나눠 묻는다: 명단 하나씩 → 표 칸 묶음 → 누름틀.
+
+    서식 전체를 한 번에 물으면 칸이 100개 넘는 서식은 문맥이 넘쳐 글(맨 앞)이 잘리고,
+    답 하나가 깨지면 모든 칸을 잃는다. 표는 쪼개지 않고 칸이 limit 를 넘을 때까지 묶는다.
+    """
+    out = [Plan(rows={rid: cols}) for rid, cols in p.rows.items()]
+    by_table: dict[int | None, list[Target]] = {}
+    for t in p.cells:
+        by_table.setdefault(t.table, []).append(t)
+    part = Plan()
+    for targets in by_table.values():
+        if part.cells and len(part.cells) + len(targets) > limit:
+            out.append(part)
+            part = Plan()
+        part.cells += targets
+    if part.cells:
+        out.append(part)
+    if p.fields:
+        out.append(Plan(fields=p.fields))
+    return out
 
 
 def build_request(schema: FormSchema, p: Plan, text: str, today: date) -> LlmRequest:
@@ -414,11 +453,11 @@ def build_request(schema: FormSchema, p: Plan, text: str, today: date) -> LlmReq
     if view := table_view(schema, p):
         lines += ["", "[서식 모양]", view]
     lines += ["", "[채울 칸]"]
-    lines += [f"- fields.{t.key}: {t.describe()}" for t in p.fields]
-    lines += [f"- cells.{t.key}: {t.describe()}" for t in p.cells]
     for rid, cols in p.rows.items():
         columns = " / ".join(f"{t.key}={t.describe()}" for t in cols)
         lines.append(f"- rows.{rid} (여러 행): {columns}")
+    lines += [f"- cells.{t.key}: {t.describe()}" for t in p.cells]
+    lines += [f"- fields.{t.key}: {t.describe()}" for t in p.fields]
     return LlmRequest(SYSTEM, "\n".join(lines), output_schema(p))
 
 
@@ -797,10 +836,28 @@ def prefill(
         if stories:  # 서술형 칸만 있다. 본문 초안이 쓴다
             return Prefill({"fields": {}, "cells": {}, "rows": {}}, [], [], p.skipped)
         raise ValueError(
-            "이 서식에는 LLM 으로 채울 칸이 없습니다 (명단은 입금계좌 확인서로 채웁니다)"
+            "이 서식에는 LLM 으로 채울 칸이 없습니다 (계좌·주민등록번호는 직접 적거나 "
+            "입금계좌 확인서로 채웁니다)"
         )
-    result = client.complete(build_request(schema, p, text, today))
-    raw, filled = read_answer(p, result.data, text)
+    # 나눠서 연달아 묻고 답을 합친다. 한 묶음이 실패하면 그 칸만 비워 둔다
+    data: dict[str, dict[str, Any]] = {"rows": {}, "cells": {}, "fields": {}}
+    model, elapsed, errors = "", 0.0, []
+    parts = chunks(p, CHUNK_CELLS)
+    for part in parts:
+        try:
+            result = client.complete(build_request(schema, part, text, today))
+        except LlmError as exc:
+            log.warning("글로 채우기 한 묶음을 채우지 못했다: %s", exc)
+            errors.append(exc)
+            continue
+        for key, got in data.items():
+            if isinstance(answer := result.data.get(key), dict):
+                got.update(answer)
+        model = model or result.model
+        elapsed += result.elapsed
+    if len(errors) == len(parts):
+        raise errors[0]
+    raw, filled = read_answer(p, data, text)
     filled, placed = place_amounts(text, p, raw, filled)
     issues = uncited(text, filled, today) + placed
-    return Prefill(raw, filled, issues, p.skipped, result.model, result.elapsed)
+    return Prefill(raw, filled, issues, p.skipped, model, elapsed)

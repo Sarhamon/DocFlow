@@ -280,25 +280,27 @@ EXTRACTED = {
 def test_글로_채우면_서술형_칸은_묻지_않고_초안이_쓴다():
     """실측: 옮겨 적기 요청이 본문을 빈 칸으로 두거나 글 전체를 그대로 넣었다."""
     body = "캡스톤 디자인 회의를 열고 다과비 50,000원을 집행하고자 함."
-    llm = SeqLlm(EXTRACTED, {"text": body}, {"text": "회의 운영 70,000원"})
+    # 글로 채우기는 명단(다과 내역, 참석 학생) → 표 칸 → 누름틀을 차례로 묻는다
+    llm = SeqLlm(*[EXTRACTED] * 4, {"text": body}, {"text": "회의 운영 70,000원"})
     out = dr.prefill_with_drafts(기안(), PROMPT, llm, today=TODAY)
-    props = llm.requests[0].schema["properties"]
-    assert "content_body" not in props["fields"]["properties"]
-    assert "t0.r1.c1" not in props["cells"]["properties"]
+    assert [list(r.schema["properties"]) for r in llm.requests[:4]] == [
+        ["rows"], ["rows"], ["cells"], ["fields"]]  # fmt: skip
+    assert "t0.r1.c1" not in llm.requests[2].schema["properties"]["cells"]["properties"]
+    assert "content_body" not in llm.requests[3].schema["properties"]["fields"]["properties"]
     # 초안은 채운 값을 입력값으로, 사용자의 글을 요청으로 받는다
-    assert "- 사업명: 캡스톤 디자인" in llm.requests[1].prompt
-    assert llm.requests[1].prompt.endswith(f"요청:\n{PROMPT}")
+    assert "- 사업명: 캡스톤 디자인" in llm.requests[4].prompt
+    assert llm.requests[4].prompt.endswith(f"요청:\n{PROMPT}")
     assert out.input["fields"]["content_body"] == body
     assert out.input["cells"]["t0.r1.c1"] == "회의 운영 70,000원"
     assert out.drafted == {"content_body": PROMPT, "t0.r1.c1": PROMPT}
     assert [f.target.key for f in out.filled][-2:] == ["content_body", "t0.r1.c1"]
     # 50,000원은 글에 있어 괜찮고, 70,000원은 어디에도 없다
     assert [(i.code, i.location.id) for i in out.issues] == [(dr.DRAFT_UNCITED, "t0.r1.c1")]
-    assert out.elapsed == 1.5
+    assert out.elapsed == 3.0
 
 
 def test_초안_하나가_실패하면_그_칸만_비운다():
-    llm = SeqLlm(EXTRACTED, LlmError("시간 초과"), {"text": "회의 목적"})
+    llm = SeqLlm(*[EXTRACTED] * 4, LlmError("시간 초과"), {"text": "회의 목적"})
     out = dr.prefill_with_drafts(기안(), PROMPT, llm, today=TODAY)
     assert "content_body" not in out.input["fields"]
     assert out.input["cells"]["t0.r1.c1"] == "회의 목적"

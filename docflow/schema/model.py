@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, computed_field, model_validator
 
 from docflow.schema.rules import is_spare_item
 
-SCHEMA_VERSION = 9  # 9: 집행 항목 표 끝의 여분 줄(`⑩ ......`)도 항목 행으로 잡는다
+SCHEMA_VERSION = 10  # 10: 계좌·은행 칸은 필수가 아니다 (비어도 문서를 만든다)
 
 #: 서식 번호가 붙은 변형 이름 (`1-02호`)
 _NUMBERED_RE = re.compile(r"^\d+-\d+호$")

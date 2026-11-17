@@ -11,7 +11,9 @@ import pytest
 
 from docflow.hwpx.document import HwpxDocument
 from docflow.schema.extract import extract
+from docflow.schema.model import FieldSpec
 from docflow.schema.rules import FormLocation
+from docflow.validate import field_required
 from tests import hwpx_factory as hf
 
 #: (행, 열, 글자[, 열병합, 행병합]) — 글자 대신 문단 XML 을 넣으려면 "<" 로 시작한다
@@ -78,6 +80,22 @@ def test_반복영역_밖의_자리표시자는_슬롯이다(교통비_스키마
     assert (slot.id, slot.label, slot.origin, slot.required) == (
         "t0.r0.c1", "학과/부서명", "placeholder", True,
     )  # fmt: skip
+
+
+def test_계좌·은행_칸은_자리표시자가_있어도_필수가_아니다(tmp_path):
+    """2026-11-17: 계좌·은행을 몰라도 문서는 만들어져야 한다. 관리자가 필수로 정하면 필수다."""
+    s = schema_of(tmp_path, tbl(
+        3, 2,
+        (0, 0, "은행명"), (0, 1, "○○은행"),
+        (1, 0, "계좌번호"), (1, 1, "000-0000-0000"),
+        (2, 0, "소속"), (2, 1, "○○○○과"),
+    ))  # fmt: skip
+    assert [(x.label, x.required) for x in s.slots] == [
+        ("은행명", False), ("계좌번호", False), ("소속", True),
+    ]  # fmt: skip
+    account = FieldSpec(name="account", type="", label="입금 계좌번호", placeholder="000-000")
+    assert not field_required(account)
+    assert field_required(account.model_copy(update={"required": True}))
 
 
 def test_수식은_슬롯이_아니라_수식으로_뽑는다(교통비_스키마):

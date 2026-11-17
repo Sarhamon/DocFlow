@@ -28,6 +28,7 @@ from docflow.service.prefill import (
     LLM_UNCITED,
     MAX_PROMPT,
     build_request,
+    chunks,
     fix_weekday,
     korean_amount,
     plan,
@@ -83,13 +84,14 @@ def 회의비() -> FormSchema:
 
 
 # ---------------------------------------------------------------- 채울 칸
-def test_입력_칸만_넘기고_명단·계좌·다른_변형은_뺀다():
+def test_입력_칸만_넘기고_계좌·다른_변형은_뺀다():
     p = plan(회의비(), 0)
     assert [t.key for t in p.fields] == ["docnumber"]  # 결재란은 빠진다
     assert [t.key for t in p.cells] == ["t0.r0.c1", "t0.r1.c1"]
-    assert list(p.rows) == ["t0.r5-6"]  # 참석자 명단은 통째로 빠진다
+    assert list(p.rows) == ["t0.r5-6", "t0.r8-11"]  # 참석자 명단도 넘긴다 (2026-11-17)
     assert [t.label for t in p.rows["t0.r5-6"]] == ["품목", "금액(원)"]
-    assert p.skipped == ["입금 계좌번호", "명단 (성명, 학번)"]
+    assert [t.label for t in p.rows["t0.r8-11"]] == ["성명", "학번"]
+    assert p.skipped == ["입금 계좌번호"]
 
 
 def test_요청의_스키마는_입력_JSON_모양이고_칸_이름을_설명에_넣는다():
@@ -101,12 +103,12 @@ def test_요청의_스키마는_입력_JSON_모양이고_칸_이름을_설명에
     assert props["rows"]["properties"]["t0.r5-6"]["type"] == "array"
     assert req.schema["additionalProperties"] is False
     # 모든 칸이 필수다. 선택이면 7.8B 가 {} 로 답한다
-    assert req.schema["required"] == ["fields", "cells", "rows"]
+    assert req.schema["required"] == ["rows", "cells", "fields"]  # 표를 먼저 채운다
     assert props["cells"]["required"] == ["t0.r0.c1", "t0.r1.c1"]
     assert props["rows"]["properties"]["t0.r5-6"]["items"]["required"] == ["0", "1"]
     assert req.prompt.startswith("[사용자의 글]\n중간점검 회의\n")  # 글이 맨 앞
     assert "[오늘] 2026. 10. 27." in req.prompt
-    assert "성명" not in req.prompt and "계좌" not in req.prompt
+    assert "계좌" not in req.prompt
     assert req.temperature == 0
 
 
@@ -148,7 +150,7 @@ def test_답에서_계획에_있는_칸의_값만_꺼낸다():
         "cells": {"t0.r0.c1": "중간점검 회의", "t0.r1.c1": "", "t0.r2.c1": "123-456",
                   "t9.r9.c9": "없는 칸"},
         "rows": {"t0.r5-6": [{"0": "다과", "1": 50000}, {"0": "", "1": ""}, "이상한 행"],
-                 "t0.r8-11": [{"0": "김철수"}]},
+                 "t9.r1-2": [{"0": "없는 명단"}]},
         "extra": "무시",
     })  # fmt: skip
     assert raw == {
@@ -230,13 +232,14 @@ def test_빈_글·너무_긴_글·채울_칸이_없는_서식은_거절():
         run({}, "   ")
     with pytest.raises(ValueError, match=f"{MAX_PROMPT:,}자"):
         run({}, "가" * (MAX_PROMPT + 1))
-    only_roster = FormSchema(
+    only_private = FormSchema(
         title="명단", tables=[TableSpec(index=0, rows=3, cols=2)],
         repeats=[RepeatSpec(table=0, header_rows=[0], start_row=1, end_row=2,
-                            columns=[RepeatColumn(col=0, label="성명")])],
+                            columns=[RepeatColumn(col=0, label="계좌번호"),
+                                     RepeatColumn(col=1, label="주민등록번호")])],
     )  # fmt: skip
     with pytest.raises(ValueError, match="입금계좌 확인서"):
-        prefill(only_roster, "김철수", FakeLlm({}), today=TODAY)
+        prefill(only_private, "김철수", FakeLlm({}), today=TODAY)
 
 
 def test_변형을_고르면_그_변형의_칸만_넘긴다():
@@ -339,14 +342,18 @@ def test_글로_채운_값을_돌려주고_저장하지는_않는다(tmp_path):
     assert client.get(f"/api/documents/{doc}").json()["input"] == {}  # 저장하지 않는다
 
 
-def test_교통비_명단은_LLM_에_넘기지_않는다(tmp_path):
+def test_교통비_명단은_성명은_넘기고_계좌는_뺀다(tmp_path):
+    """2026-11-17 결정: LLM 은 우리 서버에서 돌므로 성명·학번 명단도 채운다.
+    계좌·은행·주민번호는 뺀다."""
     llm = FakeLlm({"cells": {"t0.r0.c1": "컴퓨터과"}, "rows": {"t0.r3-5": [{"1": "김철수"}]}})
     client = make_client(tmp_path, llm)
     doc = new_doc(client, "교통비")
-    out = client.post(f"/api/documents/{doc}/prefill", json={"prompt": "컴퓨터과"}).json()
-    assert out["input"] == {"fields": {}, "cells": {"t0.r0.c1": "컴퓨터과"}, "rows": {}}
-    assert out["skipped"] and out["skipped"][0].startswith("명단")
-    assert "rows" not in llm.requests[0].schema["properties"]
+    out = client.post(f"/api/documents/{doc}/prefill", json={"prompt": "컴퓨터과 김철수"}).json()
+    assert out["input"]["rows"]["t0.r3-5"][0]["1"] == "김철수"
+    rows = llm.requests[0].schema["properties"]["rows"]["properties"]["t0.r3-5"]
+    sent = [c["description"].split(" [")[0] for c in rows["items"]["properties"].values()]
+    assert sent == ["연번", "성명", "입금계좌 입금액(원)"]  # 금액은 넘기고 은행명은 뺀다
+    assert out["skipped"] == ["입금계좌 은행명"]
 
 
 def test_LLM_을_못_쓰면_503(tmp_path):
@@ -420,6 +427,69 @@ def test_열_제목은_빈_칸을_건너_다른_블록에서_가져오지_않는
     s = FormSchema(title="회의", tables=[TableSpec(index=0, rows=3, cols=3, grid=grid)],
                    slots=[SlotSpec(table=0, row=2, col=1, label="회의비용")])  # fmt: skip
     assert [t.label for t in plan(s).cells] == ["회의비용"]
+
+
+def test_값_칸은_행_제목으로_쓰지_않되_연번만_있으면_번호를_쓴다():
+    """실측(2-03): 비고 칸이 왼쪽 `산단계 정과목` 값을 집어 `5 / 비고` 로 여러 행이 같아졌다."""
+    grid = [
+        ["집행항목", "금액(원)", "정과목", "비고"],
+        ["③ 식사비", "", "5", ""],
+        ["④ 간식비", "", "5", ""],
+    ]
+    slots = [SlotSpec(table=0, row=r, col=3, label=label) for r, label in ((1, "5"), (2, ""))]
+    s = FormSchema(
+        title="정산", tables=[TableSpec(index=0, rows=3, cols=4, grid=grid)], slots=slots
+    )
+    assert [t.label for t in plan(s).cells] == ["③ 식사비 / 비고", "④ 간식비 / 비고"]
+    roster = [["연번", "성명", "소속", "비고"], ["1", "", "", ""], ["2", "", "", ""]]
+    s = FormSchema(title="명단", tables=[TableSpec(index=0, rows=3, cols=4, grid=roster)],
+                   slots=[SlotSpec(table=0, row=r, col=3) for r in (1, 2)])  # fmt: skip
+    assert [t.label for t in plan(s).cells] == ["1 / 비고", "2 / 비고"]
+
+
+def test_표_모양은_같은_글자의_이웃_칸을_합치지_않고_큰_표만_뺀다():
+    """같은 글자의 이웃 칸을 합치면 그 행의 열이 밀려 모델이 옆 칸에 썼다."""
+    small = TableSpec(index=1, rows=1, cols=3, grid=[["인건비", "인건비", ""]])
+    big = TableSpec(index=0, rows=1, cols=11, grid=[[f"제목{i}" for i in range(10)] + [""]])
+    s = FormSchema(title="표", tables=[big, small],
+                   slots=[SlotSpec(table=0, row=0, col=10, label="값"),
+                          SlotSpec(table=1, row=0, col=2, label="금액")])  # fmt: skip
+    view = table_view(s, plan(s), budget=60)
+    assert view == "표 2:\n| 인건비 | 인건비 | {cells.t1.r0.c2} |"  # 큰 표 1 만 빠진다
+
+
+def test_칸이_많으면_명단·표_묶음·누름틀을_나눠_묻고_답을_합친다(monkeypatch):
+    tables = [TableSpec(index=i, rows=1, cols=2, grid=[[f"항목{i}", ""]]) for i in range(3)]
+    slots = [SlotSpec(table=i, row=0, col=1, label=f"항목{i}") for i in range(3)]
+    s = FormSchema(
+        title="큰 서식", tables=tables, fields=[FieldSpec(name="docnumber", type="")], slots=slots
+    )
+    p = plan(s)
+    assert [[t.table for t in c.cells] or list(c.rows) or ["fields"] for c in chunks(p, 2)] == [
+        [0, 1], [2], ["fields"]]  # fmt: skip
+
+    class Seq:
+        def __init__(self, *answers):
+            self.answers, self.requests = list(answers), []
+
+        def complete(self, request):
+            self.requests.append(request)
+            answer = self.answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return LlmResult(answer, "fake", 0.5)
+
+    llm = Seq(
+        {"cells": {"t0.r0.c1": "가나"}}, LlmError("시간 초과"), {"fields": {"docnumber": "A-1"}}
+    )
+    monkeypatch.setattr("docflow.service.prefill.CHUNK_CELLS", 2)
+    out = prefill(s, "가나 다라 A-1", llm, today=TODAY)
+    # 한 묶음이 실패해도 나머지는 채운다
+    assert out.input["cells"] == {"t0.r0.c1": "가나"}
+    assert out.input["fields"] == {"docnumber": "A-1"}
+    assert len(llm.requests) == 3 and out.elapsed == 1.0
+    with pytest.raises(LlmError):  # 모두 실패하면 오류다
+        prefill(s, "가나", Seq(*[LlmError("x")] * 3), today=TODAY)
 
 
 def test_용도_표시가_붙은_같은_표만_사본이다():

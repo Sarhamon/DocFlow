@@ -118,6 +118,10 @@ COLUMN_CONCEPTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("address", ("주소",)),
     ("phone", ("연락처", "전화", "휴대폰")),
 )
+#: 비어도 문서를 만드는 칸의 뜻 (관리자가 필수로 정하지 않으면 선택)
+OPTIONAL_CONCEPTS = frozenset({"account", "bank"})
+
+
 def column_concept(label: str) -> str | None:
     """열(항목) 이름의 뜻. 모르면 None (연번·서명·비고 등). 명단 가져오기와 형식 점검이 쓴다."""
     text = "".join(label.split())

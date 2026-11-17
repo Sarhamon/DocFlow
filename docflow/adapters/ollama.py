@@ -19,6 +19,7 @@ from docflow.llm import LlmError, LlmRequest, LlmResult
 DEFAULT_TIMEOUT = 180.0
 #: 문맥 길이(토큰). Ollama 기본값 4096 은 칸이 많은 서식의 프롬프트가 넘치고, 넘치면 오류 없이
 #: 앞을 잘라 버린다. EXAONE 3.5 는 32K 까지 받고, T4(16GB)에 7.8B 4bit + 8K 는 넉넉히 들어간다.
+#: 칸이 많은 서식은 표 단위로 나눠 연달아 묻는다(`prefill.chunks`). 요청마다 8K 를 따로 쓴다.
 DEFAULT_CONTEXT = 8192
 
 

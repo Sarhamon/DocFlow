@@ -33,9 +33,11 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Literal
 
+from docflow.schema.labels import field_label
 from docflow.schema.model import FieldSpec, FormSchema, RepeatColumn, RepeatSpec, SlotSpec
 from docflow.schema.rules import (
     ISSUED_FIELDS,
+    OPTIONAL_CONCEPTS,
     column_concept,
     has_fill_marks,
     is_placeholder,
@@ -277,12 +279,14 @@ def field_required(spec: FieldSpec) -> bool:
     """누름틀이 필수인가. 관리자가 정했으면 그대로, 아니면 자리표시자가 있으면 필수다.
 
     주소·공개여부처럼 서식에 이미 값이 박혀 있는 누름틀은 채울 곳이 아니다. 문서번호처럼 결재
-    시스템이 매기는 누름틀은 비어도 된다(관리자가 필수로 정하면 필수).
+    시스템이 매기는 누름틀과 계좌·은행 누름틀은 비어도 된다(관리자가 필수로 정하면 필수).
     """
     if spec.role != "input":
         return False
     if spec.required is not None:
         return spec.required
+    if column_concept(spec.label or field_label(spec.name)) in OPTIONAL_CONCEPTS:
+        return False
     return spec.name not in ISSUED_FIELDS and is_placeholder(spec.placeholder)
 
 
