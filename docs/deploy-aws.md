@@ -1,6 +1,6 @@
 # AWS 배포 안내 (M12)
 
-사이트: **<http://docflow-ysu.duckdns.org>** (2026-11-10 배포, 2026-11-16 다시 배포 `docflow:12`). 서울 리전(`ap-northeast-2`), 학교 공용 계정 `093356173512`.
+사이트: **<http://docflow-ysu.duckdns.org>** (2026-11-10 배포, 2026-11-17 다시 배포 `docflow:13`, 스키마 v10). 서울 리전(`ap-northeast-2`), 학교 공용 계정 `093356173512`.
 HTTPS 가 없어 주소는 `http://` 까지 적어 준다 — 브라우저가 https 로 먼저 시도하면 열리지 않는다.
 **자원은 매일 저녁 7시에 자동으로 꺼진다**(관리 측 비용 정책). 다음 날 쓰려면 RDS 를 켠다(6장).
 계정이 공용이라 남의 자원(Elastic IP·RDS·EC2 다수)이 섞여 있다. 우리 자원은 이름에 `docflow` 가 붙거나 `Project=DocFlow` 태그가 있다.
