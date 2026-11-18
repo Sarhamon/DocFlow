@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="서식 기반 문서 자동 생성·검증 시스템 DocFlow 의 마일스톤별 개발 진행 현황.">
 <meta property="og:title" content="DocFlow 개발 진행 현황">
-<meta property="og:description" content="마일스톤 12/13 완료 (진행도 93%). 2026.11.10 시연 의견(결재란·집행 항목·표 편집)을 반영해 2026.11.11 AWS 에 다시 배포했고, 사이트에서 문서를 끝까지 만들어 보는 확인이 남았다.">
+<meta property="og:description" content="마일스톤 12/13 완료 (진행도 93%). 2026.11.10 시연 의견(결재란·집행 항목·표 편집)을 반영해 2026.11.11 AWS 에 다시 배포했다. 2026.11.18 AWS 자원을 모두 껐고, 남은 일은 다음 주 현장 시연이다.">
 <meta property="og:type" content="article">
 <title>DocFlow 개발 진행 현황</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -430,6 +430,88 @@
   .docnav a:hover { color: var(--mark); border-bottom-color: var(--mark); }
   .docnav small { display: block; font-size: 11.5px; color: var(--ink-faint); }
 
+  /* ---------- 예상 질문 (단추 → 대화상자) ---------- */
+
+  .qa-open {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+    padding: 8px 10px;
+    font: 500 13px/1.4 var(--f-body);
+    color: var(--ink);
+    background: var(--mark-bg);
+    border: 1px solid var(--mark);
+    cursor: pointer;
+    text-align: left;
+  }
+  .qa-open:hover { background: var(--surface-2); }
+  .qa-open small { color: var(--ink-mute); }
+
+  dialog.qa {
+    width: min(760px, calc(100vw - 32px));
+    max-height: calc(100dvh - 48px);
+    padding: 0;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    color: var(--ink);
+  }
+  dialog.qa::backdrop { background: rgb(10 16 22 / .55); }
+  .qa-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--rule);
+  }
+  .qa-head h2 {
+    flex: 1;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font: 700 20px/1.3 var(--f-display);
+  }
+  .qa-head button {
+    padding: 6px 12px;
+    font: 500 13px var(--f-body);
+    color: var(--ink);
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    cursor: pointer;
+  }
+  .qa-tools { display: flex; gap: 6px; }
+  .qa-body { padding: 6px 18px 22px; }
+  .qa-body h3 {
+    margin: 22px 0 8px;
+    font: 500 11px/1.4 var(--f-data);
+    letter-spacing: .16em;
+    color: var(--ink-faint);
+  }
+  .qa-body details {
+    border-top: 1px solid var(--rule-soft);
+    padding: 10px 0;
+  }
+  .qa-body details:last-of-type { border-bottom: 1px solid var(--rule-soft); }
+  .qa-body summary {
+    cursor: pointer;
+    font-weight: 600;
+    line-height: 1.55;
+  }
+  .qa-body summary::marker { color: var(--mark); }
+  .qa-body details p,
+  .qa-body details ol { margin: 8px 0 0; color: var(--ink-mute); }
+  .qa-body details ol { padding-left: 20px; }
+  .qa-tip {
+    margin: 22px 0 0;
+    padding: 10px 14px;
+    background: var(--mark-bg);
+    border-left: 3px solid var(--mark);
+    font-size: 14px;
+  }
+
   @media (min-width: 1300px) {
     .docnav {
       position: fixed;
@@ -585,8 +667,8 @@
   <nav class="docnav" aria-label="발표·시연 자료">
     <h2>시연</h2>
     <ul>
-      <li><a href="http://docflow-ysu.duckdns.org">운영 사이트</a><small>매일 19시 자동 중지 · 쓰기 전 RDS 켜기</small></li>
-      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/demo.md">시연 안내</a><small>순서 · 막혔을 때 · 질문 대비</small></li>
+      <li><a href="http://docflow-ysu.duckdns.org">운영 사이트</a><small>2026.11.18부터 꺼 둠 · 시연 날 켬</small></li>
+      <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/demo.md">시연 안내</a><small>체크리스트 · 순서 · 막혔을 때 · 질문 대비</small></li>
       <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/dev-roadmap.md#7-시연-피드백-2026-11-10">시연 피드백과 처리</a></li>
       <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/deploy-aws.md#6-켜고-끄기">AWS 켜고 끄기</a></li>
     </ul>
@@ -597,6 +679,7 @@
       <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/dev-roadmap.md">개발 로드맵</a><small>마일스톤 · 위험 · 결정</small></li>
       <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/deploy-aws.md">AWS 배포 안내</a><small>구성 · 학교 계정 제약</small></li>
     </ul>
+    <button type="button" class="qa-open" id="qa-open" aria-haspopup="dialog">예상 질문 보기<small> · 31문항</small></button>
     <h2>원본</h2>
     <ul>
       <li><a href="https://github.com/Sarhamon/DocFlow/blob/master/docs/specsheet.xlsx">specsheet.xlsx</a><small>기능명세 · 역할 정의 · 용어집</small></li>
@@ -619,14 +702,15 @@
       계정 정보로 칸 채우기를 더했습니다. 지금은 클라우드 이전(M12)을 진행 중이고, 2026.11.10 노트북 로컬 + EC2 LLM 으로
       시연했습니다. 시연 뒤 <strong>AWS 에 배포</strong>했고(<a href="http://docflow-ysu.duckdns.org">docflow-ysu.duckdns.org</a>),
       시연 의견 — 결재란을 필수에서 빼기, 집행 항목 이름 고치기·행 추가·삭제, 한글 표 단축키 — 을 반영해
-      2026.11.11 다시 배포했습니다(아래 06). 남은 일은 사이트에서 문서를 끝까지 만들어 보는 확인입니다.
+      2026.11.11 다시 배포했습니다(아래 06). 2026.11.17 스키마 v10 까지 배포한 뒤 2026.11.18 <strong>AWS 자원을 모두 껐습니다</strong>.
+      남은 일은 다음 주 <strong>현장 시연</strong>입니다. 시연 날 자원을 켜고 사이트에서 문서를 끝까지 만들어 보입니다.
     </p>
 
     <dl class="docstrip">
       <div><dt>문서번호</dt><dd>DocFlow-2026-1118</dd></div>
       <div><dt>기준일</dt><dd>2026.11.18</dd></div>
       <div><dt>마일스톤</dt><dd>12 / 13 완료</dd></div>
-      <div><dt>진행 중</dt><dd>M12 클라우드 이전</dd></div>
+      <div><dt>남은 일</dt><dd>현장 시연 (11.23 주)</dd></div>
     </dl>
   </header>
 
@@ -773,7 +857,7 @@
           2026.11.17 글로 채우기를 나눠 묻게 고치고 명단의 성명·학번도 채우게 해 다시 배포했다(스키마 v10).
           학교 공용 계정이 IAM 역할·ALB·Elastic IP 를 막아 파일은 RDS 에, 주소는 DuckDNS + Caddy 로 냈다.
           자원이 매일 19시에 자동으로 꺼져 쓰는 날 RDS 를 먼저 켠다. Caddy 를 거치지 않던 8000 포트는 닫았다.
-          사이트에서 문서를 끝까지 만들어 보는 확인이 남았다.
+          2026.11.18 자원을 모두 껐다(ECS 0, EC2·RDS 중지). 다음 주 현장 시연 때 켜서 서식 재등록(v10)과 사이트에서 문서를 끝까지 만드는 것을 확인한다.
         </p>
       </li>
     </ol>
@@ -1078,5 +1162,121 @@
   </footer>
 
 </div>
+
+<dialog class="qa" id="qa" aria-labelledby="qa-title">
+  <div class="qa-head">
+    <h2 id="qa-title">예상 질문과 답변</h2>
+    <div class="qa-tools">
+      <button type="button" id="qa-all">모두 펼치기</button>
+      <button type="button" id="qa-close">닫기</button>
+    </div>
+  </div>
+  <div class="qa-body">
+
+    <h3>1. 기획·필요성</h3>
+    <details><summary>왜 이 문제를 골랐나? 기존 방식과 무엇이 다른가?</summary>
+      <p>재정지원사업 서식이 183종이고, 같은 값을 학과용·부서용에 두 번 쓰며, 합계·날짜 실수는 결재 단계에서야 발견됩니다. DocFlow 는 글로 적으면 칸이 채워지고, 제출 전에 틀린 칸을 짚어 줍니다.</p></details>
+    <details><summary>실제 사용자는 누구인가?</summary>
+      <p>사업 서류를 작성하는 교직원·조교(사용자)와, 서식·규칙을 관리하는 사업단 담당자(관리자)입니다.</p></details>
+    <details><summary>왜 5개 서식만 시연하나?</summary>
+      <p>추출·검증·생성은 183개 전부 자동 테스트로 확인했습니다. LLM 채우기 품질은 서식마다 다듬어야 해서, 기능을 고루 보여 주는 5개(회의계획서·사유서·확인서·환급 내역서·도서관리대장)를 끝까지 완성했습니다.</p></details>
+
+    <h3>2. LLM</h3>
+    <details><summary>왜 ChatGPT 같은 외부 API 를 안 썼나?</summary>
+      <p>명단에 개인정보가 있어 학교 밖으로 보낼 수 없습니다. EXAONE 을 우리 서버(EC2)에서 직접 돌리고, 계좌·은행·주민번호는 그마저도 넘기지 않습니다.</p></details>
+    <details><summary>왜 EXAONE 인가?</summary>
+      <p>한국어 네이티브 모델이고, 7.8B 라 GPU 12GB 한 장에 올라가며, 공문 문체가 자연스럽습니다.</p></details>
+    <details><summary>LLM 이 틀리면?</summary>
+      <ol>
+        <li>결과는 미리보기만 하고 사용자가 확인해야 반영됩니다.</li>
+        <li>채운 금액·날짜·인원이 원문에 없으면 경고합니다(인용 검사).</li>
+        <li>반영한 값도 규칙 검증을 똑같이 거칩니다.</li>
+      </ol>
+      <p>LLM 없이 직접 입력해도 문서를 끝까지 만들 수 있습니다.</p></details>
+    <details><summary>환각(hallucination)은 어떻게 줄였나?</summary>
+      <p>답의 모양을 JSON 스키마로 강제하고, 표 모양을 프롬프트에 함께 줍니다. 칸 이름·예시값을 베낀 답은 버리고, 요일처럼 계산할 수 있는 것은 코드가 다시 계산합니다.</p></details>
+    <details><summary>속도는?</summary>
+      <p>글로 채우기 5~15초. RTX 3060 실측으로 기안문 9초, 정산서 12초, 정성 판정 3문항 5초입니다. 모델을 처음 올릴 때만 30초쯤 걸립니다.</p></details>
+    <details><summary>RAG 나 파인튜닝은 왜 안 했나?</summary>
+      <p>매번 지침을 검색하는 대신 서식을 한 번 분석해 규칙을 코드로 남겼습니다. 빠르고 비용이 없고 감사가 가능합니다. 파인튜닝은 학습 데이터(작성된 실제 서류)를 구할 수 없었습니다.</p></details>
+    <details><summary>라이선스 문제는 없나?</summary>
+      <p>EXAONE 은 비상업·연구 라이선스라 캡스톤에는 맞습니다. 실제 도입 때는 재검토하거나 모델을 바꾸면 되고, 어댑터 한 곳만 바꾸면 됩니다.</p></details>
+
+    <h3>3. 문서 처리·검증</h3>
+    <details><summary>HWP 를 어떻게 다루나?</summary>
+      <p>HWP 를 HWPX(zip + XML)로 바꾸면 표의 행·열·병합이 그대로 보입니다. 이걸 순수 파이썬으로 읽고 써서 한컴오피스 없이 리눅스 서버에서 돕니다.</p></details>
+    <details><summary>검증 규칙은 누가 만들었나? 칸이 5천 개인데.</summary>
+      <p>서식의 자리표시자가 알려 줍니다. <code>2000.00.00</code> 이면 날짜, <code>0,000,000원</code> 이면 금액, <code>합계</code> 옆이면 합계 칸입니다. 규칙은 자동으로 만들고, 관리자는 켜기·끄기와 서식별 예외만 정합니다.</p></details>
+    <details><summary>정확도를 어떻게 확인했나?</summary>
+      <p>183개 서식 전부에 올바른 값과 일부러 틀린 값을 넣는 자동 테스트를 돌립니다. 올바른 값에는 오류 0건, 틀린 값은 그 칸에서 정확히 잡습니다. 서식 수식 305개 중 304개가 서식에 적힌 값과 맞았습니다(나머지 1개는 서식의 낡은 값). 테스트는 860개입니다.</p></details>
+    <details><summary>왜 HWP·PDF 를 바로 안 주나?</summary>
+      <p>한컴 변환은 Windows + 한컴오피스가 있어야 해서 클라우드에 못 올립니다. 리눅스 변환기로 PDF 를 뽑아 보니 서식 12개 중 8개에서 쪽이 넘어가고 표 간격이 어긋났습니다. 그래서 HWPX 를 받아 한글에서 마무리하고 PDF 로 내는 것을 운영 방침으로 정했습니다.</p></details>
+    <details><summary>새 서식이 오면?</summary>
+      <p>관리자가 HWP·HWPX 를 올리면 칸과 규칙을 자동 추출하고, 입력폼에서 이름·필수·순서만 조정합니다. 서식 버전이 기록돼 개정 전 문서도 그대로 남습니다.</p></details>
+    <details><summary>표에 행을 더 넣을 수 있나?</summary>
+      <p>명단은 입력한 수만큼 행이 늘어납니다. 집행 항목 행은 추가·삭제할 수 있고 합계 수식 범위도 함께 맞춥니다. 열은 합계 수식·병합·사본 표가 얽혀 지원하지 않습니다.</p></details>
+
+    <h3>4. 개인정보·보안</h3>
+    <details><summary>개인정보는 어떻게 보호하나?</summary>
+      <p>주민번호가 들 수 있는 입력값·이력·만든 파일을 AES-256-GCM 으로 암호화해 저장합니다. 같은 값도 매번 다른 암호문이 됩니다. 명단용으로 올린 HWP 는 읽고 바로 지웁니다.</p></details>
+    <details><summary>관리자가 남의 문서를 볼 수 있나?</summary>
+      <p>볼 수 있지만 사유를 적어야 하고 감사 로그에 남습니다. 열람 화면에서는 주민번호 뒷자리를 가립니다.</p></details>
+    <details><summary>암호 키는 어디 있나?</summary>
+      <p>환경변수로 넣습니다. 학교 계정에서 KMS·Secrets Manager 를 쓸 수 없어 작업 정의에 들어 있고, 정의는 공유하지 않습니다. 실제 도입 때는 KMS 로 옮겨야 합니다.</p></details>
+    <details><summary>로그인은 어떻게 하나?</summary>
+      <p>관리자가 계정을 발급하는 방식(가입 신청 없음)입니다. 첫 로그인 때 비밀번호 변경을 강제하고, 비밀번호는 scrypt 해시로 저장합니다. 세션은 30분이고 연장할 수 있으며, 여러 번 틀리면 잠깁니다.</p></details>
+    <details><summary>HTTPS 는?</summary>
+      <p>아직 HTTP 입니다. 인증서를 둘 저장소가 없어 컨테이너가 뜰 때마다 새로 받아야 하는데, 같은 도메인은 주 5회 발급 한도가 있습니다. 배포가 잦은 동안 미뤘고, 설정은 Caddy 한 줄입니다.</p></details>
+
+    <h3>5. 배포·운영</h3>
+    <details><summary>어떻게 배포했나?</summary>
+      <p>Docker 이미지를 ECR 에 올려 ECS Fargate 에서 돌립니다. DB 는 RDS PostgreSQL, LLM 은 같은 네트워크의 GPU EC2 입니다. 밖으로 열린 포트는 80 하나입니다.</p></details>
+    <details><summary>로드밸런서나 S3 는 왜 안 썼나?</summary>
+      <p>학교 공용 계정이라 IAM 역할 생성·ALB·Elastic IP 를 쓸 수 없었습니다. 파일은 DB 에 두고, 컨테이너가 뜰 때 DuckDNS 에 자기 IP 를 등록하는 방식으로 풀었습니다.</p></details>
+    <details><summary>동시 사용자가 많아지면?</summary>
+      <p>지금은 컨테이너 1개(0.5 vCPU)입니다. 앱은 상태를 DB 에만 두므로 ECS 개수를 늘리면 수평 확장됩니다. LLM 은 GPU 한 대라 몰리면 줄을 서고, 큐나 GPU 추가가 필요합니다.</p></details>
+    <details><summary>비용은?</summary>
+      <p>RDS·Fargate 합쳐 월 약 $40, LLM EC2 는 켠 시간만큼 시간당 약 $0.53 입니다. LLM 은 쓸 때만 켭니다.</p></details>
+    <details><summary>서버가 죽으면?</summary>
+      <p>30초마다 상태를 확인하다가 실패하면 ECS 가 자동으로 새 컨테이너를 띄웁니다. LLM 이 꺼져 있어도 글로 채우기만 안 되고 나머지는 그대로 됩니다.</p></details>
+
+    <h3>6. 한계·향후</h3>
+    <details><summary>가장 큰 한계는?</summary>
+      <ol>
+        <li>LLM 이 칸을 빠뜨리거나 숫자를 틀릴 수 있어 확인이 필요합니다.</li>
+        <li>서버는 HWPX 만 만들어 마무리는 한글에서 합니다.</li>
+        <li>칸에 긴 글을 넣으면 뒤 내용이 다음 쪽으로 밀리기도 합니다.</li>
+      </ol></details>
+    <details><summary>다음 단계는?</summary>
+      <p>결재 라인 자동화입니다. 기안문에는 결재란 자리가 이미 정해져 있어, 검증 결과로 반려·통과를 나누고 결재선을 자동으로 올리는 데까지 넓힐 수 있습니다.</p></details>
+    <details><summary>중간 시연 뒤에 무엇을 바꿨나?</summary>
+      <p>집행 항목 이름 수정, 항목 행 추가·삭제, 한글 단축키(Alt+Insert / Alt+Delete), 결재란 필수 해제를 반영했습니다.</p></details>
+
+    <h3>7. 팀·과정</h3>
+    <details><summary>역할 분담은?</summary>
+      <p>이상윤 핵심 엔진·LLM·배포, 김주현 서식 검증·시연 준비, 전진환 문서·발표, 채민재 화면 UI 입니다.</p></details>
+    <details><summary>가장 어려웠던 점은?</summary>
+      <p>표 칸 쓰기입니다. 병합 셀·반복 행 복제·수식 재계산이 얽혀 가장 먼저 만들고 183개 서식으로 검증했습니다. 다음은 LLM 이 엉뚱한 칸에 값을 넣는 문제였는데, 칸 이름을 '행 제목 / 열 제목'으로 붙이고 표 모양을 프롬프트에 넣어 개선했습니다.</p></details>
+
+    <p class="qa-tip"><strong>곤란한 질문에는</strong> 한계를 숨기지 않고 "알고 있고, 이렇게 막고 있다"로 답합니다.</p>
+  </div>
+</dialog>
+
+<script>
+  (function () {
+    var dlg = document.getElementById('qa');
+    var all = document.getElementById('qa-all');
+    var items = dlg.querySelectorAll('details');
+    document.getElementById('qa-open').addEventListener('click', function () { dlg.showModal(); });
+    document.getElementById('qa-close').addEventListener('click', function () { dlg.close(); });
+    // 바깥(배경)을 누르면 닫는다
+    dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+    all.addEventListener('click', function () {
+      var open = all.textContent === '모두 펼치기';
+      items.forEach(function (d) { d.open = open; });
+      all.textContent = open ? '모두 접기' : '모두 펼치기';
+    });
+  })();
+</script>
 </body>
 </html>

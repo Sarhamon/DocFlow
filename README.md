@@ -6,6 +6,7 @@
 캡스톤 디자인(졸업작품) 프로젝트이며, 현재 **M0~M11 완료**(문서 엔진, 서식 3종 관통, 웹 API, 로그인, 사용자 화면, 관리자 페이지,
 LLM·입력 자동화, 운영 현황)이고, AWS 이전(M12)을 진행 중입니다. 2026-11-10 시연 후 AWS 에 배포했습니다:
 <http://docflow-ysu.duckdns.org> (배포 절차는 [`docs/deploy-aws.md`](docs/deploy-aws.md)).
+2026-11-18 AWS 자원을 모두 껐고, 남은 일은 다음 주(2026-11-23 주) 현장 시연입니다([`docs/demo.md`](docs/demo.md) 0장 체크리스트).
 진행 현황은 [`docs/index.html`](docs/index.html), 개발 계획은 [`docs/dev-roadmap.md`](docs/dev-roadmap.md)에 있습니다.
 무엇을 만드는지는 [`docs/functional-spec.md`](docs/functional-spec.md)(기능명세서)에 정리했습니다.
 기능 목록의 원본은 [`docs/specsheet.xlsx`](docs/specsheet.xlsx)이며, 이 문서의 명세와 같은 구조입니다.
