@@ -124,6 +124,9 @@ aws ecs run-task --profile mfa --cluster docflow --task-definition docflow:1 --l
 (`["python","tools/manage_users.py","create-demo","demo","Demo2026!"]`). 그다음 작업 정의의 `docflow` 컨테이너
 환경변수에 `DOCFLOW_DEMO_LOGINS=demo` 를 더해 새 개정으로 다시 배포한다(3장). 이 변수가 없으면 `/demo` 는 로그인 화면으로 보내고,
 체험 계정도 일반 계정과 같아서 누가 새로 로그인할 때마다 앞사람이 로그아웃된다. 행사 날에는 LLM EC2 도 켠다(6장).
+QR 로 들어온 사람은 저마다 임시 계정(`demo~xxxxxxxx`)을 받아 문서함이 따로다. 임시 계정과 그 문서는 만든 지 24시간 뒤
+다음 `/demo` 접속 때 지운다(행사가 끝난 뒤 한 번 더 `/demo` 에 들어가면 남은 것이 정리된다). 공용 계정 `demo` 를
+관리자 화면에서 비활성화하면 `/demo` 도 막힌다. LLM 은 세 사람이 동시에 글로 채우기를 해도 33~41초에 끝났다(2026-11-19).
 
 ## 6. 켜고 끄기
 

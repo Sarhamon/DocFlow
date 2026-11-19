@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from docflow.service.auth import AuthError, AuthService
+from docflow.service.auth import AuthError, AuthService, is_demo
 from docflow.service.db import User
 
 HERE = Path(__file__).parent
@@ -58,7 +58,7 @@ def mount(app: FastAPI, auth: Callable[..., AuthService]) -> None:
         if user is not None:
             me = {"id": user.id, "name": user.name, "login_id": user.login_id, "role": user.role,
                   "admin": user.role in ADMIN_ROLES,
-                  "demo": user.login_id in request.app.state.demo_logins}  # fmt: skip
+                  "demo": is_demo(user.login_id, request.app.state.demo_logins)}  # fmt: skip
         return templates.TemplateResponse(request, name, {"me": me, **context})
 
     def page(name: str, *, admin: bool = False, **context):

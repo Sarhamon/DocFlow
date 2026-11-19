@@ -312,16 +312,57 @@ def test_체험_계정이_아니면_정책은_그대로다(demo_svc):
         demo_svc.authenticate(first)
 
 
-def test_체험_계정은_비밀번호_없이_들어간다(demo_svc):
+def test_QR_로_들어오면_사람마다_임시_계정을_만든다(demo_svc):
     issue(demo_svc, "demo")
     first = demo_svc.demo_login()
     second = demo_svc.demo_login()
-    assert first.session.user.login_id == "demo"
+    a, b = first.session.user, second.session.user
+    assert a.id != b.id
+    assert a.login_id.startswith("demo~") and b.login_id.startswith("demo~")
+    assert (a.name, a.must_change_password) == ("demo", False)
     demo_svc.authenticate(first.token)
     demo_svc.authenticate(second.token)
-    assert (
-        demo_svc.session.query(LoginHistory).filter_by(login_id="demo", success=True).count() == 2
-    )
+    assert demo_svc.session.query(LoginHistory).filter_by(success=True).count() == 2
+
+
+def test_임시_체험_계정은_비밀번호로_들어오거나_바꾸지_못한다(demo_svc):
+    issue(demo_svc, "demo")
+    user = demo_svc.demo_login().session.user
+    with pytest.raises(LoginFailed):
+        demo_svc.login(user.login_id, PASSWORD)
+    assert user.locked_at is None
+    with pytest.raises(Forbidden):
+        demo_svc.change_password(user, PASSWORD, "Other#pass1")
+
+
+def test_임시_체험_계정은_계정_목록에_없다(demo_svc):
+    admin = issue(demo_svc, "boss", role="admin")
+    issue(demo_svc, "demo")
+    demo_svc.demo_login()
+    assert [u.login_id for u in demo_svc.list_users(admin)] == ["boss", "demo"]
+
+
+def test_체험_계정을_끄면_임시_계정도_만들지_않는다(demo_svc):
+    user = issue(demo_svc, "demo")
+    user.status = "inactive"
+    with pytest.raises(AccountInactive):
+        demo_svc.demo_login()
+
+
+def test_하루_지난_임시_계정만_정리_대상이다(demo_svc, clock):
+    issue(demo_svc, "demo")
+    old = demo_svc.demo_login()
+    clock.advance(hours=23)
+    new = demo_svc.demo_login()
+    assert demo_svc.expired_demo_users() == []
+    clock.advance(hours=1)
+    assert demo_svc.expired_demo_users() == [old.session.user]
+    demo_svc.retire(old.session.user)
+    assert old.session.user.status == "deleted"
+    with pytest.raises(SessionInvalid):
+        demo_svc.authenticate(old.token)
+    assert demo_svc.expired_demo_users() == []
+    assert new.session.user.status == "active"
 
 
 def test_체험_계정이_없으면_자동_로그인도_없다(svc):

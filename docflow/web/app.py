@@ -375,10 +375,18 @@ def create_app(
         }
 
     @app.get("/demo", include_in_schema=False)
-    def demo_login(request: Request, svc: AuthService = Depends(auth)) -> RedirectResponse:
-        """페스티벌 패널 QR: 체험 계정으로 바로 들어간다. 체험 계정이 꺼져 있으면 로그인 쪽으로."""
+    def demo_login(
+        request: Request, svc: AuthService = Depends(auth), docs: DocumentService = Depends(service)
+    ) -> RedirectResponse:
+        """페스티벌 패널 QR: 그 사람만 쓰는 임시 체험 계정으로 바로 들어간다.
+
+        체험 계정이 꺼져 있으면 로그인 쪽으로. 들어올 때 오래된 임시 계정을 문서와 함께 지운다.
+        """
         if not demo_logins:
             return RedirectResponse("/login", status_code=303)
+        for old in svc.expired_demo_users():
+            docs.purge_owner(old.id)
+            svc.retire(old)
         client = Client(
             ip=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),

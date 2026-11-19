@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
 from docflow.config import Settings
 from docflow.service.auth import AuthService
 from docflow.service.catalog import sync_templates
-from docflow.service.db import connect
+from docflow.service.db import Document, connect
 from docflow.service.storage import LocalFileStore
 from docflow.web.app import create_app
 from tests import service_fixtures as fx
@@ -109,7 +111,50 @@ def test_QR_주소는_체험_계정으로_바로_들어간다(tmp_path, monkeypa
     with TestClient(demo_app) as c:
         res = c.get("/demo", follow_redirects=False)
         assert (res.status_code, res.headers["location"]) == (303, "/forms")
-        assert c.get("/api/auth/me").json()["user"]["login_id"] == "demo"
+        assert c.get("/api/auth/me").json()["user"]["login_id"].startswith("demo~")
+        assert 'href="/password"' not in c.get("/forms").text
+
+
+def test_QR_체험은_사람마다_문서가_따로고_하루_뒤_지운다(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOCFLOW_DEMO_LOGINS", "demo")
+    settings = Settings.from_root(tmp_path)
+    fx.write_templates(settings)
+    store = LocalFileStore(settings.data / "files")
+    with connect(settings.database_url)() as s:
+        sync_templates(s, store, settings)
+    clock = Clock()
+    demo_app = create_app(settings, converter=fx.FakeConverter(), store=store, clock=clock)
+    fx.make_user(demo_app.state.sessions, "demo")
+    with TestClient(demo_app) as a, TestClient(demo_app) as b:
+        a.get("/demo")
+        b.get("/demo")
+        doc = new_doc(a)
+        a.put(f"/api/documents/{doc}/input", json=fx.traffic_input())
+        assert a.post(f"/api/documents/{doc}/generate", json={"formats": []}).status_code == 200
+        assert [d["id"] for d in a.get("/api/documents").json()["items"]] == [doc]
+        assert b.get("/api/documents").json()["items"] == []
+        assert b.get(f"/api/documents/{doc}").status_code == 404
+        files = settings.data / "files" / "documents" / str(doc)
+        assert any(files.rglob("*"))
+
+        clock.advance(hours=24)
+        with TestClient(demo_app) as c:
+            c.get("/demo")
+        assert a.get("/api/auth/me").status_code == 401
+        assert not any(files.rglob("*"))
+        with demo_app.state.sessions() as s:
+            assert s.query(Document).count() == 0
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.at = datetime(2026, 11, 20, 10, 0)
+
+    def __call__(self) -> datetime:
+        return self.at
+
+    def advance(self, **delta: float) -> None:
+        self.at += timedelta(**delta)
 
 
 ADMIN_PAGES = (

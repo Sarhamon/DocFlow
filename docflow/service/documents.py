@@ -231,12 +231,22 @@ class DocumentService:
 
     def delete(self, doc_id: int, owner_id: int | None = None) -> None:
         """작성 중 문서 삭제 (MY_03). 완료 문서는 이력이라 지우지 않는다."""
-        doc = self._draft(doc_id, owner_id)
+        self._remove(self._draft(doc_id, owner_id))
+        self.session.commit()
+
+    def purge_owner(self, owner_id: int) -> int:
+        """한 계정의 문서를 완료 문서까지 모두 지운다 (임시 체험 계정 정리). 지운 개수."""
+        docs = list(self.session.scalars(select(Document).where(Document.owner_id == owner_id)))
+        for doc in docs:
+            self._remove(doc)
+        self.session.commit()
+        return len(docs)
+
+    def _remove(self, doc: Document) -> None:
         crosscheck.unlink_all(self.session, doc)
         attachments.unlink_all(self.session, doc)
         self.store.delete_prefix(f"documents/{doc.id}")
         self.session.delete(doc)
-        self.session.commit()
 
     # ------------------------------------------------------------ 검증·만들기
     def validate(self, doc_id: int, owner_id: int | None = None) -> list[Issue]:

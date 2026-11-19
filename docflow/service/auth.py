@@ -17,7 +17,10 @@
 
 체험 계정(demo_logins, 환경변수 DOCFLOW_DEMO_LOGINS)은 페스티벌 부스에서 여럿이 같이 쓰므로
 동시 로그인을 허용하고, 실패해도 잠그지 않고, 비밀번호를 바꾸지 못하게 한다.
-패널의 QR(/demo)로 비밀번호 없이 들어온다(demo_login).
+패널의 QR(/demo)로 비밀번호 없이 들어온다(demo_login). 이때는 들어올 때마다 그 사람만 쓰는
+임시 계정(`demo~1a2b3c4d`)을 만들어 서로의 문서가 섞이지 않게 한다. 임시 계정은 만든 지
+DEMO_TTL 이 지나면 다음 /demo 로그인 때 문서와 함께 지운다(expired_demo_users·retire).
+`~` 는 발급 아이디 규칙에 없는 글자라 관리자가 만든 계정과 겹치지 않는다.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from docflow.service.catalog import NotFound
@@ -43,6 +46,10 @@ GRACE_TTL = timedelta(minutes=5)
 #: 만료 시각을 조금 넘겨 온 자동 연장 요청도 받는다 (화면 타이머와 서버 시계 차이)
 GRACE_WINDOW = timedelta(minutes=1)
 MAX_FAILURES = 3
+#: 임시 체험 계정을 남겨 두는 시간 (행사 당일엔 다시 들어와도 문서가 남는다)
+DEMO_TTL = timedelta(hours=24)
+#: 임시 체험 계정 아이디: 체험 계정 아이디 + 이 글자 + 무작위
+DEMO_SEP = "~"
 
 ROLES = ("user", "admin", "root")
 STATUSES = ("active", "inactive", "deleted")
@@ -150,6 +157,11 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def is_demo(login_id: str, demo_logins: frozenset[str]) -> bool:
+    """체험 계정이거나 그 임시 계정이다."""
+    return login_id.partition(DEMO_SEP)[0] in demo_logins
+
+
 # ---------------------------------------------------------------- 서비스
 @dataclass
 class Client:
@@ -192,7 +204,7 @@ class AuthService:
             self._history(user, login_id, "locked", client)
             raise AccountLocked(_locked_message(user))
         if not verify_password(password, user.password_hash):
-            if user.login_id in self.demo_logins:
+            if is_demo(user.login_id, self.demo_logins):
                 self._history(user, login_id, "wrong_password", client)
                 raise LoginFailed("아이디 또는 비밀번호가 틀렸다")
             user.failed_login_count += 1
@@ -207,21 +219,55 @@ class AuthService:
         return self._open_session(user, login_id, client)
 
     def demo_login(self, client: Client | None = None) -> LoginResult:
-        """체험 계정으로 비밀번호 없이 들어간다 (페스티벌 패널 QR). 여럿이면 아이디 순 첫 계정."""
+        """비밀번호 없이 그 사람만 쓰는 임시 체험 계정으로 들어간다 (페스티벌 패널 QR).
+
+        체험 계정(여럿이면 아이디 순 첫 계정)을 끄면 임시 계정도 만들지 않는다.
+        """
         if not self.demo_logins:
             raise Forbidden("체험 계정이 꺼져 있다")
-        login_id = min(self.demo_logins)
-        user = self.session.scalar(select(User).where(User.login_id == login_id))
-        if user is None or user.status != "active":
+        base = self.session.scalar(select(User).where(User.login_id == min(self.demo_logins)))
+        if base is None or base.status != "active":
             raise AccountInactive("체험 계정을 쓸 수 없다")
-        return self._open_session(user, login_id, client or Client())
+        stamp = self.clock()
+        user = User(
+            login_id=f"{base.login_id}{DEMO_SEP}{secrets.token_hex(4)}",
+            password_hash="!",  # 비밀번호로는 들어올 수 없다 (verify_password 가 늘 거짓)
+            name=base.name,
+            department=base.department,
+            must_change_password=False,
+            created_by=base.id,
+            created_at=stamp,
+            updated_at=stamp,
+        )
+        self.session.add(user)
+        self.session.flush()  # 세션 행이 계정 id 를 쓴다
+        return self._open_session(user, user.login_id, client or Client())
+
+    def expired_demo_users(self) -> list[User]:
+        """만든 지 DEMO_TTL 이 지난 임시 체험 계정 (지우지 않은 것)."""
+        prefixes = [f"{d}{DEMO_SEP}" for d in self.demo_logins]
+        if not prefixes:
+            return []
+        query = select(User).where(
+            User.status != "deleted",
+            User.created_at <= self.clock() - DEMO_TTL,
+            or_(*(User.login_id.startswith(p, autoescape=True) for p in prefixes)),
+        )
+        return list(self.session.scalars(query))
+
+    def retire(self, user: User) -> None:
+        """임시 체험 계정을 끝낸다: 세션을 끊고 지운 계정으로 둔다 (문서는 부르는 쪽이 지운다)."""
+        self._revoke_all(user, "account_disabled")
+        user.status = "deleted"
+        user.updated_at = self.clock()
+        self.session.commit()
 
     def _open_session(self, user: User, login_id: str, client: Client) -> LoginResult:
         """로그인 성공. 체험 계정이 아니면 같은 계정의 다른 세션을 끊는다."""
         stamp = self.clock()
         user.failed_login_count = 0
         user.last_login_at = stamp
-        if user.login_id not in self.demo_logins:
+        if not is_demo(user.login_id, self.demo_logins):
             self._revoke_all(user, "duplicate_login")
         token = secrets.token_urlsafe(32)
         row = UserSession(
@@ -274,7 +320,7 @@ class AuthService:
 
     def change_password(self, user: User, current: str, new: str) -> None:
         """비밀번호 변경 (AU_02·AU_05). 지금 세션은 유지한다."""
-        if user.login_id in self.demo_logins:
+        if is_demo(user.login_id, self.demo_logins):
             raise Forbidden("체험 계정은 비밀번호를 바꾸지 않는다")
         if not verify_password(current, user.password_hash):
             raise LoginFailed("현재 비밀번호가 틀렸다", "wrong_password")
@@ -337,9 +383,12 @@ class AuthService:
     def list_users(
         self, actor: User, *, role: str | None = None, status: str | None = None
     ) -> list[User]:
-        """발급된 계정 목록 (AD_22). 지운 계정은 status=deleted 로 따로 고른다."""
+        """발급된 계정 목록 (AD_22). 지운 계정은 status=deleted 로 따로 고른다.
+
+        임시 체험 계정은 발급한 계정이 아니라 넣지 않는다.
+        """
         _require_admin(actor)
-        query = select(User).order_by(User.id)
+        query = select(User).where(User.login_id.not_like(f"%{DEMO_SEP}%")).order_by(User.id)
         if role is not None:
             query = query.where(User.role == role)
         query = (
