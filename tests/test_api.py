@@ -69,6 +69,22 @@ def test_서식_목록과_검색(client):
     assert client.get("/api/forms", params={"q": "없음"}).json()["items"] == []
 
 
+def test_내_문서함은_문서_이름과_서식_이름·번호로_찾는다(client):
+    trip = new_doc(client)
+    client.patch(f"/api/documents/{trip['id']}", json={"title": "11월 출장 교통비"})
+    [meeting] = client.get("/api/forms", params={"q": "회의"}).json()["items"]
+    plan = client.post("/api/documents", json={"form_id": meeting["id"]}).json()
+
+    def found(q: str) -> list[int]:
+        return [d["id"] for d in client.get("/api/documents", params={"q": q}).json()["items"]]
+
+    assert found("출장") == [trip["id"]]  # 문서 이름
+    assert found("회의계획서") == [plan["id"]]  # 서식 이름
+    assert found("7-1") == [plan["id"]]  # 서식 번호 (모양이 달라도 같은 번호)
+    assert found("출장 7-01") == []  # 낱말은 모두 맞아야 한다
+    assert sorted(found("")) == sorted([trip["id"], plan["id"]])
+
+
 def test_서식_상세는_요약과_버전을_준다(client):
     detail = client.get(f"/api/forms/{traffic_id(client)}").json()
     assert detail["summary"]["required"] == 1

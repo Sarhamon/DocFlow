@@ -438,7 +438,7 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 
 /* ---------------------------------------------------------------- 좁은 화면: 사이드바를 위 막대로 */
 @media (max-width: 1080px) {
-  .editor { grid-template-columns: 1fr; }
+  .editor { grid-template-columns: minmax(0, 1fr); }
   .side { position: static; max-height: none; }
 }
 @media (max-width: 900px) {
@@ -470,6 +470,7 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   .fields-grid { grid-template-columns: 1fr; }
   .fields-grid > .lab { padding-top: 0; }
   .form-cards { grid-template-columns: 1fr; }
+  #placeholders button { white-space: normal; text-align: left; }
 }
 
 @media (prefers-reduced-motion: reduce) {

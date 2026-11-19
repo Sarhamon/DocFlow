@@ -274,3 +274,57 @@ def test_삭제해도_계정은_남고_되살리지_않는다(svc):
         svc.set_status(admin, user.id, "active")
     with pytest.raises(Forbidden):
         svc.set_status(admin, admin.id, "inactive")
+
+
+# ------------------------------------------------------------ 체험 계정 (페스티벌 부스)
+@pytest.fixture
+def demo_svc(svc, clock):
+    return AuthService(svc.session, clock, demo_logins=frozenset({"demo"}))
+
+
+def test_체험_계정은_여럿이_동시에_로그인한다(demo_svc):
+    issue(demo_svc, "demo")
+    first = demo_svc.login("demo", PASSWORD).token
+    demo_svc.login("demo", PASSWORD)
+    demo_svc.authenticate(first)
+
+
+def test_체험_계정은_비밀번호를_틀려도_잠기지_않는다(demo_svc):
+    user = issue(demo_svc, "demo")
+    for _ in range(5):
+        with pytest.raises(LoginFailed):
+            demo_svc.login("demo", "Wrong#pass1")
+    assert (user.locked_at, user.failed_login_count) == (None, 0)
+    demo_svc.login("demo", PASSWORD)
+
+
+def test_체험_계정은_비밀번호를_바꾸지_못한다(demo_svc):
+    user = issue(demo_svc, "demo")
+    with pytest.raises(Forbidden):
+        demo_svc.change_password(user, PASSWORD, "Other#pass1")
+
+
+def test_체험_계정이_아니면_정책은_그대로다(demo_svc):
+    issue(demo_svc)
+    first = demo_svc.login("writer", PASSWORD).token
+    demo_svc.login("writer", PASSWORD)
+    with pytest.raises(SessionInvalid):
+        demo_svc.authenticate(first)
+
+
+def test_체험_계정은_비밀번호_없이_들어간다(demo_svc):
+    issue(demo_svc, "demo")
+    first = demo_svc.demo_login()
+    second = demo_svc.demo_login()
+    assert first.session.user.login_id == "demo"
+    demo_svc.authenticate(first.token)
+    demo_svc.authenticate(second.token)
+    assert (
+        demo_svc.session.query(LoginHistory).filter_by(login_id="demo", success=True).count() == 2
+    )
+
+
+def test_체험_계정이_없으면_자동_로그인도_없다(svc):
+    issue(svc, "demo")
+    with pytest.raises(Forbidden):
+        svc.demo_login()

@@ -25,7 +25,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from docflow.convert import ConversionJob, ConversionResult, Converter
@@ -33,8 +33,8 @@ from docflow.generate import Leftover
 from docflow.pipeline import ParsedInput, make_document, parse_input
 from docflow.schema.model import FormSchema
 from docflow.service import attachments, crosscheck, crypto, draft
-from docflow.service.catalog import NotFound, get_form, load_schema
-from docflow.service.db import Artifact, Document, DocumentEvent, now
+from docflow.service.catalog import NotFound, form_no_query, get_form, load_schema
+from docflow.service.db import Artifact, Document, DocumentEvent, Form, FormVersion, now
 from docflow.service.rules import config_for
 from docflow.service.storage import FileStore
 from docflow.validate import FormInput, Issue, ValidationConfig, applicable_rules, validate
@@ -129,10 +129,15 @@ class DocumentService:
         owner_id: int | None = None,
         *,
         status: str | None = None,
+        q: str | None = None,
         page: int = 1,
         size: int = 20,
     ) -> tuple[list[Document], int]:
-        """내 문서함 (작성 중 / 완료). 최근에 고친 순서."""
+        """내 문서함 (작성 중 / 완료). 최근에 고친 순서.
+
+        q 는 문서 이름·서식 이름·서식 번호에서 찾는다(낱말마다 모두 맞아야 한다). 입력값은
+        암호화돼 있어 찾지 않는다. 서식 번호 모양(`7-1`)이면 그 번호와 정확히 맞춘다.
+        """
         if status is not None and status not in STATUSES:
             raise ValueError(f"상태는 {STATUSES} 중 하나다")
         query = select(Document)
@@ -140,6 +145,18 @@ class DocumentService:
             query = query.where(Document.owner_id == owner_id)
         if status is not None:
             query = query.where(Document.status == status)
+        if q and q.split():
+            query = query.join(FormVersion, Document.form_version_id == FormVersion.id).join(
+                Form, FormVersion.form_id == Form.id
+            )
+        for word in (q or "").split():
+            if no := form_no_query(word):
+                query = query.where(Form.form_no == no)
+                continue
+            like = f"%{word}%"
+            query = query.where(
+                or_(Document.title.like(like), Form.title.like(like), Form.form_no.like(like))
+            )
         total = self.session.scalar(select(func.count()).select_from(query.subquery())) or 0
         page, size = max(page, 1), min(max(size, 1), 100)
         query = query.order_by(Document.updated_at.desc(), Document.id.desc())

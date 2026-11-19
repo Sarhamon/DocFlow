@@ -90,6 +90,28 @@ def test_관리자_메뉴는_관리자에게만_보인다(app, client):
     assert 'href="/admin"' in admin.get("/forms").text
 
 
+def test_체험_계정에는_비밀번호_버튼이_없다(tmp_path, monkeypatch, client):
+    assert 'href="/password"' in client.get("/forms").text
+    monkeypatch.setenv("DOCFLOW_DEMO_LOGINS", "demo")
+    app = create_app(Settings.from_root(tmp_path), converter=fx.FakeConverter())
+    fx.make_user(app.state.sessions, "demo")
+    demo = TestClient(app)
+    fx.login(demo, "demo")
+    assert 'href="/password"' not in demo.get("/forms").text
+
+
+def test_QR_주소는_체험_계정으로_바로_들어간다(tmp_path, monkeypatch, app):
+    with TestClient(app) as c:  # 체험 계정이 없으면 로그인 쪽으로
+        assert c.get("/demo", follow_redirects=False).headers["location"] == "/login"
+    monkeypatch.setenv("DOCFLOW_DEMO_LOGINS", "demo")
+    demo_app = create_app(Settings.from_root(tmp_path), converter=fx.FakeConverter())
+    fx.make_user(demo_app.state.sessions, "demo")
+    with TestClient(demo_app) as c:
+        res = c.get("/demo", follow_redirects=False)
+        assert (res.status_code, res.headers["location"]) == (303, "/forms")
+        assert c.get("/api/auth/me").json()["user"]["login_id"] == "demo"
+
+
 ADMIN_PAGES = (
     "/admin/users", "/admin/forms", "/admin/forms/1", "/admin/categories", "/admin/rules",
     "/admin/system", "/admin/documents", "/admin/stats", "/admin/logins", "/admin/audit",

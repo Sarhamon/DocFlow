@@ -14,6 +14,10 @@
 * 세션은 30분. 연장하면 그때부터 다시 30분. 입력 중 만료되면 5분 자동 연장(한 번).
   요청이 와도 저절로 늘어나지 않는다(연장은 사용자가 고른다).
 * 같은 계정이 새로 로그인하면 기존 세션은 끊는다(계정당 유효 세션 1개).
+
+체험 계정(demo_logins, 환경변수 DOCFLOW_DEMO_LOGINS)은 페스티벌 부스에서 여럿이 같이 쓰므로
+동시 로그인을 허용하고, 실패해도 잠그지 않고, 비밀번호를 바꾸지 못하게 한다.
+패널의 QR(/demo)로 비밀번호 없이 들어온다(demo_login).
 """
 
 from __future__ import annotations
@@ -162,9 +166,15 @@ class LoginResult:
 
 
 class AuthService:
-    def __init__(self, session: Session, clock: Callable[[], datetime] = now) -> None:
+    def __init__(
+        self,
+        session: Session,
+        clock: Callable[[], datetime] = now,
+        demo_logins: frozenset[str] = frozenset(),
+    ) -> None:
         self.session = session
         self.clock = clock
+        self.demo_logins = demo_logins
 
     # ------------------------------------------------------------ 로그인
     def login(self, login_id: str, password: str, client: Client | None = None) -> LoginResult:
@@ -182,6 +192,9 @@ class AuthService:
             self._history(user, login_id, "locked", client)
             raise AccountLocked(_locked_message(user))
         if not verify_password(password, user.password_hash):
+            if user.login_id in self.demo_logins:
+                self._history(user, login_id, "wrong_password", client)
+                raise LoginFailed("아이디 또는 비밀번호가 틀렸다")
             user.failed_login_count += 1
             left = MAX_FAILURES - user.failed_login_count
             if left <= 0:
@@ -191,10 +204,25 @@ class AuthService:
                 raise AccountLocked(_locked_message(user))
             raise LoginFailed(f"아이디 또는 비밀번호가 틀렸다 (남은 횟수 {left}회)", remaining=left)
 
+        return self._open_session(user, login_id, client)
+
+    def demo_login(self, client: Client | None = None) -> LoginResult:
+        """체험 계정으로 비밀번호 없이 들어간다 (페스티벌 패널 QR). 여럿이면 아이디 순 첫 계정."""
+        if not self.demo_logins:
+            raise Forbidden("체험 계정이 꺼져 있다")
+        login_id = min(self.demo_logins)
+        user = self.session.scalar(select(User).where(User.login_id == login_id))
+        if user is None or user.status != "active":
+            raise AccountInactive("체험 계정을 쓸 수 없다")
+        return self._open_session(user, login_id, client or Client())
+
+    def _open_session(self, user: User, login_id: str, client: Client) -> LoginResult:
+        """로그인 성공. 체험 계정이 아니면 같은 계정의 다른 세션을 끊는다."""
         stamp = self.clock()
         user.failed_login_count = 0
         user.last_login_at = stamp
-        self._revoke_all(user, "duplicate_login")
+        if user.login_id not in self.demo_logins:
+            self._revoke_all(user, "duplicate_login")
         token = secrets.token_urlsafe(32)
         row = UserSession(
             id=token_hash(token),
@@ -246,6 +274,8 @@ class AuthService:
 
     def change_password(self, user: User, current: str, new: str) -> None:
         """비밀번호 변경 (AU_02·AU_05). 지금 세션은 유지한다."""
+        if user.login_id in self.demo_logins:
+            raise Forbidden("체험 계정은 비밀번호를 바꾸지 않는다")
         if not verify_password(current, user.password_hash):
             raise LoginFailed("현재 비밀번호가 틀렸다", "wrong_password")
         check_password_rule(new)

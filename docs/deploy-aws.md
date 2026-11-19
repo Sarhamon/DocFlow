@@ -117,6 +117,14 @@ aws ecs run-task --profile mfa --cluster docflow --task-definition docflow:1 --l
 `reset-password root` 로 바꾸면 새 초기 비밀번호가 로그(`/ecs/docflow`)에 찍힌다. 다른 계정은 관리자 화면에서 푼다.
 콘솔에서는 ECS → 클러스터 `docflow` → 새 태스크 실행 → `docflow:1`, 퍼블릭 IP 켜기, `docflow-app-sg`, 컨테이너 명령 재정의.
 
+### 페스티벌 체험 계정
+
+패널(`docs/poster/festival-a1.html`)의 QR 은 `http://docflow-ysu.duckdns.org/demo` 로, 찍으면 체험 계정으로
+자동 로그인된다(비밀번호는 쓰지 않지만 계정을 만들 때 규칙에 맞는 값을 정한다). 먼저 공용 계정을 만든다. 위와 같은 일회성 태스크에 명령만 바꾼다
+(`["python","tools/manage_users.py","create-demo","demo","Demo2026!"]`). 그다음 작업 정의의 `docflow` 컨테이너
+환경변수에 `DOCFLOW_DEMO_LOGINS=demo` 를 더해 새 개정으로 다시 배포한다(3장). 이 변수가 없으면 `/demo` 는 로그인 화면으로 보내고,
+체험 계정도 일반 계정과 같아서 누가 새로 로그인할 때마다 앞사람이 로그아웃된다. 행사 날에는 LLM EC2 도 켠다(6장).
+
 ## 6. 켜고 끄기
 
 ### 매일 저녁 7시 자동 중지

@@ -57,7 +57,8 @@ def mount(app: FastAPI, auth: Callable[..., AuthService]) -> None:
         me = None
         if user is not None:
             me = {"id": user.id, "name": user.name, "login_id": user.login_id, "role": user.role,
-                  "admin": user.role in ADMIN_ROLES}  # fmt: skip
+                  "admin": user.role in ADMIN_ROLES,
+                  "demo": user.login_id in request.app.state.demo_logins}  # fmt: skip
         return templates.TemplateResponse(request, name, {"me": me, **context})
 
     def page(name: str, *, admin: bool = False, **context):

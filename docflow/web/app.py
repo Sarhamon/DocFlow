@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Body, Depends, FastAPI, File, Query, Request, Response, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -274,7 +274,8 @@ def create_app(
     None 이면 자연어 일괄 입력을 쓸 수 없다(503).
 
     clock 은 세션 시간 계산에 쓴다(테스트가 시간을 옮긴다). HTTPS 로 띄울 때는 환경변수
-    DOCFLOW_SECURE_COOKIE=1 로 쿠키에 Secure 를 붙인다.
+    DOCFLOW_SECURE_COOKIE=1 로 쿠키에 Secure 를 붙인다. DOCFLOW_DEMO_LOGINS 에 쉼표로 적은
+    아이디는 공용 체험 계정이다(동시 로그인·잠금 없음·비밀번호 변경 불가).
     """
     settings = settings or get_settings()
     settings.data.mkdir(parents=True, exist_ok=True)
@@ -297,12 +298,17 @@ def create_app(
     hwp_import = Serialized(importer) if importer is not None else None
 
     secure_cookie = os.environ.get("DOCFLOW_SECURE_COOKIE") == "1"
+    #: 페스티벌 부스용 공용 체험 계정 (auth.py 머리말)
+    demo_logins = frozenset(
+        x.strip() for x in os.environ.get("DOCFLOW_DEMO_LOGINS", "").split(",") if x.strip()
+    )
 
     app = FastAPI(title="DocFlow", version="0.7")
     app.state.sessions = sessions
     app.state.store = store
     app.state.converter = converter
     app.state.settings = settings
+    app.state.demo_logins = demo_logins
     _errors(app)
 
     def session() -> Iterator[Session]:
@@ -323,7 +329,7 @@ def create_app(
         return llm
 
     def auth(s: Session = Depends(session)) -> AuthService:
-        return AuthService(s, clock)
+        return AuthService(s, clock, demo_logins)
 
     def current_session(request: Request, svc: AuthService = Depends(auth)) -> UserSession:
         return svc.authenticate(request.cookies.get(COOKIE))
@@ -367,6 +373,22 @@ def create_app(
             **session_dict(result.session, clock()),
             "must_change_password": result.session.user.must_change_password,
         }
+
+    @app.get("/demo", include_in_schema=False)
+    def demo_login(request: Request, svc: AuthService = Depends(auth)) -> RedirectResponse:
+        """페스티벌 패널 QR: 체험 계정으로 바로 들어간다. 체험 계정이 꺼져 있으면 로그인 쪽으로."""
+        if not demo_logins:
+            return RedirectResponse("/login", status_code=303)
+        client = Client(
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        result = svc.demo_login(client)
+        response = RedirectResponse("/forms", status_code=303)
+        response.set_cookie(
+            COOKIE, result.token, httponly=True, samesite="lax", secure=secure_cookie
+        )
+        return response
 
     @app.post(f"{API}/auth/logout", status_code=204)
     def logout(request: Request, response: Response, svc: AuthService = Depends(auth)) -> None:
@@ -555,12 +577,13 @@ def create_app(
     @app.get(f"{API}/documents")
     def list_documents(
         status: str | None = None,
+        q: str | None = Query(None, max_length=100),
         page_no: int = Query(1, alias="page", ge=1),
         size: int = Query(20, ge=1, le=100),
         svc: DocumentService = Depends(service),
         me=Depends(owner),
     ) -> dict[str, Any]:
-        items, total = svc.list(me, status=status, page=page_no, size=size)
+        items, total = svc.list(me, status=status, q=q, page=page_no, size=size)
         return page([document_summary(d) for d in items], total, page_no, size)
 
     @app.get(f"{API}/documents/{{doc_id}}")

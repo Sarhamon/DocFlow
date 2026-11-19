@@ -7,6 +7,10 @@
   <span class="spacer"></span>
   <a class="btn primary" href="/forms">새 문서</a>
 </div>
+<form class="search" id="search" style="margin-bottom:12px">
+  <input type="search" name="q" maxlength="100" placeholder="문서 이름, 서식 이름·번호로 찾기" aria-label="검색어">
+  <button class="primary">찾기</button>
+</form>
 <div class="tabs" role="tablist">
   <button data-status="" class="on">전체</button>
   <button data-status="draft">작성 중</button>
@@ -20,6 +24,7 @@
     </table>
   </div>
   <div id="empty" class="empty hidden">문서가 없습니다. <a href="/forms">서식을 골라</a> 새 문서를 만드세요.</div>
+  <div id="none" class="empty hidden">찾는 문서가 없습니다. 다른 낱말로 찾아 보세요.</div>
 </div>
 <div class="pager" id="pager"></div>
 
@@ -32,7 +37,7 @@
 <script>
 (() => {
   const { h, api } = DF;
-  const state = { status: "", page: 1, size: 20 };
+  const state = { status: "", q: "", page: 1, size: 20 };
   const KINDS = { created: "만듦", copied: "복제", validated: "검증", generated: "문서 생성" };
 
   function downloads(d) {
@@ -77,6 +82,7 @@
   async function load() {
     const params = new URLSearchParams({ page: state.page, size: state.size });
     if (state.status) params.set("status", state.status);
+    if (state.q) params.set("q", state.q);
     const data = await api("GET", `/api/documents?${params}`);
     document.getElementById("rows").replaceChildren(...data.items.map((d) => h("tr", {},
       h("td", {}, h("a", { href: `/documents/${d.id}` }, d.title)),
@@ -86,7 +92,8 @@
       h("td", { class: "small" }, DF.fmtTime(d.updated_at)),
       h("td", {}, downloads(d)),
       h("td", {}, actions(d)))));
-    document.getElementById("empty").classList.toggle("hidden", data.total > 0);
+    document.getElementById("empty").classList.toggle("hidden", data.total > 0 || !!state.q);
+    document.getElementById("none").classList.toggle("hidden", data.total > 0 || !state.q);
     const pages = Math.max(1, Math.ceil(data.total / state.size));
     const pager = document.getElementById("pager");
     pager.replaceChildren();
@@ -97,6 +104,12 @@
         h("button", { class: "small", disabled: state.page >= pages, onclick: go(state.page + 1) }, "다음"));
     }
   }
+
+  // 문서 이름·서식 이름·번호로 찾기 (입력값은 암호화돼 있어 찾지 않는다)
+  document.getElementById("search").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    state.q = new FormData(ev.target).get("q").trim(); state.page = 1; load().catch(DF.fail);
+  });
 
   for (const b of document.querySelectorAll(".tabs button")) {
     b.addEventListener("click", () => {

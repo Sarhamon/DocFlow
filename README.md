@@ -195,7 +195,7 @@ DocFlow/
 │  ├─ extract_schema.py    # HWPX -> 서식 스키마 JSON 추출
 │  ├─ make_document.py     # 서식 하나를 입력 JSON 으로 채워 HWPX·HWP·PDF 로 (M5)
 │  ├─ sync_forms.py        # templates/ 의 서식을 서비스 DB 에 등록 (M6)
-│  ├─ manage_users.py      # 루트 관리자 만들기·잠금 해제·비밀번호 초기화 (M7)
+│  ├─ manage_users.py      # 루트 관리자 만들기·잠금 해제·비밀번호 초기화 (M7), 체험 계정
 │  └─ encrypt_data.py      # 예전에 평문으로 저장한 입력값·파일을 암호화
 ├─ tests/                  # pytest. 기본은 내부 자료 없이, 실제 서식 회귀는 `-m local`
 ├─ docs/index.html         # 진행 현황 리포트 (GitHub Pages)

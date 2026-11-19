@@ -32,7 +32,7 @@
           <button class="small" id="extend" type="button">연장</button>
         </div>
         <div class="links">
-          <a href="/password" class="btn small">비밀번호</a>
+          {% if not me.demo %}<a href="/password" class="btn small">비밀번호</a>{% endif %}
           <button class="small" id="logout" type="button">로그아웃</button>
         </div>
       </div>
