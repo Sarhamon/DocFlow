@@ -42,8 +42,13 @@
 
   function downloads(d) {
     if (!d.files.length) return h("span", { class: "muted small" }, "-");
-    return h("span", { class: "downloads" }, ...d.files.filter((f) => f !== "HWPX" || d.files.length === 1)
-      .map((f) => h("a", { class: "btn small", href: `/api/documents/${d.id}/files/${f}` }, f)));
+    const links = d.files.filter((f) => f !== "HWPX" || d.files.length === 1)
+      .map((f) => h("a", { class: "btn small", href: `/api/documents/${d.id}/files/${f}` }, f));
+    // 서버가 PDF 를 만들지 못했으면 인쇄 화면에서 PDF 로 저장한다 (editor.js downloads 와 같다)
+    if (d.files.includes("HWPX") && !d.files.includes("PDF")) {
+      links.push(h("a", { class: "btn small", href: `/api/documents/${d.id}/print?auto=1`, target: "_blank", rel: "noopener" }, "PDF"));
+    }
+    return h("span", { class: "downloads" }, ...links);
   }
 
   async function showHistory(d) {

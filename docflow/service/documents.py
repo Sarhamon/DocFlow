@@ -29,7 +29,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from docflow.convert import ConversionJob, ConversionResult, Converter
-from docflow.generate import Leftover
+from docflow.generate import Leftover, body_placeholders, is_leftover
+from docflow.hwpx.document import HwpxDocument
 from docflow.pipeline import ParsedInput, make_document, parse_input
 from docflow.schema.model import FormSchema
 from docflow.service import attachments, crosscheck, crypto, draft
@@ -37,7 +38,15 @@ from docflow.service.catalog import NotFound, form_no_query, get_form, load_sche
 from docflow.service.db import Artifact, Document, DocumentEvent, Form, FormVersion, now
 from docflow.service.rules import config_for
 from docflow.service.storage import FileStore
-from docflow.validate import FormInput, Issue, ValidationConfig, applicable_rules, validate
+from docflow.validate import (
+    DEFAULT_SEVERITY,
+    FILL_LEFT,
+    Issue,
+    Location,
+    ValidationConfig,
+    applicable_rules,
+    validate,
+)
 
 STATUSES = ("draft", "completed")
 #: 파일 이름에 쓸 수 없는 글자
@@ -254,8 +263,7 @@ class DocumentService:
         doc = self.get(doc_id, owner_id)
         schema = self.schema_of(doc)
         raw = self.raw_input(doc)
-        data = parse_input(schema, raw).data
-        issues = self._issues(doc, schema, raw, data)
+        issues = self._issues(doc, schema, raw, parse_input(schema, raw))
         self._event(doc, "validated", input_json=doc.input_json, issues=issues)
         self.session.commit()
         return issues
@@ -264,16 +272,48 @@ class DocumentService:
         """입력 중 실시간 점검 (IN_13~15). 저장하지 않고 이력도 남기지 않는다."""
         doc = self.get(doc_id, owner_id)
         schema = self.schema_of(doc)
-        return self._issues(doc, schema, raw, parse_input(schema, raw).data)
+        return self._issues(doc, schema, raw, parse_input(schema, raw))
 
-    def _issues(self, doc: Document, schema: FormSchema, raw: dict, data: FormInput) -> list[Issue]:
-        """규칙 검증 + 문서 간 대조 + 채택한 본문 초안의 인용 검사 (모두 LLM 없이)."""
+    def _issues(
+        self, doc: Document, schema: FormSchema, raw: dict, parsed: ParsedInput
+    ) -> list[Issue]:
+        """규칙 검증 + 문서 간 대조 + 본문 초안의 인용 검사 + 본문 자리표시자 (모두 LLM 없이)."""
+        data = parsed.data
+        config = self.rules_of(doc)
         return (
-            validate(schema, data, self.rules_of(doc))
+            validate(schema, data, config)
             + crosscheck.check(self.session, doc, schema, data)
             + draft.check(schema, raw, data,
                           extra=draft.attachment_facts(attachments.titles(self.session, doc)))
+            + self._body_left(doc, schema, parsed, config)
         )  # fmt: skip
+
+    def _body_left(
+        self, doc: Document, schema: FormSchema, parsed: ParsedInput, config: ValidationConfig
+    ) -> list[Issue]:
+        """표 밖 본문의 자리표시자(작성일·서명란)가 '본문 문구 바꾸기' 뒤에도 남았는가 (경고).
+
+        입력 칸이 아니라 칸 검증에 걸리지 않고, 만들 때(leftovers)에야 드러났다.
+        손으로 서명·체크하는 줄도 있어 오류가 아니라 경고다. FILL_LEFT 규칙을 끄면 보지 않는다.
+        """
+        rules = config.for_form(schema)
+        if FILL_LEFT in rules.disabled:
+            return []
+        template = HwpxDocument.open(self.store.local_path(doc.form_version.template_key))
+        issues = []
+        for text in body_placeholders(template, schema, parsed.data.variant):
+            replaced = text
+            for old, new in parsed.replacements.items():
+                replaced = replaced.replace(old, new)
+            where = Location("document", f"text:{text}", label="본문")
+            if not is_leftover(replaced) or where.key in rules.ignore:
+                continue
+            issues.append(Issue(
+                FILL_LEFT, rules.severity.get(FILL_LEFT, DEFAULT_SEVERITY[FILL_LEFT]), where,
+                f"본문에 채우지 않은 자리가 남아 있습니다: {' '.join(replaced.split())}",
+                "'본문 문구 바꾸기'에서 바꾸거나, 인쇄한 뒤 손으로 적을 줄이면 그대로 두세요",
+            ))  # fmt: skip
+        return issues
 
     def generate(
         self,

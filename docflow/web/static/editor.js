@@ -187,7 +187,7 @@
 
   function placeName(i) {
     const loc = i.location;
-    if (loc.kind === "document") return "문서 전체";
+    if (loc.kind === "document") return loc.id.startsWith("text:") ? "본문 문구" : "문서 전체";
     if (loc.kind === "field") {
       const f = fieldsMeta.find((x) => x.name === loc.id);
       return f ? f.label : loc.id;
@@ -220,7 +220,8 @@
 
   function focusWhere(where) {
     if (where === "document") { DF.toast("문서 전체에 대한 판정입니다. 근거를 문서에서 찾지 못했습니다."); return; }
-    const el = cellOf(where);
+    // 표 밖 본문의 자리표시자(작성일·서명란)는 '본문 문구 바꾸기'에서 고친다
+    const el = where.startsWith("text:") ? document.getElementById("replace-card") : cellOf(where);
     if (!el) { DF.toast("이 칸은 지금 화면에 없습니다 (다른 변형이거나 지운 행)."); return; }
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     const target = el.matches("input, textarea, select") ? el : el.querySelector("input, textarea");
@@ -986,7 +987,13 @@
 
   function downloads(files, revision) {
     const q = revision ? `?revision=${revision}` : "";
-    return h("span", { class: "downloads" }, ...files.map((f) => h("a", { class: "btn small", href: `/api/documents/${docId}/files/${f}${q}` }, `${f} 받기`)));
+    const links = files.map((f) => h("a", { class: "btn small", href: `/api/documents/${docId}/files/${f}${q}` }, `${f} 받기`));
+    // 서버가 PDF 를 만들지 못했으면(한컴 없음) 서식 모양대로 그린 화면을 인쇄해 PDF 로 저장한다
+    if (files.includes("HWPX") && !files.includes("PDF")) {
+      const p = `${q ? `${q}&` : "?"}auto=1`;
+      links.push(h("a", { class: "btn small", href: `/api/documents/${docId}/print${p}`, target: "_blank", rel: "noopener" }, "PDF 저장"));
+    }
+    return h("span", { class: "downloads" }, ...links);
   }
 
   async function copyDoc() {

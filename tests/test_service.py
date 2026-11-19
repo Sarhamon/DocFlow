@@ -15,7 +15,7 @@ from docflow.service.catalog import NotFound, sync_templates
 from docflow.service.db import Form, User, connect
 from docflow.service.documents import Conflict, DocumentService, ValidationFailed, safe_name
 from docflow.service.storage import LocalFileStore, S3FileStore
-from docflow.validate import REQUIRED_EMPTY
+from docflow.validate import FILL_LEFT, REQUIRED_EMPTY
 from tests import hwpx_factory as hf
 from tests import service_fixtures as fx
 
@@ -255,6 +255,49 @@ def test_검증_오류가_있으면_만들지_않는다(env, session):
         svc.generate(doc.id)
     assert [i.where for i in err.value.issues] == ["t0.r0.c1"]
     assert svc.get(doc.id).revision == 0 and svc.get(doc.id).artifacts == []
+
+
+def _form_with_body_lines(env, session) -> int:
+    """회의계획서 표 아래에 작성일·서명란 문단이 있는 서식 (기안문·내역서처럼)."""
+    settings, _sessions, store = env
+    path = settings.templates / "test/2026_AID/7. 회의비/[AID 서식 7-02호] 회의결과보고서.hwpx"
+    hf.build(path, hf.body(
+        hf.para_runs(f'<hp:run charPrIDRef="0">{fx.meeting_form()}</hp:run>'),
+        hf.para("20○○년 ○○월 ○○일"),
+        hf.para("사업담당자 : ○ ○ ○  (날인)"),
+    ))  # fmt: skip
+    sync_templates(session, store, settings)
+    return form_id(session, "회의결과보고서")
+
+
+MEETING_CELLS = {"t0.r0.c1": "운영위원회", "t0.r1.c1": "2026.11.17"}
+
+
+def test_본문에_남은_자리표시자는_검증에서_경고한다(env, session):
+    svc = service(env, session, fx.FakeConverter())
+    doc = svc.create(_form_with_body_lines(env, session))
+    svc.save_input(doc.id, {"cells": MEETING_CELLS})
+    issues = svc.validate(doc.id)
+    assert [(i.code, i.severity, i.location.kind) for i in issues] == [
+        (FILL_LEFT, "warning", "document"),
+        (FILL_LEFT, "warning", "document"),
+    ]
+    assert "20○○년 ○○월 ○○일" in issues[0].message
+    assert "○ ○ ○" in issues[1].message
+    # 경고라 만들기는 막지 않는다
+    assert svc.generate(doc.id, formats=()).document.status == "completed"
+
+
+def test_본문_문구를_바꾸면_경고하지_않는다(env, session):
+    svc = service(env, session)
+    doc = svc.create(_form_with_body_lines(env, session))
+    replace = {"20○○년 ○○월 ○○일": "2026년 11월 10일"}
+    svc.save_input(doc.id, {"cells": MEETING_CELLS, "replace": replace})
+    [left] = svc.validate(doc.id)
+    assert "사업담당자" in left.message  # 바꾼 작성일은 빠지고 서명란만 남는다
+    replace["○ ○ ○"] = "김연성"  # 문단 일부만 바꿔도 된다
+    svc.save_input(doc.id, {"cells": MEETING_CELLS, "replace": replace})
+    assert svc.validate(doc.id) == []
 
 
 def test_만들면_산출물을_저장하고_완료된다(env, session):

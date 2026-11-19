@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Body, Depends, FastAPI, File, Query, Request, Response, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from docflow.config import Settings, get_settings
 from docflow.convert import Converter
 from docflow.generate import GenerateError, body_placeholders
+from docflow.hwpx import printview
 from docflow.hwpx.document import HwpxDocument
 from docflow.llm import LlmClient, LlmError
 from docflow.pipeline import InputError, skeleton
@@ -696,6 +697,22 @@ def create_app(
     ) -> Response:
         data, name = svc.artifact(doc_id, fmt, me, revision=revision)
         return download_response(data, name)
+
+    @app.get(f"{API}/documents/{{doc_id}}/print")
+    def print_document(
+        doc_id: int,
+        revision: int | None = None,
+        auto: bool = False,
+        svc: DocumentService = Depends(service),
+        me=Depends(owner),
+    ) -> HTMLResponse:
+        """PDF로 저장: 만든 HWPX 를 서식 모양대로 그린 인쇄용 화면 (브라우저 인쇄 → PDF로 저장).
+
+        서버가 PDF 를 만들지 못하는 운영 환경(한컴 없음)용이다. hwpx/printview.py 머리말.
+        """
+        data, name = svc.artifact(doc_id, "HWPX", me, revision=revision)
+        page = printview.render(data, Path(name).stem, toolbar=True, auto=auto)
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     @app.get(f"{API}/documents/{{doc_id}}/bundle/{{fmt}}")
     def download_bundle(

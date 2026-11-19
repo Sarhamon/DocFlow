@@ -146,6 +146,25 @@ def test_QR_체험은_사람마다_문서가_따로고_하루_뒤_지운다(tmp_
             assert s.query(Document).count() == 0
 
 
+def test_PDF로_저장은_만든_문서를_서식_모양대로_인쇄_화면에_그린다(app, client):
+    doc = new_doc(client)
+    client.put(f"/api/documents/{doc}/input", json=fx.traffic_input("김철수"))
+    client.post(f"/api/documents/{doc}/generate", json={"formats": []})
+    res = client.get(f"/api/documents/{doc}/print")
+    assert res.status_code == 200 and res.headers["content-type"].startswith("text/html")
+    assert "김철수" in res.text and "<table" in res.text
+    assert "PDF로 저장" in res.text and "window.print(), 300" not in res.text
+    assert "window.print(), 300" in client.get(f"/api/documents/{doc}/print?auto=1").text
+    fx.make_user(app.state.sessions, "other")
+    with TestClient(app) as other:
+        fx.login(other, "other")
+        assert other.get(f"/api/documents/{doc}/print").status_code == 404
+
+
+def test_만들기_전에는_인쇄할_문서가_없다(client):
+    assert client.get(f"/api/documents/{new_doc(client)}/print").status_code == 404
+
+
 class Clock:
     def __init__(self) -> None:
         self.at = datetime(2026, 11, 20, 10, 0)
