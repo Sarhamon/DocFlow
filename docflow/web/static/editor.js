@@ -1026,6 +1026,7 @@
         return;
       }
       // 경고는 검증 결과에서 이미 보였다. 만들 때 다시 묻지 않는다 (ER_09)
+      $("gen-title").value = doc.title;
       $("gen-dialog").showModal();
     } catch (e) { DF.fail(e); }
   }
@@ -1037,6 +1038,9 @@
     btn.disabled = true;
     btn.textContent = "만드는 중…";
     try {
+      // 만들 때 정한 이름으로 바꾼 뒤 만든다 (파일 이름이 문서 이름을 따른다)
+      const title = $("gen-title").value.trim();
+      if (title && title !== doc.title) doc = { ...doc, ...(await api("PATCH", `/api/documents/${docId}`, { title })) };
       const out = await api("POST", `/api/documents/${docId}/generate`, { formats });
       $("gen-dialog").close();
       doc = out.document;
