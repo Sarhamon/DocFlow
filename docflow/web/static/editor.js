@@ -766,7 +766,7 @@
     if (!text) { DF.toast("채울 내용을 적으세요.", "error"); return; }
     const btn = $("prefill-go");
     btn.disabled = true;
-    btn.textContent = "채우는 중… (1분쯤 걸릴 수 있습니다)";
+    btn.textContent = "채우는 중… 잠시만 기다려 주세요";
     try {
       prefillOut = await api("POST", `/api/documents/${docId}/prefill`, { prompt: text, variant: raw.variant ?? null });
       showPrefill(prefillOut);
@@ -873,7 +873,7 @@
     buttons.forEach((b) => { b.disabled = true; });
     const busy = retry ? $("draft-retry") : $("draft-go");
     const label = busy.textContent;
-    busy.textContent = "쓰는 중… (1분쯤 걸릴 수 있습니다)";
+    busy.textContent = "쓰는 중… 잠시만 기다려 주세요";
     try {
       const out = await api("POST", `/api/documents/${docId}/draft`,
         { target: draftWhere, input: payload(), instruction: $("draft-instruction").value, retry });
@@ -922,7 +922,7 @@
   async function reviewGo() {
     const btn = $("btn-review");
     btn.disabled = true;
-    btn.textContent = "판정 중… (1분쯤 걸릴 수 있습니다)";
+    btn.textContent = "판정 중… 잠시만 기다려 주세요";
     try {
       const input = payload();
       const out = await api("POST", `/api/documents/${docId}/review`, { input });
