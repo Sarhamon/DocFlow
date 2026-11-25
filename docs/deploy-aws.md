@@ -24,7 +24,7 @@ HTTPS 가 없어 주소는 `http://` 까지 적어 준다 — 브라우저가 ht
 | ECR | `docflow` | 앱 이미지(태그 `<커밋>-<월일시분>`, 약 580 MB — Java 런타임 포함), Caddy 사본(`caddy-2.8.4`) |
 | ECS | 클러스터·서비스 `docflow`, 작업 정의 `docflow:N` | Fargate 0.5 vCPU / 1 GB, 1개. 실행 역할 `ecsTaskExecutionRole`(공용) |
 | RDS | `docflow-db` | PostgreSQL 16, db.t4g.micro, 20 GB, 외부 접속 불가, 자동 백업 1일 |
-| EC2 | `plus-DocFlow` (g4dn.xlarge) | Ollama + `exaone3.5:7.8b`. `OLLAMA_HOST=0.0.0.0` (systemd override) |
+| EC2 | `plus-DocFlow` (g4dn.xlarge) | Ollama + `exaone3.5:7.8b`. `OLLAMA_HOST=0.0.0.0`, `OLLAMA_KEEP_ALIVE=-1` (systemd override) |
 | 보안 그룹 | `docflow-app-sg` 80 전체 / `docflow-db-sg` 5432 ← 앱·EC2 / `plus-docflow` 11434 ← 앱 | 8000(Caddy 를 거치지 않는 주소)은 닫았다(2026-11-11) |
 | 로그 | CloudWatch `/ecs/docflow` (14일) | 스트림 `web/…`(앱), `caddy/…` |
 | 주소 | DuckDNS `docflow-ysu` | 태스크가 뜰 때 자동 등록. **DuckDNS 화면에서 IP 를 고치지 않는다** |
@@ -61,9 +61,9 @@ HTTPS 가 없어 주소는 `http://` 까지 적어 준다 — 브라우저가 ht
 
 - **비밀값**: `secrets/aws.env` (git 에 올리지 않음) — DB 비밀번호, 암호 키(`DATA_KEY_NEW`), 보안 그룹 id, 현재 이미지 태그,
   DuckDNS 토큰, 루트 비밀번호. 작업 정의 원본은 `secrets/taskdef.json`. **암호 키를 잃으면 문서를 되살릴 수 없다** — 따로 백업.
-- **MFA 세션** (12시간): OTP 앱의 6자리로
+- **MFA 세션** (36시간, IAM 사용자가 받을 수 있는 최대): OTP 앱의 6자리로
   ```powershell
-  $c = aws sts get-session-token --serial-number arn:aws:iam::093356173512:mfa/Capstone2 --duration-seconds 43200 --token-code <코드> --query Credentials --output json | ConvertFrom-Json; aws configure set aws_access_key_id $c.AccessKeyId --profile mfa; aws configure set aws_secret_access_key $c.SecretAccessKey --profile mfa; aws configure set aws_session_token $c.SessionToken --profile mfa; aws configure set region ap-northeast-2 --profile mfa
+  $c = aws sts get-session-token --serial-number arn:aws:iam::093356173512:mfa/Capstone2 --duration-seconds 129600 --token-code <코드> --query Credentials --output json | ConvertFrom-Json; aws configure set aws_access_key_id $c.AccessKeyId --profile mfa; aws configure set aws_secret_access_key $c.SecretAccessKey --profile mfa; aws configure set aws_session_token $c.SessionToken --profile mfa; aws configure set region ap-northeast-2 --profile mfa
   ```
   이후 명령은 모두 `--profile mfa`. Git Bash 에서는 `/ecs/docflow` 같은 인자가 경로로 바뀌므로 `MSYS_NO_PATHCONV=1` 을 둔다.
 - Docker Desktop 을 켠다 (이미지 빌드). 빌드는 인터넷이 필요하다 — hwp2hwpx 원본(GitHub)과 라이브러리(Maven)를 받는다.
@@ -158,11 +158,28 @@ aws ecs update-service --profile mfa --cluster docflow --service docflow --desir
 
 RDS 는 멈춘 지 7일이 지나면 AWS 가 저절로 다시 켠다.
 
+### 아침에 한 번에 켜기 (`tools/start-server.ps1`)
+
+RDS·EC2 를 켜고, ECS 개수가 0 이면 1 로 올리고, EC2 에 SSH 로 들어가 모델을 `keep_alive: -1` 로 올린 뒤(예열),
+사이트가 200 을 줄 때까지 기다린다. 기록은 `%TEMP%\docflow-start.log`. MFA 세션이 살아 있어야 한다 — 만료됐으면 아무것도 하지 않고 끝난다.
+2026-11-26·27 09:00 에 돌도록 Windows 작업 스케줄러에 `DocFlow 서버 켜기` 로 등록한다(그 시각에 PC 가 켜져 있어야 한다).
+켜 둘 PC 에서 한 번:
+
+1. PowerShell 7(`pwsh`)·AWS CLI 를 설치하고, `aws configure` 로 IAM 사용자 키(기본 프로필)를 넣는다 — MFA 세션을 받는 데 쓴다.
+2. SSH 키를 원래 PC 와 같은 자리 `C:\.ssh\plus-ec2.pem` 에 복사한다(git 에 올리지 않는다).
+3. MFA 세션을 받는다(2장). 36시간 가므로 00시에 받으면 이틀 아침을 모두 덮는다.
+4. `pwsh -File tools\register-start-task.ps1` — 도구·키를 확인하고, 키 권한을 본인만으로 좁히고, 작업을 등록하고, MFA 세션을 확인한다.
+5. 전원 설정에서 절전·덮개 닫기 시 절전을 끈다(작업은 절전에서 깨우도록 해 두었지만 덮개를 닫은 노트북은 깨지 않을 수 있다).
+AWS 쪽에서 돌리는 방법(EventBridge·Lambda·GitHub Actions)은 IAM 역할을 만들 수 없고 MFA 가 필요해서 쓰지 않는다.
+EC2 에 `OLLAMA_KEEP_ALIVE=-1` 을 두어(2026-11-25, `/etc/systemd/system/ollama.service.d/keepalive.conf`) 한 번 올린 모델은
+EC2 가 꺼질 때까지 내려가지 않는다. 확인은 EC2 에서 `ollama ps` 의 UNTIL 이 `Forever`.
+SSH 키 `C:/.ssh/plus-ec2.pem` 은 본인만 읽을 수 있어야 Windows ssh 가 쓴다 (`icacls <파일> /inheritance:r /grant:r "$env:USERNAME:R"`).
+
 ### LLM
 
 평소 꺼 둔다. 글로 채우기·본문 초안을 쓸 때만 콘솔(EC2 → `plus-DocFlow` → 시작/중지) 또는
 `aws ec2 start-instances|stop-instances --profile mfa --instance-ids i-09c4bdcd27aacab5a`. 켜고 1~2분 뒤부터 쓸 수 있고,
-첫 호출은 모델을 올리느라 30초쯤 걸린다. 꺼져 있으면 글로 채우기만 실패하고 나머지는 그대로 된다.
+첫 호출은 모델을 올리느라 30초쯤 걸린다(`start-server.ps1` 로 켜면 미리 올려 둔다). 꺼져 있으면 글로 채우기만 실패하고 나머지는 그대로 된다.
 
 ## 7. HTTPS (아직 안 함)
 
