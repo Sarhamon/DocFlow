@@ -17,7 +17,7 @@
 
 체험 계정(demo_logins, 환경변수 DOCFLOW_DEMO_LOGINS)은 페스티벌 부스에서 여럿이 같이 쓰므로
 동시 로그인을 허용하고, 실패해도 잠그지 않고, 비밀번호를 바꾸지 못하게 한다.
-패널의 QR(/demo)로 비밀번호 없이 들어온다(demo_login). 이때는 들어올 때마다 그 사람만 쓰는
+체험 주소(/demo)로 비밀번호 없이 들어온다(demo_login). 이때는 들어올 때마다 그 사람만 쓰는
 임시 계정(`demo~1a2b3c4d`)을 만들어 서로의 문서가 섞이지 않게 한다. 임시 계정은 만든 지
 DEMO_TTL 이 지나면 다음 /demo 로그인 때 문서와 함께 지운다(expired_demo_users·retire).
 `~` 는 발급 아이디 규칙에 없는 글자라 관리자가 만든 계정과 겹치지 않는다.
@@ -219,7 +219,7 @@ class AuthService:
         return self._open_session(user, login_id, client)
 
     def demo_login(self, client: Client | None = None) -> LoginResult:
-        """비밀번호 없이 그 사람만 쓰는 임시 체험 계정으로 들어간다 (페스티벌 패널 QR).
+        """비밀번호 없이 그 사람만 쓰는 임시 체험 계정으로 들어간다 (체험 주소 /demo).
 
         체험 계정(여럿이면 아이디 순 첫 계정)을 끄면 임시 계정도 만들지 않는다.
         """

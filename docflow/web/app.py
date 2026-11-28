@@ -379,7 +379,7 @@ def create_app(
     def demo_login(
         request: Request, svc: AuthService = Depends(auth), docs: DocumentService = Depends(service)
     ) -> RedirectResponse:
-        """페스티벌 패널 QR: 그 사람만 쓰는 임시 체험 계정으로 바로 들어간다.
+        """체험 주소: 그 사람만 쓰는 임시 체험 계정으로 바로 들어간다.
 
         체험 계정이 꺼져 있으면 로그인 쪽으로. 들어올 때 오래된 임시 계정을 문서와 함께 지운다.
         """
